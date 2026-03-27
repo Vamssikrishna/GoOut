@@ -1,0 +1,687 @@
+import { useState, useEffect, useRef } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import api from '../api/client';
+import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import ManualLocationPicker from '../components/explorer/ManualLocationPicker';
+
+function getMerchantBusinessId(user) {
+  if (!user?.businessId) return null;
+  return user.businessId._id || user.businessId;
+}
+
+function formatAddressFromLocation(loc) {
+  if (!loc || !Number.isFinite(loc.lat) || !Number.isFinite(loc.lng)) return '';
+  return `Pinned location (${Number(loc.lat).toFixed(5)}, ${Number(loc.lng).toFixed(5)})`;
+}
+
+export default function Merchant() {
+  const { user, updateUser } = useAuth();
+  const { addToast } = useToast();
+  const [business, setBusiness] = useState(null);
+  const [analytics, setAnalytics] = useState(null);
+  const [offers, setOffers] = useState([]);
+  const [creatingNewBusiness, setCreatingNewBusiness] = useState(false);
+  const [showOffer, setShowOffer] = useState(false);
+  const [smartInput, setSmartInput] = useState('');
+  const [smartData, setSmartData] = useState(null);
+  const [form, setForm] = useState({
+    name: '',
+    description: '',
+    category: '',
+    tags: '',
+    address: '',
+    phone: '',
+    avgPrice: 0,
+    isFree: false,
+    openingHours: '',
+    menu: '',
+    greenInitiatives: '',
+  });
+  const [offerForm, setOfferForm] = useState({ title: '', description: '', offerPrice: '', originalPrice: '', validUntil: '', durationMinutes: 30 });
+  const [offerError, setOfferError] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const [deletingBusiness, setDeletingBusiness] = useState(false);
+  const [aiFilled, setAiFilled] = useState([]);
+  const [approvedAll, setApprovedAll] = useState(false);
+  const [suggestedLocation, setSuggestedLocation] = useState(null);
+  const [locationStatus, setLocationStatus] = useState('');
+  const [editProfile, setEditProfile] = useState(false);
+  const [editTags, setEditTags] = useState('');
+  const [extractError, setExtractError] = useState('');
+  const [isExtracting, setIsExtracting] = useState(false);
+  const lastAutoExtractRef = useRef('');
+
+  const merchantBusinessId = getMerchantBusinessId(user);
+  const showRegistrationForm = !merchantBusinessId || creatingNewBusiness;
+
+  useEffect(() => {
+    if (!merchantBusinessId || creatingNewBusiness) {
+      if (!merchantBusinessId) {
+        setBusiness(null);
+        setAnalytics(null);
+        setOffers([]);
+        setCreatingNewBusiness(false);
+      }
+      return;
+    }
+    const bid = merchantBusinessId.toString();
+    api.get(`/businesses/${bid}`).then(({ data }) => { setBusiness(data); setEditTags((data.tags || []).join(', ')); }).catch(console.error);
+    api.get(`/businesses/${bid}/analytics`).then(({ data }) => setAnalytics(data)).catch(console.error);
+    api.get(`/offers/business/${bid}`).then(({ data }) => setOffers(data)).catch(console.error);
+  }, [merchantBusinessId, creatingNewBusiness]);
+
+  const smartExtract = async (inputOverride = null) => {
+    setExtractError('');
+    // onClick can pass a React synthetic event; normalize to string safely.
+    const rawInput =
+      typeof inputOverride === 'string'
+        ? inputOverride
+        : (inputOverride && typeof inputOverride === 'object' && 'target' in inputOverride)
+          ? smartInput
+          : (inputOverride ?? smartInput);
+    const sentenceText = String(rawInput || '').trim();
+    if (!sentenceText) {
+      setExtractError('Please enter a description of your business.');
+      return;
+    }
+    setIsExtracting(true);
+    try {
+      const loc = suggestedLocation;
+      const { data } = await api.post('/ai/smart-register', {
+        sentence: sentenceText,
+        suggestedLocation: loc,
+      });
+      const tagsArr = [...(Array.isArray(data.tags) ? data.tags : []), ...(Array.isArray(data.semanticTags) ? data.semanticTags : [])];
+      const tags = tagsArr.length ? tagsArr.join(', ') : (data.tags || '');
+      const hours = typeof data.openingHours === 'string' ? data.openingHours : (data.openingHours?.default || '');
+      setForm((f) => ({
+        ...f,
+        name: data.name || f.name,
+        description: data.description || f.description,
+        category: data.category || f.category,
+        tags,
+        address: data.address || f.address,
+        avgPrice: data.avgPrice ?? f.avgPrice,
+        isFree: data.isFree || false,
+        openingHours: hours,
+        menu: Array.isArray(data.menu) ? data.menu.join(', ') : f.menu,
+      }));
+      setAiFilled(Array.isArray(data.aiFilled) ? data.aiFilled : []);
+      setApprovedAll(false);
+      setSmartData(data.needsName ? { ...data, feedback: "I've identified your business type, but what is your business name?" } : data);
+    } catch (e) {
+      const msg = e.response?.data?.error || e.message || 'Extraction failed. Check that GEMINI_API_KEY is set in server/.env and restart the server.';
+      const isQuota = e.response?.status === 429 || /quota|rate limit|too many requests/i.test(msg);
+      setExtractError(isQuota
+        ? 'AI quota is currently exhausted. You can continue with manual registration now and try extraction later.'
+        : msg);
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
+  const resetNewBusinessForm = () => {
+    setSmartInput('');
+    setSmartData(null);
+    setForm({
+      name: '',
+      description: '',
+      category: '',
+      tags: '',
+      address: '',
+      phone: '',
+      avgPrice: 0,
+      isFree: false,
+      openingHours: '',
+      menu: '',
+      greenInitiatives: '',
+    });
+    setAiFilled([]);
+    setApprovedAll(false);
+    setExtractError('');
+    setLocationStatus('');
+    setSuggestedLocation(null);
+  };
+
+  useEffect(() => {
+    if (!suggestedLocation?.lat || !suggestedLocation?.lng) return;
+    const autoAddress = formatAddressFromLocation(suggestedLocation);
+    setForm((f) => ({ ...f, address: autoAddress }));
+  }, [suggestedLocation?.lat, suggestedLocation?.lng]);
+
+  const takeCurrentLocation = async () => {
+    setLocationStatus('');
+    if (!navigator.geolocation) {
+      setLocationStatus('Geolocation is not supported in this browser.');
+      return;
+    }
+    try {
+      const pos = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject));
+      const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      setSuggestedLocation(loc);
+      setLocationStatus('Current location captured successfully.');
+      addToast({ type: 'success', title: 'Location captured', message: 'GPS location is ready for registration.' });
+    } catch (err) {
+      setLocationStatus('Unable to capture GPS location. Please select your location from the map.');
+      addToast({ type: 'error', title: 'GPS unavailable', message: 'Please select your location from the map.' });
+    }
+  };
+
+  // Auto-capture GPS when merchant onboarding form opens so we do not ask again.
+  useEffect(() => {
+    if (!showRegistrationForm) return;
+    if (suggestedLocation?.lat && suggestedLocation?.lng) return;
+    if (!navigator.geolocation) return;
+
+    let cancelled = false;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        if (cancelled) return;
+        const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setSuggestedLocation(loc);
+        setLocationStatus('Location captured automatically.');
+      },
+      () => {
+        if (cancelled) return;
+        setLocationStatus('Automatic GPS capture failed. Please pick your location from the map.');
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [showRegistrationForm, suggestedLocation?.lat, suggestedLocation?.lng]);
+
+  // Debounce Smart Onboarding requests so we do not hit Gemini on every keystroke.
+  useEffect(() => {
+    if (!showRegistrationForm) return;
+    const normalized = smartInput.trim();
+    if (normalized.length < 12) return;
+    if (normalized === lastAutoExtractRef.current) return;
+    const timer = setTimeout(() => {
+      lastAutoExtractRef.current = normalized;
+      smartExtract(normalized);
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [smartInput, showRegistrationForm]);
+
+  const isAiFilled = (key) => aiFilled.includes(key);
+
+  const registerBusiness = async (e) => {
+    e.preventDefault();
+    try {
+      if (!suggestedLocation?.lat || !suggestedLocation?.lng) {
+        setExtractError('Please capture GPS location or select your location from the map before registering.');
+        addToast({ type: 'error', title: 'Location required', message: 'Capture GPS location or select location from map before registering.' });
+        return;
+      }
+      const coords = [suggestedLocation.lng, suggestedLocation.lat];
+      const resolvedAddress = formatAddressFromLocation(suggestedLocation) || form.address;
+      const { data } = await api.post('/businesses', {
+        ...form,
+        address: resolvedAddress,
+        tags: (form.tags || '').split(',').map((s) => s.trim()).filter(Boolean),
+        menu: (form.menu || '').split(',').map((s) => s.trim()).filter(Boolean),
+        greenInitiatives: (form.greenInitiatives || '').split(',').map((s) => s.trim()).filter(Boolean),
+        lat: coords[1],
+        lng: coords[0],
+        isFree: form.isFree,
+        openingHours: form.openingHours ? { default: form.openingHours } : undefined,
+      });
+      setBusiness(data);
+      setCreatingNewBusiness(false);
+      updateUser({ businessId: data._id });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const createOffer = async (e) => {
+    e.preventDefault();
+    setOfferError('');
+    try {
+      await api.post('/offers', {
+        businessId: business._id,
+        title: offerForm.title,
+        description: offerForm.description,
+        offerPrice: Number(offerForm.offerPrice),
+        originalPrice: offerForm.originalPrice ? Number(offerForm.originalPrice) : undefined,
+        validUntil: offerForm.validUntil ? new Date(offerForm.validUntil) : undefined,
+        durationMinutes: Number(offerForm.durationMinutes) || 30,
+      });
+      const { data } = await api.get(`/offers/business/${business._id}`);
+      setOffers(data);
+      setShowOffer(false);
+      setOfferForm({ title: '', description: '', offerPrice: '', originalPrice: '', validUntil: '', durationMinutes: 30 });
+      if (analytics) setAnalytics((a) => ({ ...a, offerClicks: (a.offerClicks || 0) + 1 }));
+    } catch (err) {
+      setOfferError(err.response?.data?.error || 'Failed to create offer');
+    }
+  };
+
+  const updateCrowd = async (level) => {
+    try {
+      await api.put(`/businesses/${business._id}`, { crowdLevel: level });
+      setBusiness((b) => ({ ...b, crowdLevel: level }));
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const deleteCurrentBusiness = async () => {
+    if (!business?._id || deletingBusiness) return;
+    const confirmed = window.confirm('Delete this business permanently? This will remove offers and analytics for this business.');
+    if (!confirmed) return;
+    setDeleteError('');
+    setDeletingBusiness(true);
+    try {
+      await api.delete(`/businesses/${business._id}`);
+      setBusiness(null);
+      setAnalytics(null);
+      setOffers([]);
+      setCreatingNewBusiness(false);
+      updateUser({ businessId: null });
+    } catch (err) {
+      setDeleteError(err.response?.data?.error || 'Failed to delete business');
+    } finally {
+      setDeletingBusiness(false);
+    }
+  };
+
+  if (!user) return null;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <h1 className="font-display font-bold text-2xl text-goout-dark">Merchant Dashboard</h1>
+        {merchantBusinessId && !creatingNewBusiness && (
+          <button
+            type="button"
+            onClick={() => {
+              setCreatingNewBusiness(true);
+              resetNewBusinessForm();
+            }}
+            className="px-4 py-2 rounded-xl border border-goout-green text-goout-green font-medium hover:bg-goout-mint transition"
+          >
+            + Create new business
+          </button>
+        )}
+      </div>
+
+      {business && !creatingNewBusiness && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-slate-600">
+              <span className="font-medium text-slate-800">Current business:</span>{' '}
+              {business.name} · {business.category}
+            </p>
+            <div className="flex items-center gap-2">
+              {business?.localVerification?.redPin ? (
+                <span className="px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">Red Pin Verified</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const { data } = await api.patch(`/businesses/${business._id}/verify-local`);
+                      setBusiness((b) => ({ ...b, localVerification: data.localVerification }));
+                      addToast({ type: 'success', title: 'Verification update', message: data.message || 'Verification request submitted.' });
+                    } catch (e) {
+                      addToast({ type: 'error', title: 'Verification failed', message: e.response?.data?.error || 'Could not verify local status.' });
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-sm border border-red-200 text-red-700 hover:bg-red-50"
+                >
+                  Request Red Pin
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={deleteCurrentBusiness}
+                disabled={deletingBusiness}
+                className="px-3 py-1.5 rounded-lg text-sm text-red-700 border border-red-200 hover:bg-red-50 disabled:opacity-60"
+              >
+                {deletingBusiness ? 'Deleting...' : 'Delete business'}
+              </button>
+            </div>
+          </div>
+          {deleteError && <p className="text-xs text-red-600 mt-2">{deleteError}</p>}
+        </div>
+      )}
+
+      {showRegistrationForm && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
+            <h2 className="font-display font-semibold text-lg">
+              {creatingNewBusiness ? 'Register another business' : 'Smart Onboarding (AI-Driven Registration)'}
+            </h2>
+            {creatingNewBusiness && merchantBusinessId && (
+              <button
+                type="button"
+                onClick={() => {
+                  setCreatingNewBusiness(false);
+                  resetNewBusinessForm();
+                }}
+                className="text-sm text-slate-600 hover:text-slate-900 underline"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+          <p className="text-slate-600 text-sm mb-4">Describe your business in one sentence. We'll extract details. Your location may be used if address is unclear.</p>
+          <div className="mb-4 p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
+            <p className="text-sm font-medium text-slate-800">Business location setup</p>
+            <p className="text-xs text-slate-600">GPS location is captured automatically. You can adjust pin from the map if needed.</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button type="button" onClick={takeCurrentLocation} className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-sm">
+                Refresh GPS location
+              </button>
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs text-slate-600">Or pick directly from the map:</p>
+              <ManualLocationPicker
+                value={suggestedLocation}
+                onPick={(loc) => {
+                  setSuggestedLocation(loc);
+                  setLocationStatus('Location set from map click.');
+                  addToast({ type: 'success', title: 'Location set', message: 'Pin placed on the map.' });
+                }}
+                height={240}
+              />
+            </div>
+            {locationStatus && <p className="text-xs text-slate-600">{locationStatus}</p>}
+            {suggestedLocation && (
+              <p className="text-xs text-goout-green">
+                Selected coordinates: {suggestedLocation.lat.toFixed(5)}, {suggestedLocation.lng.toFixed(5)}
+              </p>
+            )}
+          </div>
+          <div className="mb-4">
+            <textarea
+              value={smartInput}
+              onChange={(e) => { setSmartInput(e.target.value); setExtractError(''); }}
+              placeholder="e.g. I'm Ravi, I run a cozy organic cafe called GreenBeans near Central Park, open 8 AM to 8 PM."
+              rows={3}
+              className="w-full px-4 py-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-goout-green resize-none"
+            />
+            <button type="button" disabled={isExtracting} onClick={() => smartExtract()} className="mt-2 px-4 py-2 bg-goout-green text-white rounded-lg font-medium hover:bg-goout-accent disabled:opacity-60">
+              {isExtracting ? 'Extracting...' : 'Extract details'}
+            </button>
+            {extractError && (
+              <p className="mt-3 text-sm text-red-700 p-3 bg-red-50 border border-red-100 rounded-lg">{extractError}</p>
+            )}
+          </div>
+          {smartData?.feedback && (
+            <p className="text-sm text-amber-700 mb-4 p-3 bg-amber-50 rounded-lg">{smartData.feedback}</p>
+          )}
+          {smartData && !smartData.feedback && (
+            <>
+              <p className="text-sm text-slate-600 mb-2">Review and edit. Fields in <span className="bg-blue-100 px-1 rounded">blue</span> were inferred by AI — please verify.</p>
+              <div className="mb-4 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setApprovedAll(true)}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium text-sm"
+                >
+                  Approve All
+                </button>
+                <span className="text-xs text-slate-500">Required before registering</span>
+              </div>
+            </>
+          )}
+          <form onSubmit={registerBusiness} className="space-y-4">
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Business name</label>
+              <input
+                type="text"
+                placeholder="Business name"
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                required
+                className={`w-full px-4 py-2 border rounded-lg ${isAiFilled('name') ? 'bg-blue-50 border-blue-200' : 'border-slate-200'}`}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Description</label>
+              <textarea
+                placeholder="Description"
+                value={form.description}
+                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                className={`w-full px-4 py-2 border rounded-lg ${isAiFilled('description') ? 'bg-blue-50 border-blue-200' : 'border-slate-200'}`}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Category</label>
+              <input
+                type="text"
+                placeholder="Category"
+                value={form.category}
+                onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+                required
+                className={`w-full px-4 py-2 border rounded-lg ${isAiFilled('category') ? 'bg-blue-50 border-blue-200' : 'border-slate-200'}`}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Opening hours (e.g. 8 AM - 8 PM)</label>
+              <input
+                type="text"
+                placeholder="Opening hours"
+                value={form.openingHours}
+                onChange={(e) => setForm((f) => ({ ...f, openingHours: e.target.value }))}
+                className={`w-full px-4 py-2 border rounded-lg ${isAiFilled('openingHours') ? 'bg-blue-50 border-blue-200' : 'border-slate-200'}`}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Address (auto-saved from selected location)</label>
+              <input
+                type="text"
+                placeholder="Select GPS/map location to auto-fill"
+                value={form.address || formatAddressFromLocation(suggestedLocation)}
+                readOnly
+                required
+                className={`w-full px-4 py-2 border rounded-lg bg-slate-50 ${isAiFilled('address') ? 'border-blue-200' : 'border-slate-200'}`}
+              />
+              <p className="text-xs text-slate-500 mt-1">This is auto-generated from the location pin. You don't need to type address manually.</p>
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Menu items (comma-separated)</label>
+              <input
+                type="text"
+                placeholder="e.g. idli, dosa, tea"
+                value={form.menu}
+                onChange={(e) => setForm((f) => ({ ...f, menu: e.target.value }))}
+                className={`w-full px-4 py-2 border rounded-lg ${isAiFilled('menu') ? 'bg-blue-50 border-blue-200' : 'border-slate-200'}`}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Tags (comma-separated)</label>
+              <input
+                type="text"
+                placeholder="Tags"
+                value={form.tags}
+                onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))}
+                className={`w-full px-4 py-2 border rounded-lg ${isAiFilled('tags') ? 'bg-blue-50 border-blue-200' : 'border-slate-200'}`}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Phone</label>
+              <input
+                type="text"
+                placeholder="Phone"
+                value={form.phone}
+                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                className={`w-full px-4 py-2 border rounded-lg ${isAiFilled('phone') ? 'bg-blue-50 border-blue-200' : 'border-slate-200'}`}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Avg price (₹)</label>
+              <input
+                type="number"
+                placeholder="0"
+                value={form.avgPrice || ''}
+                onChange={(e) => setForm((f) => ({ ...f, avgPrice: Number(e.target.value) || 0 }))}
+                className={`w-full px-4 py-2 border rounded-lg ${isAiFilled('avgPrice') ? 'bg-blue-50 border-blue-200' : 'border-slate-200'}`}
+              />
+            </div>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={form.isFree} onChange={(e) => setForm((f) => ({ ...f, isFree: e.target.checked }))} />
+              <span className="text-sm">Free entry (park, library, viewpoint)</span>
+            </label>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Green initiatives (comma-separated)</label>
+              <input
+                type="text"
+                placeholder="e.g. Plastic-free packaging, BYOC discount"
+                value={form.greenInitiatives}
+                onChange={(e) => setForm((f) => ({ ...f, greenInitiatives: e.target.value }))}
+                className="w-full px-4 py-2 border rounded-lg border-slate-200"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={!!(smartData && !smartData.feedback && !approvedAll)}
+              className="px-4 py-2 bg-goout-green text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {smartData && !smartData.feedback && !approvedAll ? 'Approve All first' : 'Register business'}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {business && !creatingNewBusiness && (
+        <>
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="font-display font-semibold text-lg">Profile & semantic tags</h2>
+              <button type="button" onClick={() => { setEditProfile(!editProfile); if (!editProfile) setEditTags((business.tags || []).join(', ')); }} className="px-4 py-2 bg-slate-100 rounded-lg text-sm font-medium">
+                {editProfile ? 'Cancel' : 'Edit tags'}
+              </button>
+            </div>
+            {editProfile ? (
+              <div className="space-y-2">
+                <p className="text-sm text-slate-600">Edit or remove AI-generated tags so users can find you (e.g. Quiet, FastWiFi, VeganFriendly).</p>
+                <input type="text" value={editTags} onChange={(e) => setEditTags(e.target.value)} placeholder="Comma-separated tags" className="w-full px-4 py-2 border rounded-lg" />
+                <button type="button" onClick={async () => { try { await api.put(`/businesses/${business._id}`, { tags: editTags.split(',').map((s) => s.trim()).filter(Boolean) }); setBusiness((b) => ({ ...b, tags: editTags.split(',').map((s) => s.trim()).filter(Boolean) })); setEditProfile(false); } catch (e) { console.error(e); } }} className="px-4 py-2 bg-goout-green text-white rounded-lg text-sm">Save tags</button>
+              </div>
+            ) : (
+              <p className="text-slate-600 text-sm">Tags: {(business.tags || []).length ? (business.tags || []).join(', ') : 'None — click Edit tags to add.'}</p>
+            )}
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-6">
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+              <h3 className="font-display font-semibold mb-2">Profile Views</h3>
+              <p className="text-3xl font-bold text-goout-green">{analytics?.profileViews || 0}</p>
+            </div>
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+              <h3 className="font-display font-semibold mb-2">Offer Clicks</h3>
+              <p className="text-3xl font-bold text-goout-green">{analytics?.offerClicks || 0}</p>
+            </div>
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+              <h3 className="font-display font-semibold mb-2">Crowd Level</h3>
+              <div className="flex gap-2 mt-2">
+                {[0, 33, 66, 100].map((l) => (
+                  <button
+                    key={l}
+                    onClick={() => updateCrowd(l)}
+                    className={`px-3 py-1 rounded text-sm ${business.crowdLevel === l ? 'bg-goout-green text-white' : 'bg-slate-100'}`}
+                  >
+                    {l === 0 ? 'Empty' : l === 33 ? 'Quiet' : l === 66 ? 'Busy' : 'Crowded'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+            <h2 className="font-display font-semibold text-lg mb-4">Analytics (ROI from GoOut)</h2>
+            <p className="text-slate-600 text-sm mb-4">One view/click per visitor per 24h. Data pre-aggregated daily.</p>
+            {analytics?.daily?.length > 0 && (
+              <div className="mb-6">
+                <h3 className="font-medium text-slate-700 mb-2">Last 30 days</h3>
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={analytics.daily}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend />
+                    <Line type="monotone" dataKey="profileViews" stroke="#22c55e" name="Profile views" />
+                    <Line type="monotone" dataKey="offerClicks" stroke="#3b82f6" name="Offer clicks" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+            {analytics?.peakHours && Object.keys(analytics.peakHours).length > 0 && (
+              <div>
+                <h3 className="font-medium text-slate-700 mb-2">Peak hours (views by hour)</h3>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={Object.entries(analytics.peakHours).map(([hour, count]) => ({ hour: `${hour}:00`, count })).sort((a, b) => parseInt(a.hour, 10) - parseInt(b.hour, 10))}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="hour" tick={{ fontSize: 10 }} />
+                    <YAxis />
+                    <Tooltip />
+                    <Bar dataKey="count" fill="#22c55e" name="Views" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="font-display font-semibold text-lg">Live Offer Feed (Flash Deals)</h2>
+              <button onClick={() => setShowOffer(true)} className="px-4 py-2 bg-goout-green text-white rounded-lg font-medium text-sm">
+                + New Flash Deal
+              </button>
+            </div>
+            {showOffer && (
+              <form onSubmit={createOffer} className="mb-6 p-4 bg-slate-50 rounded-xl space-y-2">
+                {offerError && <p className="text-red-600 text-sm">{offerError}</p>}
+                <input type="text" placeholder="Title (e.g. 50% off for next 30 min)" value={offerForm.title} onChange={(e) => setOfferForm((f) => ({ ...f, title: e.target.value }))} required
+                  className="w-full px-4 py-2 border rounded-lg" />
+                <input type="text" placeholder="Description" value={offerForm.description} onChange={(e) => setOfferForm((f) => ({ ...f, description: e.target.value }))}
+                  className="w-full px-4 py-2 border rounded-lg" />
+                <div className="flex gap-2">
+                  <input type="number" placeholder="Offer price ₹" value={offerForm.offerPrice} onChange={(e) => setOfferForm((f) => ({ ...f, offerPrice: e.target.value }))} required
+                    className="flex-1 px-4 py-2 border rounded-lg" />
+                  <input type="number" placeholder="Original ₹" value={offerForm.originalPrice} onChange={(e) => setOfferForm((f) => ({ ...f, originalPrice: e.target.value }))}
+                    className="flex-1 px-4 py-2 border rounded-lg" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1">Duration (deal auto-expires)</label>
+                  <select value={offerForm.durationMinutes} onChange={(e) => setOfferForm((f) => ({ ...f, durationMinutes: e.target.value }))} className="w-full px-4 py-2 border rounded-lg">
+                    <option value={15}>15 minutes</option>
+                    <option value={30}>30 minutes</option>
+                    <option value={60}>1 hour</option>
+                    <option value={120}>2 hours</option>
+                  </select>
+                </div>
+                <p className="text-xs text-slate-500">Or set exact end time: <input type="datetime-local" value={offerForm.validUntil} onChange={(e) => setOfferForm((f) => ({ ...f, validUntil: e.target.value }))} className="px-2 py-1 border rounded" /></p>
+                <div className="flex gap-2">
+                  <button type="submit" className="px-4 py-2 bg-goout-green text-white rounded-lg text-sm">Create Flash Deal</button>
+                  <button type="button" onClick={() => setShowOffer(false)} className="px-4 py-2 border rounded-lg text-sm">Cancel</button>
+                </div>
+              </form>
+            )}
+            <div className="space-y-2">
+              {offers.length === 0 ? (
+                <p className="text-slate-500 text-sm">No active offers.</p>
+              ) : (
+                offers.map((o) => (
+                  <div key={o._id} className="flex justify-between items-center p-3 bg-goout-mint rounded-lg">
+                    <div>
+                      <p className="font-medium">{o.title}</p>
+                      <p className="text-sm text-slate-600">₹{o.offerPrice} {o.originalPrice && <span className="line-through">₹{o.originalPrice}</span>} · Valid till {new Date(o.validUntil).toLocaleString()}</p>
+                    </div>
+                    <button type="button" onClick={async () => { try { await api.patch(`/offers/${o._id}/stop`); setOffers((prev) => prev.filter((x) => x._id !== o._id)); } catch (e) { console.error(e); } }} className="px-3 py-1 bg-red-100 text-red-700 rounded text-sm font-medium hover:bg-red-200">Stop Deal</button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
