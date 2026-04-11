@@ -1,14 +1,25 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { GoogleMap, useLoadScript } from '@react-google-maps/api';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
+import { estimateMerchantSpendInr, businessIsStrongGreen } from '../../utils/searchMapRank';
 
 const DEFAULT_ZOOM = 15;
+
+/** Softer highways, lift parks & paths — Green Mode map tint (indicative, not a data layer). */
+const GREEN_MAP_STYLES = [
+  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ saturation: 35 }, { lightness: -12 }] },
+  { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ saturation: 22 }, { lightness: -8 }] },
+  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ saturation: -55 }, { lightness: 25 }] },
+  { featureType: 'road.arterial', elementType: 'geometry.stroke', stylers: [{ saturation: -35 }, { lightness: 12 }] },
+  { featureType: 'transit.line', elementType: 'geometry', stylers: [{ saturation: 10 }, { lightness: -5 }] }
+];
+
 const PIN_ICONS = {
   red: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
   green: 'https://maps.google.com/mapfiles/ms/icons/green-dot.png',
   blue: 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png',
   yellow: 'https://maps.google.com/mapfiles/ms/icons/yellow-dot.png',
-  purple: 'https://maps.google.com/mapfiles/ms/icons/purple-dot.png',
+  purple: 'https://maps.google.com/mapfiles/ms/icons/purple-dot.png'
 };
 
 function escapeHtml(s) {
@@ -21,13 +32,14 @@ function escapeHtml(s) {
 function crowdLabel(level) {
   const n = Number(level);
   if (!Number.isFinite(n) || n <= 0) return '';
-  if (n < 33) return '🟢 Quiet';
-  if (n < 66) return '🟡 Busy';
-  return '🔴 Crowded';
+  if (n < 33) return 'Quiet';
+  if (n < 66) return 'Moderate';
+  return 'Crowded';
 }
 
 function businessPopupHtml(b, { isHighlighted }) {
-  const name = escapeHtml(b?.name);
+  const mapLabel = b?.mapDisplayName || b?.name;
+  const name = escapeHtml(mapLabel);
   const category = escapeHtml(b?.category);
   const avgPrice = Number(b?.avgPrice || 0);
   const rating = Number(b?.rating || 0);
@@ -40,8 +52,12 @@ function businessPopupHtml(b, { isHighlighted }) {
 
   const crowd = crowdLabel(b?.crowdLevel);
   const crowdHtml = crowd ? `<p class="text-xs mt-1">${escapeHtml(crowd)}</p>` : '';
+  const distanceText =
+  typeof b?.distanceMeters === 'number' && Number.isFinite(b.distanceMeters) ?
+  `<p class="text-xs mt-1 text-slate-500">Distance: ${b.distanceMeters < 1000 ? `${Math.round(b.distanceMeters)} m` : `${(b.distanceMeters / 1000).toFixed(2)} km`}</p>` :
+  '';
 
-  const recommendedHtml = isHighlighted ? '<p class="text-xs mt-1 text-purple-700 font-medium">Recommended by AI</p>' : '';
+  const recommendedHtml = isHighlighted ? '<p class="text-xs mt-1 text-purple-700 font-medium">Highlighted match</p>' : '';
   const verifiedHtml = isRedPin ? '<p class="text-xs mt-1 text-red-700 font-medium">🔴 Verified Local (Red Pin)</p>' : '';
 
   const goLat = Number.isFinite(lat) ? lat : '';
@@ -55,8 +71,10 @@ function businessPopupHtml(b, { isHighlighted }) {
       ${verifiedHtml}
       ${recommendedHtml}
       ${crowdHtml}
+      ${distanceText}
+      ${/cafe|coffee|grocery|supermarket|bakery|restaurant|bistro|juice/i.test(String(b?.category || '')) ? '<p class="text-xs mt-1 text-emerald-800">Tip: bring a reusable cup or bag when you can.</p>' : ''}
       <p class="text-xs mt-2 text-slate-500">
-        Actually:
+        Report crowd:
         <a href="#" class="text-blue-600" data-crowd-report data-business-id="${escapeHtml(b?._id)}" data-level="33">Quiet</a>
         · <a href="#" class="text-blue-600" data-crowd-report data-business-id="${escapeHtml(b?._id)}" data-level="66">Busy</a>
         · <a href="#" class="text-blue-600" data-crowd-report data-business-id="${escapeHtml(b?._id)}" data-level="100">Crowded</a>
@@ -68,7 +86,7 @@ function businessPopupHtml(b, { isHighlighted }) {
           data-go-route="1"
           data-lat="${goLat}"
           data-lng="${goLng}"
-          data-label="${encodeURIComponent(b?.name || '')}"
+          data-label="${encodeURIComponent(mapLabel || '')}"
         >
           Go
         </button>
@@ -77,16 +95,26 @@ function businessPopupHtml(b, { isHighlighted }) {
   `;
 }
 
-function poiPopupHtml(p) {
+function poiLatLngMatch(p, hl) {
+  if (!p || !hl) return false;
+  return (
+    Math.abs(Number(p.lat) - Number(hl.lat)) < 1e-4 &&
+    Math.abs(Number(p.lng) - Number(hl.lng)) < 1e-4);
+
+}
+
+function poiPopupHtml(p, { isSearchPrimary } = {}) {
   const name = escapeHtml(p?.name);
   const category = escapeHtml(p?.category || 'place');
   const distanceText =
-    typeof p?.distanceMeters === 'number' ? `${(p.distanceMeters / 1000).toFixed(2)} km away` : '';
+  typeof p?.distanceMeters === 'number' ? `${(p.distanceMeters / 1000).toFixed(2)} km away` : '';
+  const primaryHtml = isSearchPrimary ? '<p class="text-xs mt-1 text-purple-700 font-medium">Best match for your search</p>' : '';
 
   return `
     <div class="min-w-[200px]">
       <h3 class="font-semibold text-slate-900">${name}</h3>
       <p class="text-xs text-slate-600 capitalize">${category}</p>
+      ${primaryHtml}
       ${distanceText ? `<p class="text-xs text-slate-500 mt-1">${escapeHtml(distanceText)}</p>` : ''}
       <div class="mt-3">
         <button
@@ -106,31 +134,45 @@ function poiPopupHtml(p) {
 
 export default function DiscoveryMap({
   userLocation,
+  userLocationAccuracy = null,
   mapCenter,
   businesses,
   offers,
   pois = [],
   categoryFilter,
+  highlightedPoiLatLng = null,
+  isSearching = false,
+  searchHasNoResults = false,
   directionsRoutes,
   selectedDirectionsRouteIndex,
   highlightedBusinessId,
+  conciergeHighlightBusinessId = null,
+  conciergePanTo = null,
+  budgetCapInr = null,
+  budgetPathLatLngs = null,
+  compareRouteOverlays = [],
+  compareVersus = null,
+  mapVisualTheme = 'default',
+  greenEcoRoute = null
 }) {
+  const effectiveHighlightBusinessId = highlightedBusinessId ?? conciergeHighlightBusinessId ?? null;
+
   const center = mapCenter ? { lat: mapCenter.lat, lng: mapCenter.lng } : { lat: userLocation.lat, lng: userLocation.lng };
 
   const offerIds = useMemo(
     () =>
-      new Set(
-        (offers || [])
-          .map((o) => o?.businessId?._id?.toString())
-          .filter((id) => Boolean(id))
-      ),
+    new Set(
+      (offers || []).
+      map((o) => o?.businessId?._id?.toString()).
+      filter((id) => Boolean(id))
+    ),
     [offers]
   );
 
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
   const { isLoaded, loadError } = useLoadScript({
     googleMapsApiKey: apiKey || '',
-    libraries: [],
+    libraries: []
   });
 
   const mapRef = useRef(null);
@@ -140,24 +182,45 @@ export default function DiscoveryMap({
     businessMarkers: [],
     poiMarkers: [],
     businessCluster: null,
-    poiCluster: null,
+    poiCluster: null
   });
   const polylinesRef = useRef([]);
+  const compareOverlaysRef = useRef([]);
+  const budgetPathRef = useRef([]);
+  const greenEcoPolyRef = useRef(null);
+  const greenEcoAnimTimerRef = useRef(null);
+  const accuracyCircleRef = useRef(null);
   const businessMarkerByIdRef = useRef(new Map());
-  const highlightedIdRef = useRef(highlightedBusinessId != null ? String(highlightedBusinessId) : null);
+  const highlightedIdRef = useRef(effectiveHighlightBusinessId != null ? String(effectiveHighlightBusinessId) : null);
   const businessesByIdRef = useRef(new Map());
 
   useEffect(() => {
-    highlightedIdRef.current = highlightedBusinessId != null ? String(highlightedBusinessId) : null;
+    highlightedIdRef.current = effectiveHighlightBusinessId != null ? String(effectiveHighlightBusinessId) : null;
     businessesByIdRef.current = new Map((businesses || []).map((b) => [String(b?._id), b]));
-  }, [highlightedBusinessId, businesses]);
+  }, [effectiveHighlightBusinessId, businesses]);
 
-  const footerCount =
-    categoryFilter
-      ? `${(businesses || []).length} ${categoryFilter} from GoOut merchants · ${pois.length} public places`
-      : `${(businesses || []).length} places within 5km (nearest to you)`;
+  const q = (categoryFilter || '').trim();
+  const merchantCount = (businesses || []).length;
+  const poiCount = (pois || []).length;
+  const userLocationText =
+  userLocation && Number.isFinite(userLocation.lat) && Number.isFinite(userLocation.lng) ?
+  `${Number(userLocation.lat).toFixed(6)}, ${Number(userLocation.lng).toFixed(6)}` :
+  'Unavailable';
 
-  // Render markers + clustering
+  const footerCount = (() => {
+    if (!q) {
+      return `${merchantCount} places within 5km (nearest to you)`;
+    }
+    if (searchHasNoResults && !isSearching) {
+      return `No places found for "${q}"`;
+    }
+    if (isSearching) {
+      return `Searching… (${merchantCount} GoOut · ${poiCount} public so far)`;
+    }
+    return `Top match highlighted · ${merchantCount} GoOut merchants · ${poiCount} public places`;
+  })();
+
+
   useEffect(() => {
     if (!isLoaded || loadError) return;
     if (!mapRef.current || !window.google) return;
@@ -165,7 +228,7 @@ export default function DiscoveryMap({
     const google = window.google;
     const map = mapRef.current;
 
-    // Cleanup previous markers/clusters.
+
     const cleanup = () => {
       try {
         markersRef.current.businessCluster?.clearMarkers?.();
@@ -175,6 +238,9 @@ export default function DiscoveryMap({
       } catch {}
       try {
         markersRef.current.userMarker?.setMap?.(null);
+      } catch {}
+      try {
+        accuracyCircleRef.current?.setMap?.(null);
       } catch {}
 
       (markersRef.current.businessMarkers || []).forEach((m) => {
@@ -193,7 +259,7 @@ export default function DiscoveryMap({
         businessMarkers: [],
         poiMarkers: [],
         businessCluster: null,
-        poiCluster: null,
+        poiCluster: null
       };
       businessMarkerByIdRef.current = new Map();
       infoWindowRef.current?.close?.();
@@ -204,18 +270,40 @@ export default function DiscoveryMap({
     if (!infoWindowRef.current) infoWindowRef.current = new google.maps.InfoWindow();
     const infoWindow = infoWindowRef.current;
 
-    // User marker
+
     if (
-      userLocation &&
-      Number.isFinite(userLocation.lat) &&
-      Number.isFinite(userLocation.lng)
-    ) {
+    userLocation &&
+    Number.isFinite(userLocation.lat) &&
+    Number.isFinite(userLocation.lng))
+    {
       markersRef.current.userMarker = new google.maps.Marker({
         position: { lat: userLocation.lat, lng: userLocation.lng },
         title: 'You are here',
-        icon: PIN_ICONS.blue,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          fillColor: '#2563eb',
+          fillOpacity: 1,
+          strokeColor: '#ffffff',
+          strokeWeight: 2,
+          scale: 7
+        },
+        zIndex: 9999
       });
       markersRef.current.userMarker.setMap(map);
+      const radius = Number.isFinite(Number(userLocationAccuracy)) ? Math.max(8, Number(userLocationAccuracy)) : null;
+      if (radius) {
+        accuracyCircleRef.current = new google.maps.Circle({
+          map,
+          center: { lat: userLocation.lat, lng: userLocation.lng },
+          radius,
+          strokeColor: '#111111',
+          strokeOpacity: 0.45,
+          strokeWeight: 1,
+          fillColor: '#111111',
+          fillOpacity: 0.08,
+          zIndex: 1
+        });
+      }
     }
 
     const businessMarkers = [];
@@ -228,21 +316,62 @@ export default function DiscoveryMap({
       const isHighlighted = highlightedIdRef.current && String(b?._id) === highlightedIdRef.current;
       const isRedPin = Boolean(b?.localVerification?.redPin);
       const hasLiveDeal = offerIds.has(String(b?._id));
-      // Priority: AI highlight > live deal > verified red > regular business.
+      const spend = estimateMerchantSpendInr(b);
+      const cap = Number(budgetCapInr);
+      const deal = (offers || []).find((o) => String(o?.businessId?._id || o?.businessId) === String(b?._id));
+      const dealFits = Number.isFinite(cap) && cap > 0 && deal && Number(deal.offerPrice) <= cap;
+      const overBudget = !isHighlighted && Number.isFinite(cap) && cap > 0 && spend > cap && !dealFits;
+      const strongGreen = businessIsStrongGreen(b);
+      const distanceMeters =
+      userLocation && Number.isFinite(userLocation.lat) && Number.isFinite(userLocation.lng) ?
+      (() => {
+        const R = 6371e3;
+        const phi1 = userLocation.lat * Math.PI / 180;
+        const phi2 = Number(lat) * Math.PI / 180;
+        const dPhi = (Number(lat) - userLocation.lat) * Math.PI / 180;
+        const dLambda = (Number(lng) - userLocation.lng) * Math.PI / 180;
+        const a = Math.sin(dPhi / 2) ** 2 + Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLambda / 2) ** 2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      })() :
+      null;
+
       let icon = PIN_ICONS.green;
-      if (isRedPin) icon = PIN_ICONS.red;
-      if (hasLiveDeal) icon = PIN_ICONS.yellow;
-      if (isHighlighted) icon = PIN_ICONS.purple;
+      if (isHighlighted) {
+        icon = PIN_ICONS.purple;
+      } else if (overBudget) {
+        icon = {
+          path: google.maps.SymbolPath.CIRCLE,
+          fillColor: '#94a3b8',
+          fillOpacity: 0.55,
+          strokeColor: '#e2e8f0',
+          strokeWeight: 1,
+          scale: 6
+        };
+      } else if (strongGreen) {
+        icon = {
+          path: google.maps.SymbolPath.CIRCLE,
+          fillColor: '#059669',
+          fillOpacity: 1,
+          strokeColor: '#ecfdf5',
+          strokeWeight: 2,
+          scale: 8
+        };
+      } else if (isRedPin) {
+        icon = PIN_ICONS.red;
+      } else if (hasLiveDeal) {
+        icon = PIN_ICONS.yellow;
+      }
 
       const marker = new google.maps.Marker({
         position: { lat: Number(lat), lng: Number(lng) },
         icon,
+        zIndex: overBudget ? 1 : strongGreen ? 700 : isHighlighted ? 900 : hasLiveDeal ? 500 : 300
       });
 
       marker.addListener('click', () => {
         const isHighlighted = highlightedIdRef.current && String(b?._id) === highlightedIdRef.current;
-        // Inject deal info to reuse popup builder without threading extra state everywhere.
-        const popupModel = { ...b, __hasLiveDeal: hasLiveDeal };
+
+        const popupModel = { ...b, __hasLiveDeal: hasLiveDeal, distanceMeters };
         infoWindow.setContent(businessPopupHtml(popupModel, { isHighlighted }));
         infoWindow.open({ map, anchor: marker });
       });
@@ -254,19 +383,20 @@ export default function DiscoveryMap({
     const businessCluster = new MarkerClusterer({
       map,
       markers: businessMarkers,
-      algorithmOptions: { maxZoom: 16 },
+      algorithmOptions: { maxZoom: 16 }
     });
 
     const poiMarkers = [];
     (pois || []).forEach((p) => {
       if (!Number.isFinite(p?.lat) || !Number.isFinite(p?.lng)) return;
+      const isSearchPrimary = Boolean(highlightedPoiLatLng && poiLatLngMatch(p, highlightedPoiLatLng));
       const marker = new google.maps.Marker({
         position: { lat: p.lat, lng: p.lng },
-        icon: PIN_ICONS.blue,
+        icon: isSearchPrimary ? PIN_ICONS.purple : PIN_ICONS.blue
       });
 
       marker.addListener('click', () => {
-        infoWindow.setContent(poiPopupHtml(p));
+        infoWindow.setContent(poiPopupHtml(p, { isSearchPrimary }));
         infoWindow.open({ map, anchor: marker });
       });
 
@@ -276,7 +406,7 @@ export default function DiscoveryMap({
     const poiCluster = new MarkerClusterer({
       map,
       markers: poiMarkers,
-      algorithmOptions: { maxZoom: 16 },
+      algorithmOptions: { maxZoom: 16 }
     });
 
     markersRef.current = {
@@ -284,14 +414,14 @@ export default function DiscoveryMap({
       businessMarkers,
       poiMarkers,
       businessCluster,
-      poiCluster,
+      poiCluster
     };
-  }, [isLoaded, loadError, userLocation, businesses, pois, offerIds, highlightedBusinessId]);
+  }, [isLoaded, loadError, userLocation, userLocationAccuracy, businesses, pois, offers, offerIds, effectiveHighlightBusinessId, highlightedPoiLatLng, budgetCapInr]);
 
-  // Open InfoWindow for the AI-highlighted business
+
   useEffect(() => {
     if (!isLoaded || loadError) return;
-    const highlightedId = highlightedBusinessId != null ? String(highlightedBusinessId) : null;
+    const highlightedId = effectiveHighlightBusinessId != null ? String(effectiveHighlightBusinessId) : null;
     if (!highlightedId) return;
     const map = mapRef.current;
     const infoWindow = infoWindowRef.current;
@@ -305,9 +435,21 @@ export default function DiscoveryMap({
     const popupModel = { ...b, __hasLiveDeal: hasLiveDeal };
     infoWindow.setContent(businessPopupHtml(popupModel, { isHighlighted: true }));
     infoWindow.open({ map, anchor: marker });
-  }, [isLoaded, loadError, highlightedBusinessId, offerIds]);
+  }, [isLoaded, loadError, effectiveHighlightBusinessId, offerIds]);
 
-  // Render direction polylines
+  useEffect(() => {
+    if (!isLoaded || loadError || !conciergePanTo) return;
+    const map = mapRef.current;
+    if (!map || !window.google) return;
+    const la = Number(conciergePanTo.lat);
+    const lo = Number(conciergePanTo.lng);
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
+    map.panTo({ lat: la, lng: lo });
+    const z = map.getZoom();
+    if (!Number.isFinite(z) || z < 15) map.setZoom(15);
+  }, [isLoaded, loadError, conciergePanTo]);
+
+
   useEffect(() => {
     if (!isLoaded || loadError) return;
     if (!mapRef.current || !window.google) return;
@@ -315,7 +457,7 @@ export default function DiscoveryMap({
     const google = window.google;
     const map = mapRef.current;
 
-    // Cleanup old polylines.
+
     (polylinesRef.current || []).forEach((p) => {
       try {
         p.setMap(null);
@@ -333,9 +475,9 @@ export default function DiscoveryMap({
       if (!Array.isArray(latlngs) || latlngs.length < 2) return;
 
       const isSelected = idx === selectedDirectionsRouteIndex;
-      const path = latlngs
-        .map(([lat, lng]) => ({ lat: Number(lat), lng: Number(lng) }))
-        .filter((pt) => Number.isFinite(pt.lat) && Number.isFinite(pt.lng));
+      const path = latlngs.
+      map(([lat, lng]) => ({ lat: Number(lat), lng: Number(lng) })).
+      filter((pt) => Number.isFinite(pt.lat) && Number.isFinite(pt.lng));
 
       if (path.length < 2) return;
 
@@ -345,7 +487,7 @@ export default function DiscoveryMap({
         path,
         strokeColor: '#7c3aed',
         strokeOpacity: isSelected ? 1 : 0.25,
-        strokeWeight: isSelected ? 6 : 3,
+        strokeWeight: isSelected ? 6 : 3
       });
       polyline.setMap(map);
       lines.push(polyline);
@@ -360,61 +502,268 @@ export default function DiscoveryMap({
         bottom: 30,
         left: 30,
         right: 30,
-        maxZoom: 16,
+        maxZoom: 16
       });
     } catch {
-      // ignore
+
     }
   }, [isLoaded, loadError, directionsRoutes, selectedDirectionsRouteIndex]);
+
+  useEffect(() => {
+    if (!isLoaded || loadError || !mapRef.current || !window.google) return;
+    const google = window.google;
+    const map = mapRef.current;
+    (budgetPathRef.current || []).forEach((p) => {
+      try {
+        p.setMap(null);
+      } catch {}
+    });
+    budgetPathRef.current = [];
+    if (!Array.isArray(budgetPathLatLngs) || budgetPathLatLngs.length < 2) return;
+    const path = budgetPathLatLngs.
+      map((p) => ({ lat: Number(p.lat), lng: Number(p.lng) })).
+      filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+    if (path.length < 2) return;
+    const polyline = new google.maps.Polyline({
+      path,
+      strokeColor: '#475569',
+      strokeOpacity: 0.9,
+      strokeWeight: 3,
+      geodesic: true
+    });
+    polyline.setMap(map);
+    budgetPathRef.current = [polyline];
+    return () => {
+      (budgetPathRef.current || []).forEach((p) => {
+        try {
+          p.setMap(null);
+        } catch {}
+      });
+      budgetPathRef.current = [];
+    };
+  }, [isLoaded, loadError, budgetPathLatLngs]);
+
+  useEffect(() => {
+    if (!isLoaded || loadError || !mapRef.current || !window.google) return;
+    const google = window.google;
+    const map = mapRef.current;
+    (compareOverlaysRef.current || []).forEach((p) => {
+      try {
+        p.setMap(null);
+      } catch {}
+    });
+    compareOverlaysRef.current = [];
+    if (!Array.isArray(compareRouteOverlays) || compareRouteOverlays.length === 0) return;
+
+    const bounds = new google.maps.LatLngBounds();
+    const lines = [];
+
+    compareRouteOverlays.forEach((layer) => {
+      const latlngs = layer?.geometryLatLng;
+      if (!Array.isArray(latlngs) || latlngs.length < 2) return;
+      const path = latlngs.
+      map(([lat, lng]) => ({ lat: Number(lat), lng: Number(lng) })).
+      filter((pt) => Number.isFinite(pt.lat) && Number.isFinite(pt.lng));
+      if (path.length < 2) return;
+      path.forEach((pt) => bounds.extend(pt));
+      const polyline = new google.maps.Polyline({
+        path,
+        strokeColor: layer.strokeColor || '#94a3b8',
+        strokeOpacity: typeof layer.strokeOpacity === 'number' ? layer.strokeOpacity : 0.92,
+        strokeWeight: layer.strokeWeight || 4,
+        zIndex: typeof layer.zIndex === 'number' ? layer.zIndex : 1,
+        geodesic: true
+      });
+      polyline.setMap(map);
+      lines.push(polyline);
+    });
+
+    compareOverlaysRef.current = lines;
+    if (!lines.length) return;
+    try {
+      map.fitBounds(bounds, { top: 50, bottom: 50, left: 50, right: 50, maxZoom: 15 });
+    } catch {}
+    return () => {
+      (compareOverlaysRef.current || []).forEach((p) => {
+        try {
+          p.setMap(null);
+        } catch {}
+      });
+      compareOverlaysRef.current = [];
+    };
+  }, [isLoaded, loadError, compareRouteOverlays]);
+
+  useEffect(() => {
+    if (!isLoaded || loadError || !mapRef.current || !window.google) return;
+    const map = mapRef.current;
+    try {
+      map.setOptions({ styles: mapVisualTheme === 'green' ? GREEN_MAP_STYLES : [] });
+    } catch {}
+  }, [isLoaded, loadError, mapVisualTheme]);
+
+  useEffect(() => {
+    if (!isLoaded || loadError || !mapRef.current || !window.google) return;
+    const google = window.google;
+    const map = mapRef.current;
+    if (greenEcoAnimTimerRef.current) {
+      clearInterval(greenEcoAnimTimerRef.current);
+      greenEcoAnimTimerRef.current = null;
+    }
+    try {
+      greenEcoPolyRef.current?.setMap?.(null);
+    } catch {}
+    greenEcoPolyRef.current = null;
+
+    const latlngs = greenEcoRoute?.geometryLatLng;
+    if (!Array.isArray(latlngs) || latlngs.length < 2) return;
+
+    const path = latlngs.
+    map(([lat, lng]) => ({ lat: Number(lat), lng: Number(lng) })).
+    filter((pt) => Number.isFinite(pt.lat) && Number.isFinite(pt.lng));
+    if (path.length < 2) return;
+
+    const lineSymbol = {
+      path: google.maps.SymbolPath.CIRCLE,
+      fillOpacity: 1,
+      scale: 3.5,
+      strokeColor: '#ffffff',
+      strokeWeight: 1,
+      fillColor: '#10b981'
+    };
+
+    const polyline = new google.maps.Polyline({
+      path,
+      geodesic: true,
+      strokeColor: '#059669',
+      strokeOpacity: 0.88,
+      strokeWeight: 6,
+      zIndex: 4,
+      icons: [{ icon: lineSymbol, offset: '0%', repeat: '18px' }]
+    });
+    polyline.setMap(map);
+    greenEcoPolyRef.current = polyline;
+
+    let step = 0;
+    greenEcoAnimTimerRef.current = setInterval(() => {
+      step = (step + 2) % 100;
+      try {
+        polyline.set('icons', [{ icon: lineSymbol, offset: `${step}%`, repeat: '18px' }]);
+      } catch {}
+    }, 90);
+
+    const bounds = new google.maps.LatLngBounds();
+    path.forEach((pt) => bounds.extend(pt));
+    try {
+      map.fitBounds(bounds, { top: 48, bottom: 48, left: 48, right: 48, maxZoom: 15 });
+    } catch {}
+
+    return () => {
+      if (greenEcoAnimTimerRef.current) {
+        clearInterval(greenEcoAnimTimerRef.current);
+        greenEcoAnimTimerRef.current = null;
+      }
+      try {
+        polyline.setMap(null);
+      } catch {}
+    };
+  }, [isLoaded, loadError, greenEcoRoute]);
 
   if (!apiKey) {
     return (
       <div className="rounded-2xl overflow-hidden border border-slate-200 bg-white shadow-sm p-4 text-sm text-slate-700">
         Google Maps API key is missing. Set `VITE_GOOGLE_MAPS_API_KEY` in `client/.env`.
-      </div>
-    );
+      </div>);
+
   }
 
   if (loadError) {
     return (
       <div className="rounded-2xl overflow-hidden border border-red-200 bg-white shadow-sm p-4 text-sm text-red-700">
         Failed to load Google Maps: {String(loadError.message || loadError)}
-      </div>
-    );
+      </div>);
+
   }
 
   return (
     <div className="rounded-2xl overflow-hidden border border-slate-200 bg-white shadow-sm">
       <div className="h-[500px] relative">
-        {!isLoaded ? (
-          <div className="h-full w-full flex items-center justify-center text-sm text-slate-600">
-            Loading Google Maps...
+        {greenEcoRoute && Number.isFinite(Number(greenEcoRoute.co2SavedGrams)) &&
+        <div className="absolute bottom-3 left-3 z-[5] max-w-[min(92vw,260px)] rounded-xl bg-emerald-950/90 text-emerald-50 border border-emerald-600/50 shadow-lg px-3 py-2 text-xs pointer-events-none">
+            <p className="font-semibold flex items-center gap-1.5">
+              <span aria-hidden>☁</span>
+              ~{Math.round(Number(greenEcoRoute.co2SavedGrams))} g CO₂ vs car
+            </p>
+            {greenEcoRoute.modeLabel &&
+          <p className="text-emerald-200/90 mt-0.5 capitalize">{greenEcoRoute.modeLabel} route · Green preview</p>
+          }
           </div>
-        ) : (
-          <GoogleMap
-            onLoad={(map) => {
-              mapRef.current = map;
-            }}
-            center={center}
-            zoom={DEFAULT_ZOOM}
-            mapContainerStyle={{ width: '100%', height: '100%' }}
-            options={{
-              streetViewControl: false,
-              mapTypeControl: false,
-              fullscreenControl: false,
-              clickableIcons: false,
-            }}
-          />
-        )}
+        }
+        {compareVersus && Array.isArray(compareVersus.options) && compareVersus.options.length >= 2 &&
+        <div className="absolute top-3 right-3 z-[5] max-w-[min(92vw,300px)] rounded-xl bg-white/95 border border-slate-200 shadow-lg p-3 text-xs pointer-events-none">
+            <p className="font-semibold text-slate-900 mb-2">Comparator · Versus</p>
+            <div className="space-y-2">
+              {compareVersus.options.map((o) =>
+            <div
+              key={o.businessId}
+              className={`rounded-lg px-2 py-1.5 border ${
+              String(o.businessId) === String(compareVersus.topPickId) ?
+              'border-emerald-300 bg-emerald-50' :
+              'border-slate-200 bg-slate-50'}`
+              }>
+              
+                  <p className="font-medium text-slate-800 truncate">{o.name}</p>
+                  <p className="text-slate-600 mt-0.5">
+                    Value {o.valueScore} · Benefit {o.benefitScore} · Cost score ₹{o.totalCostScore}
+                  </p>
+                  {String(o.businessId) === String(compareVersus.topPickId) &&
+              <p className="text-emerald-800 font-medium mt-1">Top pick</p>
+              }
+                </div>
+            )}
+            </div>
+          </div>
+        }
+        {!isLoaded ?
+        <div className="h-full w-full flex items-center justify-center text-sm text-slate-600">
+            Loading Google Maps...
+          </div> :
+
+        <GoogleMap
+          onLoad={(map) => {
+            mapRef.current = map;
+          }}
+          center={center}
+          zoom={DEFAULT_ZOOM}
+          mapContainerStyle={{ width: '100%', height: '100%' }}
+          options={{
+            streetViewControl: false,
+            mapTypeControl: false,
+            fullscreenControl: false,
+            clickableIcons: false
+          }} />
+
+        }
       </div>
-      <div className="p-4 bg-slate-50 border-t flex flex-wrap gap-4 items-center text-sm">
-        <span>🔵 Your location & public places</span>
-        <span>🟢 GoOut merchants</span>
-        <span>🔴 Verified local-first merchants</span>
-        <span>🟡 Live Flash Deal</span>
-        <span>🟣 AI recommended place</span>
-        <span>{footerCount}</span>
+      <div className="p-4 bg-slate-50 border-t flex flex-col gap-1 text-sm">
+        <span><strong>🔵 User location:</strong> {userLocationText}</span>
+        <span><strong>Public places found by search:</strong> {q ? poiCount : 0}</span>
+        <span><strong>Local places found by search:</strong> {q ? merchantCount : 0}</span>
+        {Number.isFinite(Number(budgetCapInr)) && Number(budgetCapInr) > 0 &&
+        <span className="text-xs text-slate-600">
+            Budget overlay: grey pins are above your cap (or use a flash deal if one appears). Larger green dots highlight strong sustainability tags.
+          </span>
+        }
+        {Array.isArray(compareRouteOverlays) && compareRouteOverlays.length > 0 &&
+        <span className="text-xs text-slate-600">
+            Comparator routes: green = best value for your goals; grey = alternate choice.
+          </span>
+        }
+        {mapVisualTheme === 'green' &&
+        <span className="text-xs text-emerald-800">
+            Green layer: parks and landscape are emphasized; animated line = eco route preview from Green tab.
+          </span>
+        }
       </div>
-    </div>
-  );
+    </div>);
+
 }

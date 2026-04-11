@@ -34,11 +34,11 @@ export const optionalProtect = async (req, res, next) => {
 };
 
 export const merchantOnly = (req, res, next) => {
-  // Backward-compatible: old JWTs may not carry role/merchant claims yet.
-  // In that case, rely on DB role. New tokens are validated by claim + DB role.
+
+
   const hasClaims = req.tokenClaims && (req.tokenClaims.role !== undefined || req.tokenClaims.merchant !== undefined);
   const hasMerchantClaim = req.tokenClaims?.merchant === true || req.tokenClaims?.role === 'merchant';
-  if (req.user?.role !== 'merchant' || (hasClaims && !hasMerchantClaim)) {
+  if (req.user?.role !== 'merchant' || hasClaims && !hasMerchantClaim) {
     return res.status(403).json({ error: 'Merchant access required' });
   }
   next();

@@ -6,15 +6,16 @@ const router = express.Router();
 
 router.put('/profile', protect, async (req, res) => {
   try {
-    const { name, interests, location, weight, emergencyContact } = req.body;
+    const { name, interests, location, weight, emergencyContact, buddyMode } = req.body;
     const update = { lastActive: new Date() };
     if (name !== undefined) update.name = name;
     if (interests !== undefined) update.interests = interests;
+    if (buddyMode !== undefined) update.buddyMode = Boolean(buddyMode);
     if (location !== undefined) update.location = location;
     if (weight !== undefined) update.weight = weight;
     if (emergencyContact !== undefined) update.emergencyContact = emergencyContact;
-    const user = await User.findByIdAndUpdate(req.user._id, update, { new: true })
-      .select('-password');
+    const user = await User.findByIdAndUpdate(req.user._id, update, { new: true }).
+    select('-password');
     res.json(user);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -53,6 +54,48 @@ router.get('/green-stats', protect, async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select('greenStats');
     res.json(user.greenStats);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function normalizeDiscoveryPreferencesBody(body) {
+  const prefer = Array.isArray(body?.prefer) ?
+    [...new Set(body.prefer.map((s) => String(s || '').trim().slice(0, 120)).filter(Boolean))].slice(0, 24) :
+    undefined;
+  const avoid = Array.isArray(body?.avoid) ?
+    [...new Set(body.avoid.map((s) => String(s || '').trim().slice(0, 120)).filter(Boolean))].slice(0, 24) :
+    undefined;
+  const notes = body?.notes !== undefined ? String(body.notes || '').slice(0, 800) : undefined;
+  return { prefer, avoid, notes };
+}
+
+router.get('/discovery-preferences', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('discoveryPreferences').lean();
+    const d = user?.discoveryPreferences || {};
+    res.json({
+      prefer: Array.isArray(d.prefer) ? d.prefer : [],
+      avoid: Array.isArray(d.avoid) ? d.avoid : [],
+      notes: typeof d.notes === 'string' ? d.notes : ''
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/discovery-preferences', protect, async (req, res) => {
+  try {
+    const { prefer, avoid, notes } = normalizeDiscoveryPreferencesBody(req.body || {});
+    const $set = { lastActive: new Date() };
+    if (prefer !== undefined) $set['discoveryPreferences.prefer'] = prefer;
+    if (avoid !== undefined) $set['discoveryPreferences.avoid'] = avoid;
+    if (notes !== undefined) $set['discoveryPreferences.notes'] = notes;
+    if (Object.keys($set).length <= 1) {
+      return res.status(400).json({ error: 'Send prefer, avoid, and/or notes' });
+    }
+    const user = await User.findByIdAndUpdate(req.user._id, { $set }, { new: true }).select('discoveryPreferences');
+    res.json(user.discoveryPreferences || { prefer: [], avoid: [], notes: '' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

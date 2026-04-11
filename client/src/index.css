@@ -4,8 +4,16 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  color-scheme: light;
+}
+
 * {
   box-sizing: border-box;
+}
+
+html, body, #root {
+  min-height: 100%;
 }
 
 body {
@@ -13,6 +21,144 @@ body {
   font-family: 'DM Sans', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background:
+    radial-gradient(circle at 10% 8%, rgba(16, 185, 129, 0.14) 0%, rgba(16, 185, 129, 0) 34%),
+    radial-gradient(circle at 90% 12%, rgba(59, 130, 246, 0.12) 0%, rgba(59, 130, 246, 0) 36%),
+    linear-gradient(180deg, #f8fbff 0%, #f1f7ff 55%, #eef7f5 100%);
+  color: #0f172a;
+}
+
+a {
+  transition: color 160ms ease, opacity 160ms ease;
+}
+
+button, input, textarea, select {
+  font: inherit;
+}
+
+input,
+textarea,
+select {
+  background: rgba(255, 255, 255, 0.9);
+  color: #0f172a;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #94a3b8;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: rgba(16, 185, 129, 0.7);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16);
+}
+
+.goout-surface {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.88) 0%, rgba(248, 250, 252, 0.92) 100%);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  box-shadow: 0 12px 34px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(8px);
+  transition: transform 220ms ease, box-shadow 220ms ease, border-color 220ms ease;
+}
+
+.goout-surface:hover {
+  transform: translateY(-2px);
+  border-color: rgba(16, 185, 129, 0.38);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.goout-muted {
+  color: #94a3b8;
+}
+
+.goout-page-shell {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(16, 185, 129, 0.11), rgba(16, 185, 129, 0) 34%),
+    radial-gradient(circle at 100% 0%, rgba(56, 189, 248, 0.12), rgba(56, 189, 248, 0) 34%),
+    linear-gradient(180deg, #f8fbff 0%, #f2f8ff 56%, #edf7f4 100%);
+}
+
+.goout-grid-overlay {
+  position: relative;
+}
+
+.goout-grid-overlay::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(circle at center, rgba(0, 0, 0, 0.7), transparent 78%);
+}
+
+.goout-auth-shell {
+  background:
+    radial-gradient(circle at 20% 10%, rgba(16, 185, 129, 0.16), rgba(16, 185, 129, 0) 36%),
+    radial-gradient(circle at 80% 0%, rgba(59, 130, 246, 0.14), rgba(59, 130, 246, 0) 32%),
+    linear-gradient(180deg, #f8fbff 0%, #f3f8ff 100%);
+}
+
+.goout-animate-in {
+  animation: gooutFadeSlideIn 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.goout-animate-stagger > * {
+  opacity: 0;
+  transform: translateY(10px);
+  animation: gooutFadeSlideIn 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.goout-animate-stagger > *:nth-child(1) { animation-delay: 40ms; }
+.goout-animate-stagger > *:nth-child(2) { animation-delay: 90ms; }
+.goout-animate-stagger > *:nth-child(3) { animation-delay: 140ms; }
+.goout-animate-stagger > *:nth-child(4) { animation-delay: 190ms; }
+.goout-animate-stagger > *:nth-child(5) { animation-delay: 240ms; }
+.goout-animate-stagger > *:nth-child(6) { animation-delay: 290ms; }
+
+.goout-soft-card {
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+  transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease;
+}
+
+.goout-soft-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(16, 185, 129, 0.36);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.1);
+}
+
+.goout-pill {
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: rgba(255, 255, 255, 0.82);
+  border-radius: 9999px;
+}
+
+button {
+  transition: transform 140ms ease, box-shadow 160ms ease, background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+button:active {
+  transform: translateY(1px) scale(0.995);
+}
+
+@keyframes gooutFadeSlideIn {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .leaflet-container {

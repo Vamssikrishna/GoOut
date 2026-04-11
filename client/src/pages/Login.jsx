@@ -26,7 +26,7 @@ export default function Login() {
         addToast({
           type: 'success',
           title: 'Check your email',
-          message: result.message || 'We sent a sign-in code to your inbox.',
+          message: result.message || 'We sent a sign-in code to your inbox.'
         });
         return;
       }
@@ -37,7 +37,7 @@ export default function Login() {
       addToast({
         type: 'error',
         title: 'Login failed',
-        message: res.response?.data?.error || 'Please check your credentials.',
+        message: res.response?.data?.error || 'Please check your credentials.'
       });
     } finally {
       setBusy(false);
@@ -57,7 +57,7 @@ export default function Login() {
       addToast({
         type: 'error',
         title: 'Could not verify',
-        message: res.response?.data?.error || 'Check the code and try again.',
+        message: res.response?.data?.error || 'Check the code and try again.'
       });
     } finally {
       setBusy(false);
@@ -77,7 +77,7 @@ export default function Login() {
       addToast({
         type: 'error',
         title: 'Could not resend',
-        message: res.response?.data?.error || 'Try again.',
+        message: res.response?.data?.error || 'Try again.'
       });
     } finally {
       setBusy(false);
@@ -85,43 +85,43 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-goout-dark flex items-center justify-center p-4">
+    <div className="min-h-screen goout-auth-shell flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <Link to="/" className="block text-goout-green font-display font-bold text-2xl mb-8">GoOut</Link>
-        <div className="bg-white rounded-2xl p-8 shadow-xl">
-          {step === 'credentials' ? (
-            <>
+        <div className="goout-surface rounded-2xl p-8 shadow-xl">
+          {step === 'credentials' ?
+          <>
               <h1 className="text-2xl font-bold text-slate-900 mb-6">Welcome back</h1>
               <form onSubmit={handleCredentials} className="space-y-4">
                 {err && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{err}</div>}
                 <input
-                  type="email"
-                  placeholder="Email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  autoComplete="email"
-                  className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent"
-                />
+                type="email"
+                placeholder="Email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                autoComplete="email"
+                className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent" />
+              
                 <input
-                  type="password"
-                  placeholder="Password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  autoComplete="current-password"
-                  className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent"
-                />
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoComplete="current-password"
+                className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent" />
+              
                 <div className="flex justify-end">
                   <Link to="/forgot-password" className="text-sm text-goout-green font-medium hover:underline">
                     Forgot password?
                   </Link>
                 </div>
                 <button
-                  type="submit"
-                  disabled={busy}
-                  className="w-full py-3 bg-goout-green text-white font-medium rounded-lg hover:bg-goout-accent transition disabled:opacity-60"
-                >
+                type="submit"
+                disabled={busy}
+                className="w-full py-3 bg-goout-green text-white font-medium rounded-lg hover:bg-goout-accent transition disabled:opacity-60">
+                
                   {busy ? 'Please wait…' : 'Sign In'}
                 </button>
               </form>
@@ -131,9 +131,9 @@ export default function Login() {
                   Register
                 </Link>
               </p>
-            </>
-          ) : (
-            <>
+            </> :
+
+          <>
               <h1 className="text-2xl font-bold text-slate-900 mb-2">Enter sign-in code</h1>
               <p className="text-slate-600 text-sm mb-6">
                 We sent a 6-digit code to <span className="font-medium text-slate-800">{email}</span>.
@@ -141,50 +141,50 @@ export default function Login() {
               <form onSubmit={handleOtp} className="space-y-4">
                 {err && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{err}</div>}
                 <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={6}
-                  placeholder="000000"
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  required
-                  autoComplete="one-time-code"
-                  className="w-full px-4 py-3 rounded-lg border border-slate-200 text-center text-2xl tracking-[0.5em] font-mono focus:ring-2 focus:ring-goout-green focus:border-transparent"
-                />
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                placeholder="000000"
+                value={otp}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                required
+                autoComplete="one-time-code"
+                className="w-full px-4 py-3 rounded-lg border border-slate-200 text-center text-2xl tracking-[0.5em] font-mono focus:ring-2 focus:ring-goout-green focus:border-transparent" />
+              
                 <button
-                  type="submit"
-                  disabled={busy || otp.length !== 6}
-                  className="w-full py-3 bg-goout-green text-white font-medium rounded-lg hover:bg-goout-accent transition disabled:opacity-60"
-                >
+                type="submit"
+                disabled={busy || otp.length !== 6}
+                className="w-full py-3 bg-goout-green text-white font-medium rounded-lg hover:bg-goout-accent transition disabled:opacity-60">
+                
                   {busy ? 'Verifying…' : 'Verify & continue'}
                 </button>
               </form>
               <div className="mt-4 flex flex-col sm:flex-row gap-3 justify-between items-center text-sm">
                 <button
-                  type="button"
-                  onClick={() => {
-                    setStep('credentials');
-                    setErr('');
-                    setOtp('');
-                  }}
-                  className="text-slate-600 hover:text-slate-900"
-                >
+                type="button"
+                onClick={() => {
+                  setStep('credentials');
+                  setErr('');
+                  setOtp('');
+                }}
+                className="text-slate-600 hover:text-slate-900">
+                
                   ← Back
                 </button>
                 <button
-                  type="button"
-                  onClick={handleResend}
-                  disabled={busy}
-                  className="text-goout-green font-medium hover:underline disabled:opacity-60"
-                >
+                type="button"
+                onClick={handleResend}
+                disabled={busy}
+                className="text-goout-green font-medium hover:underline disabled:opacity-60">
+                
                   Resend code
                 </button>
               </div>
             </>
-          )}
+          }
         </div>
       </div>
-    </div>
-  );
+    </div>);
+
 }

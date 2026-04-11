@@ -16,11 +16,14 @@ import businessRoutes from './routes/businesses.js';
 import buddyRoutes from './routes/buddies.js';
 import offerRoutes from './routes/offers.js';
 import chatRoutes from './routes/chat.js';
-import aiRoutes from './routes/ai.js';
 import visitRoutes from './routes/visits.js';
 import geocodeRoutes from './routes/geocode.js';
 import budgetRoutes from './routes/budget.js';
 import directionsRoutes from './routes/directions.js';
+import compareRoutes from './routes/compare.js';
+import greenRoutes from './routes/green.js';
+import conciergeRoutes from './routes/concierge.js';
+import uploadRoutes from './routes/uploads.js';
 import { setupSocketHandlers } from './socket/handlers.js';
 import Business from './models/Business.js';
 connectDB();
@@ -41,11 +44,12 @@ setInterval(async () => {
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
-  cors: { origin: process.env.CLIENT_URL || 'http://localhost:5173' },
+  cors: { origin: process.env.CLIENT_URL || 'http://localhost:5173' }
 });
 
 app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173', credentials: true }));
 app.use(express.json());
+app.use('/uploads', express.static(join(__dirname, 'uploads')));
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -57,7 +61,10 @@ app.use('/api/visits', visitRoutes);
 app.use('/api/geocode', geocodeRoutes);
 app.use('/api/budget', budgetRoutes);
 app.use('/api/directions', directionsRoutes);
-app.use('/api/ai', aiRoutes);
+app.use('/api/compare', compareRoutes);
+app.use('/api/green', greenRoutes);
+app.use('/api/concierge', conciergeRoutes);
+app.use('/api/uploads', uploadRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', message: 'GoOut API running' }));
 

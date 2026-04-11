@@ -11,6 +11,37 @@ const businessSchema = new mongoose.Schema({
     coordinates: { type: [Number], required: true }
   },
   address: { type: String, required: true },
+  addressStructured: {
+    street: { type: String, default: '' },
+    neighborhood: { type: String, default: '' },
+    city: { type: String, default: '' },
+    postalCode: { type: String, default: '' }
+  },
+  mapDisplayName: { type: String, default: '' },
+  contactEmail: { type: String, default: '' },
+  vibe: { type: String, default: '' },
+  priceTier: { type: Number, min: 1, max: 4, default: 2 },
+  weeklySchedule: { type: mongoose.Schema.Types.Mixed, default: {} },
+  verificationDocuments: [{
+    url: { type: String, required: true },
+    label: { type: String, default: 'document' }
+  }],
+  socialLinks: {
+    website: { type: String, default: '' },
+    instagram: { type: String, default: '' },
+    facebook: { type: String, default: '' }
+  },
+  menuCatalogText: { type: String, default: '' },
+  menuCatalogFileUrl: { type: String, default: '' },
+  localSourcingNote: { type: String, default: '' },
+  ecoOptions: {
+    plasticFree: { type: Boolean, default: false },
+    solarPowered: { type: Boolean, default: false },
+    zeroWaste: { type: Boolean, default: false }
+  },
+  carbonWalkIncentive: { type: Boolean, default: false },
+  notifyBuddyMeetups: { type: Boolean, default: true },
+  notifyFlashDeals: { type: Boolean, default: true },
   phone: { type: String },
   avgPrice: { type: Number, default: 0 },
   rating: { type: Number, default: 0 },
@@ -26,7 +57,7 @@ const businessSchema = new mongoose.Schema({
     status: { type: String, enum: ['none', 'pending', 'verified'], default: 'none' },
     redPin: { type: Boolean, default: false },
     verifiedAt: { type: Date, default: null },
-    notes: { type: String, default: '' },
+    notes: { type: String, default: '' }
   },
   localKarmaScore: { type: Number, default: 0 },
   analytics: {

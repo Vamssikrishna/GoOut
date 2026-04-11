@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import ChatMessage from '../models/ChatMessage.js';
 import User from '../models/User.js';
+import BuddyGroup from '../models/BuddyGroup.js';
 
 export function setupSocketHandlers(io) {
   io.use(async (socket, next) => {
@@ -26,6 +27,15 @@ export function setupSocketHandlers(io) {
 
     socket.on('chat-message', async ({ groupId, message }) => {
       try {
+        const group = await BuddyGroup.findById(groupId).select('members creatorId chatExpiresAt');
+        if (!group) return socket.emit('chat-error', { message: 'Group not found' });
+        const uid = String(socket.userId);
+        const isMember = group.creatorId.toString() === uid ||
+        group.members.some((m) => m.toString() === uid);
+        if (!isMember) return socket.emit('chat-error', { message: 'Not a member of this buddy chat' });
+        if (group.chatExpiresAt && new Date(group.chatExpiresAt) < new Date()) {
+          return socket.emit('chat-error', { message: 'This buddy chat has expired (2 hours after meetup time).' });
+        }
         const user = await User.findById(socket.userId).select('name avatar');
         if (!user) return;
         const msg = await ChatMessage.create({
@@ -39,12 +49,21 @@ export function setupSocketHandlers(io) {
           userId: { _id: socket.userId, name: user.name, avatar: user.avatar }
         });
       } catch (err) {
-        socket.emit('error', { message: err.message });
+        socket.emit('chat-error', { message: err.message });
       }
     });
 
     socket.on('sos', async ({ groupId, lat, lng }) => {
       try {
+        const group = await BuddyGroup.findById(groupId).select('members creatorId chatExpiresAt');
+        if (!group) return socket.emit('chat-error', { message: 'Group not found' });
+        const uid = String(socket.userId);
+        const isMember = group.creatorId.toString() === uid ||
+        group.members.some((m) => m.toString() === uid);
+        if (!isMember) return socket.emit('chat-error', { message: 'Not a member' });
+        if (group.chatExpiresAt && new Date(group.chatExpiresAt) < new Date()) {
+          return socket.emit('chat-error', { message: 'This buddy chat has expired.' });
+        }
         const user = await User.findById(socket.userId).select('name');
         if (!user) return;
         const msg = await ChatMessage.create({
@@ -57,7 +76,7 @@ export function setupSocketHandlers(io) {
         });
         io.to(`group-${groupId}`).emit('sos', { message: msg, userId: socket.userId });
       } catch (err) {
-        socket.emit('error', { message: err.message });
+        socket.emit('chat-error', { message: err.message });
       }
     });
 

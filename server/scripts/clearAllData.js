@@ -29,4 +29,4 @@ async function clearAll() {
   process.exit(0);
 }
 
-clearAll().catch((e) => { console.error(e); process.exit(1); });
+clearAll().catch((e) => {console.error(e);process.exit(1);});

@@ -12,6 +12,9 @@ const userSchema = new mongoose.Schema({
     coordinates: { type: [Number], default: [0, 0] }
   },
   interests: [{ type: String }],
+  buddyMode: { type: Boolean, default: false },
+  socialPoints: { type: Number, default: 0 },
+  carbonCredits: { type: Number, default: 0 },
   emergencyContact: { type: String, default: '' },
   weight: { type: Number, default: 65 },
   verified: { type: Boolean, default: false },
@@ -21,11 +24,17 @@ const userSchema = new mongoose.Schema({
     totalCO2Saved: { type: Number, default: 0 },
     totalWalks: { type: Number, default: 0 }
   },
+  /** Concierge "memory" — prefer/avoid chips + freeform notes (corrective personalization). */
+  discoveryPreferences: {
+    prefer: [{ type: String, maxlength: 120 }],
+    avoid: [{ type: String, maxlength: 120 }],
+    notes: { type: String, maxlength: 800, default: '' }
+  },
   lastActive: { type: Date, default: Date.now },
   passwordResetToken: { type: String, select: false },
   passwordResetExpires: { type: Date, select: false },
   loginOtpHash: { type: String, select: false },
-  loginOtpExpires: { type: Date, select: false },
+  loginOtpExpires: { type: Date, select: false }
 }, { timestamps: true });
 
 userSchema.index({ location: '2dsphere' });

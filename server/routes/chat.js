@@ -10,11 +10,11 @@ router.get('/:groupId', protect, async (req, res) => {
     const group = await BuddyGroup.findById(req.params.groupId);
     if (!group) return res.status(404).json({ error: 'Group not found' });
     const isMember = group.creatorId.toString() === req.user._id.toString() ||
-      group.members.some(m => m.toString() === req.user._id.toString());
+    group.members.some((m) => m.toString() === req.user._id.toString());
     if (!isMember) return res.status(403).json({ error: 'Not a member' });
-    const messages = await ChatMessage.find({ groupId: req.params.groupId })
-      .sort({ createdAt: 1 })
-      .populate('userId', 'name avatar');
+    const messages = await ChatMessage.find({ groupId: req.params.groupId }).
+    sort({ createdAt: 1 }).
+    populate('userId', 'name avatar');
     res.json(messages);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -27,7 +27,7 @@ router.post('/:groupId/sos', protect, async (req, res) => {
     const group = await BuddyGroup.findById(req.params.groupId);
     if (!group) return res.status(404).json({ error: 'Group not found' });
     const isMember = group.creatorId.toString() === req.user._id.toString() ||
-      group.members.some(m => m.toString() === req.user._id.toString());
+    group.members.some((m) => m.toString() === req.user._id.toString());
     if (!isMember) return res.status(403).json({ error: 'Not a member' });
     const msg = await ChatMessage.create({
       groupId: req.params.groupId,

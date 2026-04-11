@@ -13,6 +13,6 @@ const offerSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 offerSchema.index({ businessId: 1, isActive: 1 });
-offerSchema.index({ validUntil: 1 }, { expireAfterSeconds: 0 }); // TTL: remove doc when validUntil has passed
+offerSchema.index({ validUntil: 1 }, { expireAfterSeconds: 0 });
 
 export default mongoose.model('Offer', offerSchema);

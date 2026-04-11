@@ -98,8 +98,6 @@ Go/
 | GET | /api/offers/live | Live flash deals |
 | GET | /api/buddies/match | Find buddy groups |
 | POST | /api/buddies/groups | Create group |
-| POST | /api/ai/chat | City Concierge chat |
-| POST | /api/ai/smart-register | Smart business extraction |
 
 ## License
 

@@ -4,13 +4,13 @@ const router = express.Router();
 const DEFAULT_CENTER = { lat: 28.6139, lng: 77.2090 };
 const MAP_PROVIDER_MODE = (process.env.MAP_PROVIDER_MODE || 'osm').toLowerCase();
 
-// In-memory cache to reduce external API calls (and avoid 429 rate limits).
-// Key includes lat/lng rounded and query term.
+
+
 const poiCache = new Map();
 const POI_CACHE_TTL_MS = 2 * 60 * 1000;
 
 function cacheKey(latNum, lngNum, term, r) {
-  // Bucket coords to reduce cache fragmentation.
+
   const la = latNum.toFixed(3);
   const lo = lngNum.toFixed(3);
   const rr = Math.round(Number(r) || 0);
@@ -37,7 +37,7 @@ const CATEGORY_SYNONYMS = {
   mall: ['mall', 'shopping', 'supermarket', 'department_store'],
   park: ['park', 'garden', 'playground'],
   hotel: ['hotel', 'resort', 'hostel', 'guest_house'],
-  restaurant: ['restaurant', 'food', 'cafe', 'fast_food'],
+  restaurant: ['restaurant', 'food', 'cafe', 'fast_food']
 };
 
 const OVERPASS_CATEGORY_TAGS = {
@@ -47,7 +47,7 @@ const OVERPASS_CATEGORY_TAGS = {
   cafe: ['amenity=cafe'],
   mall: ['shop=mall', 'shop=supermarket', 'shop=department_store'],
   hotel: ['tourism=hotel', 'tourism=hostel', 'tourism=guest_house'],
-  park: ['leisure=park', 'leisure=garden', 'leisure=playground'],
+  park: ['leisure=park', 'leisure=garden', 'leisure=playground']
 };
 
 function getSearchTerms(term) {
@@ -71,20 +71,20 @@ function getCategoryTagFilters(term) {
 
 function haversineMeters(la1, lo1, la2, lo2) {
   const R = 6371e3;
-  const phi1 = (la1 * Math.PI) / 180;
-  const phi2 = (la2 * Math.PI) / 180;
-  const dPhi = ((la2 - la1) * Math.PI) / 180;
-  const dLambda = ((lo2 - lo1) * Math.PI) / 180;
+  const phi1 = la1 * Math.PI / 180;
+  const phi2 = la2 * Math.PI / 180;
+  const dPhi = (la2 - la1) * Math.PI / 180;
+  const dLambda = (lo2 - lo1) * Math.PI / 180;
   const a = Math.sin(dPhi / 2) ** 2 + Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLambda / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 function tokenize(value) {
-  return String(value || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter((t) => t.length >= 2);
+  return String(value || '').
+  toLowerCase().
+  replace(/[^a-z0-9\s]/g, ' ').
+  split(/\s+/).
+  filter((t) => t.length >= 2);
 }
 
 function getGoogleRelevanceScore(query, place) {
@@ -105,8 +105,8 @@ function getGoogleRelevanceScore(query, place) {
   if (category.includes(q)) score += 4;
 
   queryTokens.forEach((qt) => {
-    if (placeTokens.has(qt)) score += 3;
-    else if (Array.from(placeTokens).some((pt) => pt.startsWith(qt) || qt.startsWith(pt))) score += 1;
+    if (placeTokens.has(qt)) score += 3;else
+    if (Array.from(placeTokens).some((pt) => pt.startsWith(qt) || qt.startsWith(pt))) score += 1;
   });
 
   return score;
@@ -124,14 +124,14 @@ async function fetchWithTimeout(url, opts, timeoutMs) {
 }
 
 async function fetchWithRetryOn429(url, opts, timeoutMs, maxAttempts = 2) {
-  // Nominatim is prone to 429s; a short retry helps while we still avoid spamming.
+
   let lastResp = null;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     lastResp = await fetchWithTimeout(url, opts, timeoutMs);
     if (lastResp.ok) return lastResp;
     if (lastResp.status !== 429) return lastResp;
     const backoffMs = 700 * (attempt + 1);
-    // eslint-disable-next-line no-await-in-loop
+
     await new Promise((r) => setTimeout(r, backoffMs));
   }
   return lastResp;
@@ -141,7 +141,7 @@ async function fetchGooglePlacesText({
   searchTerm,
   latNum,
   lngNum,
-  radiusMeters,
+  radiusMeters
 }) {
   const apiKey = process.env.GOOGLE_MAPS_API_KEY || '';
   if (!apiKey || !searchTerm) return [];
@@ -154,7 +154,7 @@ async function fetchGooglePlacesText({
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': apiKey,
         'X-Goog-FieldMask':
-          'places.id,places.displayName,places.location,places.primaryType,places.formattedAddress',
+        'places.id,places.displayName,places.location,places.primaryType,places.formattedAddress'
       },
       body: JSON.stringify({
         textQuery: searchTerm,
@@ -163,10 +163,10 @@ async function fetchGooglePlacesText({
         locationBias: {
           circle: {
             center: { latitude: latNum, longitude: lngNum },
-            radius: Math.min(Math.max(radiusMeters, 500), 50000),
-          },
-        },
-      }),
+            radius: Math.min(Math.max(radiusMeters, 500), 50000)
+          }
+        }
+      })
     },
     9000
   );
@@ -174,20 +174,20 @@ async function fetchGooglePlacesText({
   if (!resp.ok) return [];
   const data = await resp.json();
   const places = Array.isArray(data?.places) ? data.places : [];
-  return places
-    .map((p) => {
-      const la = Number(p?.location?.latitude);
-      const lo = Number(p?.location?.longitude);
-      if (!Number.isFinite(la) || !Number.isFinite(lo)) return null;
-      return {
-        id: p.id || `${la},${lo}`,
-        name: p.displayName?.text || p.formattedAddress || 'Unnamed place',
-        category: p.primaryType || 'place',
-        lat: la,
-        lng: lo,
-      };
-    })
-    .filter(Boolean);
+  return places.
+  map((p) => {
+    const la = Number(p?.location?.latitude);
+    const lo = Number(p?.location?.longitude);
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) return null;
+    return {
+      id: p.id || `${la},${lo}`,
+      name: p.displayName?.text || p.formattedAddress || 'Unnamed place',
+      category: p.primaryType || 'place',
+      lat: la,
+      lng: lo
+    };
+  }).
+  filter(Boolean);
 }
 
 router.get('/ip-location', async (req, res) => {
@@ -216,7 +216,7 @@ router.get('/search', async (req, res) => {
   res.status(404).json({ error: 'Location not found' });
 });
 
-// Public POI search around a point using OpenStreetMap / Overpass
+
 router.get('/poi', async (req, res) => {
   try {
     const { lat, lng, q, radius = 2000 } = req.query;
@@ -236,35 +236,35 @@ router.get('/poi', async (req, res) => {
     const cached = getCached(key);
     if (cached) return res.json(cached);
 
-    // Google-first strict matching mode for dynamic "maps-like" search quality.
+
     if (safeTerm && (MAP_PROVIDER_MODE === 'google' || MAP_PROVIDER_MODE === 'hybrid')) {
       try {
         const googlePlaces = await fetchGooglePlacesText({
           searchTerm: safeTerm,
           latNum,
           lngNum,
-          radiusMeters: r,
+          radiusMeters: r
         });
 
-        const strictlyRelated = googlePlaces
-          .map((p) => ({
-            ...p,
-            relevanceScore: getGoogleRelevanceScore(safeTerm, p),
-            distanceMeters: haversineMeters(latNum, lngNum, p.lat, p.lng),
-          }))
-          .filter((p) => p.relevanceScore >= 3)
-          .sort((a, b) => {
-            if (b.relevanceScore !== a.relevanceScore) return b.relevanceScore - a.relevanceScore;
-            return a.distanceMeters - b.distanceMeters;
-          })
-          .slice(0, 80);
+        const strictlyRelated = googlePlaces.
+        map((p) => ({
+          ...p,
+          relevanceScore: getGoogleRelevanceScore(safeTerm, p),
+          distanceMeters: haversineMeters(latNum, lngNum, p.lat, p.lng)
+        })).
+        filter((p) => p.relevanceScore >= 3).
+        sort((a, b) => {
+          if (b.relevanceScore !== a.relevanceScore) return b.relevanceScore - a.relevanceScore;
+          return a.distanceMeters - b.distanceMeters;
+        }).
+        slice(0, 80);
 
         if (strictlyRelated.length > 0) {
           setCached(key, strictlyRelated);
           return res.json(strictlyRelated);
         }
 
-        // In google-only mode, avoid broad OSM fallbacks that can return unrelated places.
+
         if (MAP_PROVIDER_MODE === 'google') {
           return res.json([]);
         }
@@ -274,13 +274,13 @@ router.get('/poi', async (req, res) => {
         }
       }
     }
-    // Make Overpass regex tolerant for multi-word queries:
-    // "Green Beans" should match "GreenBean's Coffee" etc.
-    const overpassRegexTerm = safeTerm
-      // escape regex special chars for Overpass regex
-      .replace(/[\\\[\]\(\)\.\^\$\|\?\*\+\{\}]/g, (m) => `\\${m}`)
-      // whitespace -> wildcard-ish
-      .replace(/\s+/g, '.*');
+
+
+    const overpassRegexTerm = safeTerm.
+
+    replace(/[\\\[\]\(\)\.\^\$\|\?\*\+\{\}]/g, (m) => `\\${m}`).
+
+    replace(/\s+/g, '.*');
     const delta = Math.max(0.03, Math.min(r / 111000, 0.25));
     const left = (lngNum - delta).toFixed(6);
     const right = (lngNum + delta).toFixed(6);
@@ -300,7 +300,7 @@ router.get('/poi', async (req, res) => {
           const nominatimUrl = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(
             searchTerm
           )}&limit=80&addressdetails=0&namedetails=0&bounded=1&viewbox=${left},${top},${right},${bottom}`;
-          // eslint-disable-next-line no-await-in-loop
+
           const nominatimResp = await fetchWithRetryOn429(
             nominatimUrl,
             { headers: { 'User-Agent': 'GoOut/1.0 (Local Development)' } },
@@ -308,7 +308,7 @@ router.get('/poi', async (req, res) => {
             3
           );
           if (!nominatimResp.ok) continue;
-          // eslint-disable-next-line no-await-in-loop
+
           const nomData = await nominatimResp.json();
           const arr = Array.isArray(nomData) ? nomData : [];
           arr.forEach((item) => {
@@ -320,27 +320,27 @@ router.get('/poi', async (req, res) => {
               name: item.display_name?.split(',')?.[0] || item.name || 'Unnamed place',
               category: item.type || item.class || 'place',
               lat: la,
-              lng: lo,
+              lng: lo
             });
           });
         } catch (e) {
-          // ignore provider timeout/rate-limit for this term
+
         }
       }
     }
 
-    const categorySpecificFilters = categoryTagFilters
-      .map(
-        (tag) => `
+    const categorySpecificFilters = categoryTagFilters.
+    map(
+      (tag) => `
         node(around:${r},${latNum},${lngNum})[${tag}];
         way(around:${r},${latNum},${lngNum})[${tag}];
         relation(around:${r},${latNum},${lngNum})[${tag}];
       `
-      )
-      .join('\n');
+    ).
+    join('\n');
 
-    const filters = safeTerm
-      ? `
+    const filters = safeTerm ?
+    `
         node(around:${r},${latNum},${lngNum})[name~"${overpassRegexTerm}",i];
         way(around:${r},${latNum},${lngNum})[name~"${overpassRegexTerm}",i];
         relation(around:${r},${latNum},${lngNum})[name~"${overpassRegexTerm}",i];
@@ -357,8 +357,8 @@ router.get('/poi', async (req, res) => {
         way(around:${r},${latNum},${lngNum})[tourism~"${overpassRegexTerm}",i];
         relation(around:${r},${latNum},${lngNum})[tourism~"${overpassRegexTerm}",i];
         ${categorySpecificFilters}
-      `
-      : `
+      ` :
+    `
         node(around:${r},${latNum},${lngNum})[amenity];
         way(around:${r},${latNum},${lngNum})[amenity];
         relation(around:${r},${latNum},${lngNum})[amenity];
@@ -369,7 +369,7 @@ router.get('/poi', async (req, res) => {
         way(around:${r},${latNum},${lngNum})[tourism];
         relation(around:${r},${latNum},${lngNum})[tourism];
       `;
-    // Query Overpass for both text + generic mode to improve recall.
+
     try {
       const overpassQuery = `[out:json][timeout:10];(${filters});out center tags;`;
       const overpassResp = await fetchWithTimeout(
@@ -377,7 +377,7 @@ router.get('/poi', async (req, res) => {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ data: overpassQuery }).toString(),
+          body: new URLSearchParams({ data: overpassQuery }).toString()
         },
         9000
       );
@@ -394,18 +394,18 @@ router.get('/poi', async (req, res) => {
             name: e.tags?.name || 'Unnamed place',
             category: e.tags?.amenity || e.tags?.shop || e.tags?.leisure || e.tags?.tourism || 'place',
             lat: latVal,
-            lng: lngVal,
+            lng: lngVal
           });
         });
       }
     } catch (e) {
-      // ignore overpass timeout/rate-limit
+
     }
 
     const getFiltered = () => {
       const withDistance = Array.from(merged.values()).map((p) => ({
         ...p,
-        distanceMeters: haversineMeters(latNum, lngNum, p.lat, p.lng),
+        distanceMeters: haversineMeters(latNum, lngNum, p.lat, p.lng)
       }));
       const filtered = withDistance.filter((p) => p.distanceMeters <= r * 1.15);
       filtered.sort((a, b) => a.distanceMeters - b.distanceMeters);
@@ -418,22 +418,22 @@ router.get('/poi', async (req, res) => {
           searchTerm: safeTerm,
           latNum,
           lngNum,
-          radiusMeters: r,
+          radiusMeters: r
         });
         googlePlaces.forEach((p) => addPlace(p));
       } catch (e) {
-        // ignore google provider errors; fallback providers still work
+
       }
     }
 
     let filtered = getFiltered();
     if (safeTerm && filtered.length < 8) {
-      // Final fallback: broader Nominatim text search (no bounding), then filter by distance.
+
       for (const searchTerm of relatedTerms) {
         const fallbackUrl = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(
           searchTerm
         )}&limit=100&addressdetails=0&namedetails=0`;
-        // eslint-disable-next-line no-await-in-loop
+
         const fallbackResp = await fetchWithRetryOn429(
           fallbackUrl,
           { headers: { 'User-Agent': 'GoOut/1.0 (Local Development)' } },
@@ -441,7 +441,7 @@ router.get('/poi', async (req, res) => {
           3
         );
         if (!fallbackResp.ok) continue;
-        // eslint-disable-next-line no-await-in-loop
+
         const fallbackData = await fallbackResp.json();
         const fallbackArr = Array.isArray(fallbackData) ? fallbackData : [];
         fallbackArr.forEach((item) => {
@@ -453,14 +453,14 @@ router.get('/poi', async (req, res) => {
             name: item.display_name?.split(',')?.[0] || item.name || 'Unnamed place',
             category: item.type || item.class || 'place',
             lat: la,
-            lng: lo,
+            lng: lo
           });
         });
       }
     }
     filtered = getFiltered();
 
-    // Extra provider fallback: Photon helps fill gaps for generic text queries.
+
     if (safeTerm) {
       const interim = getFiltered();
       if (interim.filter((p) => p.distanceMeters <= r * 1.15).length < 12) {
@@ -484,19 +484,19 @@ router.get('/poi', async (req, res) => {
                 name: p.name || p.street || p.city || p.state || 'Unnamed place',
                 category: p.osm_value || p.type || 'place',
                 lat: la,
-                lng: lo,
+                lng: lo
               });
             });
           }
         } catch (e) {
-          // ignore photon timeout
+
         }
       }
     }
     filtered = getFiltered();
 
-    // If Nominatim is rate-limited (429) and fallback is empty too,
-    // use a generic Overpass query to keep the map populated.
+
+
     if (safeTerm && filtered.length === 0) {
       const genericOverpass = `[out:json][timeout:10];
         (
@@ -515,7 +515,7 @@ router.get('/poi', async (req, res) => {
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({ data: genericOverpass }).toString(),
+            body: new URLSearchParams({ data: genericOverpass }).toString()
           },
           9000
         );
@@ -523,23 +523,23 @@ router.get('/poi', async (req, res) => {
         if (genericResp.ok) {
           const genericData = await genericResp.json();
           const elements = Array.isArray(genericData.elements) ? genericData.elements : [];
-          const places = elements
-            .map((e) => {
-              const latVal = typeof e.lat === 'number' ? e.lat : e.center?.lat;
-              const lngVal = typeof e.lon === 'number' ? e.lon : e.center?.lon;
-              if (typeof latVal !== 'number' || typeof lngVal !== 'number') return null;
-              return {
-                id: e.id,
-                name: e.tags?.name || 'Unnamed place',
-                category: e.tags?.amenity || e.tags?.leisure || e.tags?.tourism || 'place',
-                lat: latVal,
-                lng: lngVal,
-                distanceMeters: haversineMeters(latNum, lngNum, latVal, lngVal),
-              };
-            })
-            .filter(Boolean)
-            .filter((p) => p.distanceMeters <= r * 1.15)
-            .sort((a, b) => a.distanceMeters - b.distanceMeters);
+          const places = elements.
+          map((e) => {
+            const latVal = typeof e.lat === 'number' ? e.lat : e.center?.lat;
+            const lngVal = typeof e.lon === 'number' ? e.lon : e.center?.lon;
+            if (typeof latVal !== 'number' || typeof lngVal !== 'number') return null;
+            return {
+              id: e.id,
+              name: e.tags?.name || 'Unnamed place',
+              category: e.tags?.amenity || e.tags?.leisure || e.tags?.tourism || 'place',
+              lat: latVal,
+              lng: lngVal,
+              distanceMeters: haversineMeters(latNum, lngNum, latVal, lngVal)
+            };
+          }).
+          filter(Boolean).
+          filter((p) => p.distanceMeters <= r * 1.15).
+          sort((a, b) => a.distanceMeters - b.distanceMeters);
 
           if (places.length > 0) {
             const out = places.slice(0, 160);
@@ -548,7 +548,7 @@ router.get('/poi', async (req, res) => {
           }
         }
       } catch (e) {
-        // ignore
+
       }
     }
     const out = filtered.slice(0, 220);

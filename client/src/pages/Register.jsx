@@ -27,23 +27,23 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen bg-goout-dark flex items-center justify-center p-4">
+    <div className="min-h-screen goout-auth-shell flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <Link to="/" className="block text-goout-green font-display font-bold text-2xl mb-8">GoOut</Link>
-        <div className="bg-white rounded-2xl p-8 shadow-xl">
+        <div className="goout-surface rounded-2xl p-8 shadow-xl">
           <h1 className="text-2xl font-bold text-slate-900 mb-6">Create account</h1>
           <form onSubmit={handleSubmit} className="space-y-4">
             {err && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{err}</div>}
             <input type="text" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} required
-              className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent" />
+            className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent" />
             <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required
-              className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent" />
+            className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent" />
             <input type="password" placeholder="Password (min 6 chars)" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6}
-              className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent" />
+            className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent" />
             <div>
               <label className="block text-sm text-slate-600 mb-1">I am a</label>
               <select value={role} onChange={(e) => setRole(e.target.value)}
-                className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green">
+              className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green">
                 <option value="explorer">Explorer (find places & buddies)</option>
                 <option value="merchant">Merchant (local business owner)</option>
               </select>
@@ -57,6 +57,6 @@ export default function Register() {
           </p>
         </div>
       </div>
-    </div>
-  );
+    </div>);
+
 }

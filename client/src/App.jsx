@@ -13,7 +13,7 @@ import GroupChat from './pages/GroupChat';
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-goout-dark"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-goout-green" /></div>;
+  if (loading) return <div className="min-h-screen flex items-center justify-center goout-page-shell"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-goout-green" /></div>;
   if (!user) return <Navigate to="/login" />;
   return children;
 }
@@ -51,6 +51,6 @@ export default function App() {
         <Route path="group/:groupId" element={<GroupChat />} />
       </Route>
       <Route path="*" element={<Navigate to="/" />} />
-    </Routes>
-  );
+    </Routes>);
+
 }

@@ -7,27 +7,27 @@ import { protect } from '../middleware/auth.js';
 import {
   sendPasswordResetEmail,
   sendLoginOtpEmail,
-  isEmailConfigured,
-} from '../utils/email.js';
+  isEmailConfigured } from
+'../utils/email.js';
 
 const router = express.Router();
 
 const generateToken = (user) =>
-  jwt.sign(
-    { id: user._id, role: user.role, merchant: user.role === 'merchant' },
-    process.env.JWT_SECRET || 'secret',
-    { expiresIn: '30d' }
-  );
+jwt.sign(
+  { id: user._id, role: user.role, merchant: user.role === 'merchant' },
+  process.env.JWT_SECRET || 'secret',
+  { expiresIn: '30d' }
+);
 
 const hashToken = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
 
 const otpPepper = () => process.env.OTP_PEPPER || process.env.JWT_SECRET || 'secret';
 
 const hashLoginOtp = (email, otp) =>
-  crypto
-    .createHash('sha256')
-    .update(`${email.toLowerCase().trim()}:${otp}:${otpPepper()}`)
-    .digest('hex');
+crypto.
+createHash('sha256').
+update(`${email.toLowerCase().trim()}:${otp}:${otpPepper()}`).
+digest('hex');
 
 const safeEqualHex = (a, b) => {
   try {
@@ -46,14 +46,14 @@ const userPublicFields = (user) => ({
   email: user.email,
   role: user.role,
   verified: user.verified,
-  businessId: user.businessId || null,
+  businessId: user.businessId || null
 });
 
 router.post('/register', [
-  body('name').trim().notEmpty(),
-  body('email').isEmail(),
-  body('password').isLength({ min: 6 }),
-], async (req, res) => {
+body('name').trim().notEmpty(),
+body('email').isEmail(),
+body('password').isLength({ min: 6 })],
+async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
@@ -63,7 +63,7 @@ router.post('/register', [
     const user = await User.create({ name, email, password, role: role || 'explorer' });
     res.status(201).json({
       user: userPublicFields(user),
-      token: generateToken(user),
+      token: generateToken(user)
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -71,15 +71,15 @@ router.post('/register', [
 });
 
 router.post('/login', [
-  body('email').isEmail(),
-  body('password').notEmpty(),
-], async (req, res) => {
+body('email').isEmail(),
+body('password').notEmpty()],
+async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
         error: 'Please enter a valid email and password',
-        details: errors.array(),
+        details: errors.array()
       });
     }
     const { email, password } = req.body;
@@ -105,7 +105,7 @@ router.post('/login', [
     res.json({
       requiresOtp: true,
       email: user.email,
-      message: 'We sent a sign-in code to your email.',
+      message: 'We sent a sign-in code to your email.'
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -113,9 +113,9 @@ router.post('/login', [
 });
 
 router.post('/verify-login-otp', [
-  body('email').isEmail(),
-  body('otp').trim().isLength({ min: 6, max: 6 }),
-], async (req, res) => {
+body('email').isEmail(),
+body('otp').trim().isLength({ min: 6, max: 6 })],
+async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -137,7 +137,7 @@ router.post('/verify-login-otp', [
 
     res.json({
       user: userPublicFields(user),
-      token: generateToken(user),
+      token: generateToken(user)
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -172,9 +172,9 @@ router.post('/forgot-password', [body('email').isEmail()], async (req, res) => {
 });
 
 router.post('/reset-password', [
-  body('token').notEmpty(),
-  body('password').isLength({ min: 6 }),
-], async (req, res) => {
+body('token').notEmpty(),
+body('password').isLength({ min: 6 })],
+async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -184,7 +184,7 @@ router.post('/reset-password', [
     const hashed = hashToken(token);
     const user = await User.findOne({
       passwordResetToken: hashed,
-      passwordResetExpires: { $gt: new Date() },
+      passwordResetExpires: { $gt: new Date() }
     }).select('+passwordResetToken +passwordResetExpires');
     if (!user) {
       return res.status(400).json({ error: 'Invalid or expired reset link. Request a new one.' });
@@ -201,9 +201,9 @@ router.post('/reset-password', [
 
 router.get('/me', protect, async (req, res) => {
   try {
-    const user = await User.findById(req.user._id)
-      .select('-password')
-      .populate('businessId', 'name category address');
+    const user = await User.findById(req.user._id).
+    select('-password').
+    populate('businessId', 'name category address');
     res.json(user);
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -32,27 +32,27 @@ export function AuthProvider({ children }) {
           setUser({ ...cachedUser, id: cachedUser.id || cachedUser._id });
         }
       } catch {
-        // ignore bad cached json
+
       }
     }
     if (!token) {
       setLoading(false);
       return;
     }
-    api.get('/auth/me')
-      .then(({ data }) => {
-        const nextUser = { ...data, id: data._id || data.id };
-        setUser(nextUser);
-        localStorage.setItem(USER_CACHE_KEY, JSON.stringify(nextUser));
-      })
-      .catch((err) => {
-        if (err?.response?.status === 401) {
-          localStorage.removeItem('goout_token');
-          localStorage.removeItem(USER_CACHE_KEY);
-          setUser(null);
-        }
-      })
-      .finally(() => setLoading(false));
+    api.get('/auth/me').
+    then(({ data }) => {
+      const nextUser = { ...data, id: data._id || data.id };
+      setUser(nextUser);
+      localStorage.setItem(USER_CACHE_KEY, JSON.stringify(nextUser));
+    }).
+    catch((err) => {
+      if (err?.response?.status === 401) {
+        localStorage.removeItem('goout_token');
+        localStorage.removeItem(USER_CACHE_KEY);
+        setUser(null);
+      }
+    }).
+    finally(() => setLoading(false));
   }, []);
 
   const login = async (email, password) => {
@@ -86,18 +86,18 @@ export function AuthProvider({ children }) {
   };
 
   const updateUser = (data) =>
-    setUser((u) => {
-      if (!u) return null;
-      const nextUser = { ...u, ...data };
-      localStorage.setItem(USER_CACHE_KEY, JSON.stringify(nextUser));
-      return nextUser;
-    });
+  setUser((u) => {
+    if (!u) return null;
+    const nextUser = { ...u, ...data };
+    localStorage.setItem(USER_CACHE_KEY, JSON.stringify(nextUser));
+    return nextUser;
+  });
 
   return (
     <AuthContext.Provider value={{ user, loading, login, verifyLoginOtp, register, logout, updateUser }}>
       {children}
-    </AuthContext.Provider>
-  );
+    </AuthContext.Provider>);
+
 }
 
 export function useAuth() {

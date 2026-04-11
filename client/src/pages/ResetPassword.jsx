@@ -38,7 +38,7 @@ export default function ResetPassword() {
       addToast({
         type: 'error',
         title: 'Could not reset',
-        message: res.response?.data?.error || 'Try requesting a new link.',
+        message: res.response?.data?.error || 'Try requesting a new link.'
       });
     } finally {
       setBusy(false);
@@ -46,16 +46,16 @@ export default function ResetPassword() {
   };
 
   return (
-    <div className="min-h-screen bg-goout-dark flex items-center justify-center p-4">
+    <div className="min-h-screen goout-auth-shell flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <Link to="/" className="block text-goout-green font-display font-bold text-2xl mb-8">GoOut</Link>
-        <div className="bg-white rounded-2xl p-8 shadow-xl">
+        <div className="goout-surface rounded-2xl p-8 shadow-xl">
           <h1 className="text-2xl font-bold text-slate-900 mb-6">Set a new password</h1>
-          {!token && (
-            <p className="text-amber-700 text-sm mb-4">
+          {!token &&
+          <p className="text-amber-700 text-sm mb-4">
               No token in the URL. Use the link from your reset email, or request a new one from forgot password.
             </p>
-          )}
+          }
           <form onSubmit={handleSubmit} className="space-y-4">
             {err && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{err}</div>}
             <input
@@ -66,8 +66,8 @@ export default function ResetPassword() {
               required
               minLength={6}
               autoComplete="new-password"
-              className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent"
-            />
+              className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent" />
+            
             <input
               type="password"
               placeholder="Confirm new password"
@@ -76,13 +76,13 @@ export default function ResetPassword() {
               required
               minLength={6}
               autoComplete="new-password"
-              className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent"
-            />
+              className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent" />
+            
             <button
               type="submit"
               disabled={busy || !token}
-              className="w-full py-3 bg-goout-green text-white font-medium rounded-lg hover:bg-goout-accent transition disabled:opacity-60"
-            >
+              className="w-full py-3 bg-goout-green text-white font-medium rounded-lg hover:bg-goout-accent transition disabled:opacity-60">
+              
               {busy ? 'Saving…' : 'Update password'}
             </button>
           </form>
@@ -93,6 +93,6 @@ export default function ResetPassword() {
           </p>
         </div>
       </div>
-    </div>
-  );
+    </div>);
+
 }

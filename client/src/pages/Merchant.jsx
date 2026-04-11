@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -15,6 +15,25 @@ function formatAddressFromLocation(loc) {
   return `Pinned location (${Number(loc.lat).toFixed(5)}, ${Number(loc.lng).toFixed(5)})`;
 }
 
+const PRIMARY_CATEGORIES = [
+  'Cafe', 'Bakery', 'Restaurant', 'Boutique', 'Tailor', 'Handcrafts', 'Grocery', 'Salon', 'Bookstore', 'Bar', 'Other'
+];
+
+const DAY_ORDER = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+const DAY_LABELS = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
+
+function defaultWeeklySchedule() {
+  const row = { closed: false, open: '09:00', close: '17:00' };
+  return Object.fromEntries(DAY_ORDER.map((d) => [d, { ...row }]));
+}
+
+async function uploadMerchantAsset(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  const { data } = await api.post('/uploads/merchant-asset', fd);
+  return data.url;
+}
+
 export default function Merchant() {
   const { user, updateUser } = useAuth();
   const { addToast } = useToast();
@@ -23,34 +42,53 @@ export default function Merchant() {
   const [offers, setOffers] = useState([]);
   const [creatingNewBusiness, setCreatingNewBusiness] = useState(false);
   const [showOffer, setShowOffer] = useState(false);
-  const [smartInput, setSmartInput] = useState('');
-  const [smartData, setSmartData] = useState(null);
   const [form, setForm] = useState({
     name: '',
     description: '',
     category: '',
-    tags: '',
-    address: '',
     phone: '',
     avgPrice: 0,
-    isFree: false,
     openingHours: '',
+    tags: '',
     menu: '',
     greenInitiatives: '',
+    isFree: false
   });
+  const [aiBlurb, setAiBlurb] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState('');
   const [offerForm, setOfferForm] = useState({ title: '', description: '', offerPrice: '', originalPrice: '', validUntil: '', durationMinutes: 30 });
   const [offerError, setOfferError] = useState('');
   const [deleteError, setDeleteError] = useState('');
   const [deletingBusiness, setDeletingBusiness] = useState(false);
-  const [aiFilled, setAiFilled] = useState([]);
-  const [approvedAll, setApprovedAll] = useState(false);
   const [suggestedLocation, setSuggestedLocation] = useState(null);
   const [locationStatus, setLocationStatus] = useState('');
   const [editProfile, setEditProfile] = useState(false);
   const [editTags, setEditTags] = useState('');
-  const [extractError, setExtractError] = useState('');
-  const [isExtracting, setIsExtracting] = useState(false);
-  const lastAutoExtractRef = useRef('');
+  const [aiPreview, setAiPreview] = useState(null);
+  const [mapDisplayName, setMapDisplayName] = useState('');
+  const [contactEmail, setContactEmail] = useState('');
+  const [vibe, setVibe] = useState('');
+  const [addressStructured, setAddressStructured] = useState({
+    street: '',
+    neighborhood: '',
+    city: '',
+    postalCode: ''
+  });
+  const [weeklySchedule, setWeeklySchedule] = useState(defaultWeeklySchedule);
+  const [priceTier, setPriceTier] = useState(2);
+  const [primaryCategory, setPrimaryCategory] = useState('Cafe');
+  const [verificationDocs, setVerificationDocs] = useState([]);
+  const [storefrontUrl, setStorefrontUrl] = useState('');
+  const [menuFileUrl, setMenuFileUrl] = useState('');
+  const [ecoOptions, setEcoOptions] = useState({ plasticFree: false, solarPowered: false, zeroWaste: false });
+  const [localSourcingNote, setLocalSourcingNote] = useState('');
+  const [carbonWalkIncentive, setCarbonWalkIncentive] = useState(false);
+  const [socialLinks, setSocialLinks] = useState({ website: '', instagram: '', facebook: '' });
+  const [menuCatalogText, setMenuCatalogText] = useState('');
+  const [notifyBuddyMeetups, setNotifyBuddyMeetups] = useState(true);
+  const [notifyFlashDeals, setNotifyFlashDeals] = useState(true);
+  const [uploadBusy, setUploadBusy] = useState(false);
 
   const merchantBusinessId = getMerchantBusinessId(user);
   const showRegistrationForm = !merchantBusinessId || creatingNewBusiness;
@@ -71,84 +109,94 @@ export default function Merchant() {
     api.get(`/offers/business/${bid}`).then(({ data }) => setOffers(data)).catch(console.error);
   }, [merchantBusinessId, creatingNewBusiness]);
 
-  const smartExtract = async (inputOverride = null) => {
-    setExtractError('');
-    // onClick can pass a React synthetic event; normalize to string safely.
-    const rawInput =
-      typeof inputOverride === 'string'
-        ? inputOverride
-        : (inputOverride && typeof inputOverride === 'object' && 'target' in inputOverride)
-          ? smartInput
-          : (inputOverride ?? smartInput);
-    const sentenceText = String(rawInput || '').trim();
-    if (!sentenceText) {
-      setExtractError('Please enter a description of your business.');
-      return;
-    }
-    setIsExtracting(true);
-    try {
-      const loc = suggestedLocation;
-      const { data } = await api.post('/ai/smart-register', {
-        sentence: sentenceText,
-        suggestedLocation: loc,
-      });
-      const tagsArr = [...(Array.isArray(data.tags) ? data.tags : []), ...(Array.isArray(data.semanticTags) ? data.semanticTags : [])];
-      const tags = tagsArr.length ? tagsArr.join(', ') : (data.tags || '');
-      const hours = typeof data.openingHours === 'string' ? data.openingHours : (data.openingHours?.default || '');
-      setForm((f) => ({
-        ...f,
-        name: data.name || f.name,
-        description: data.description || f.description,
-        category: data.category || f.category,
-        tags,
-        address: data.address || f.address,
-        avgPrice: data.avgPrice ?? f.avgPrice,
-        isFree: data.isFree || false,
-        openingHours: hours,
-        menu: Array.isArray(data.menu) ? data.menu.join(', ') : f.menu,
-      }));
-      setAiFilled(Array.isArray(data.aiFilled) ? data.aiFilled : []);
-      setApprovedAll(false);
-      setSmartData(data.needsName ? { ...data, feedback: "I've identified your business type, but what is your business name?" } : data);
-    } catch (e) {
-      const msg = e.response?.data?.error || e.message || 'Extraction failed. Check that GEMINI_API_KEY is set in server/.env and restart the server.';
-      const isQuota = e.response?.status === 429 || /quota|rate limit|too many requests/i.test(msg);
-      setExtractError(isQuota
-        ? 'AI quota is currently exhausted. You can continue with manual registration now and try extraction later.'
-        : msg);
-    } finally {
-      setIsExtracting(false);
-    }
-  };
+  useEffect(() => {
+    if (!showRegistrationForm) return;
+    setContactEmail((prev) => prev || user?.email || '');
+  }, [showRegistrationForm, user?.email]);
 
   const resetNewBusinessForm = () => {
-    setSmartInput('');
-    setSmartData(null);
     setForm({
       name: '',
       description: '',
       category: '',
-      tags: '',
-      address: '',
       phone: '',
       avgPrice: 0,
-      isFree: false,
       openingHours: '',
+      tags: '',
       menu: '',
       greenInitiatives: '',
+      isFree: false
     });
-    setAiFilled([]);
-    setApprovedAll(false);
-    setExtractError('');
+    setAiBlurb('');
+    setAiError('');
     setLocationStatus('');
     setSuggestedLocation(null);
+    setAiPreview(null);
+    setMapDisplayName('');
+    setContactEmail(user?.email || '');
+    setVibe('');
+    setAddressStructured({ street: '', neighborhood: '', city: '', postalCode: '' });
+    setWeeklySchedule(defaultWeeklySchedule());
+    setPriceTier(2);
+    setPrimaryCategory('Cafe');
+    setVerificationDocs([]);
+    setStorefrontUrl('');
+    setMenuFileUrl('');
+    setEcoOptions({ plasticFree: false, solarPowered: false, zeroWaste: false });
+    setLocalSourcingNote('');
+    setCarbonWalkIncentive(false);
+    setSocialLinks({ website: '', instagram: '', facebook: '' });
+    setMenuCatalogText('');
+    setNotifyBuddyMeetups(true);
+    setNotifyFlashDeals(true);
   };
 
-  useEffect(() => {
-    if (!suggestedLocation?.lat || !suggestedLocation?.lng) return;
-    const autoAddress = formatAddressFromLocation(suggestedLocation);
-    setForm((f) => ({ ...f, address: autoAddress }));
-  }, [suggestedLocation?.lat, suggestedLocation?.lng]);
+  const fillWithAi = async () => {
+    const sentence = (aiBlurb.trim() || `${form.name} ${form.category} ${form.description}`.trim()).trim();
+    if (sentence.length < 10) {
+      addToast({ type: 'error', title: 'Need more text', message: 'Write at least one sentence about your business, or fill some fields first.' });
+      return;
+    }
+    setAiBusy(true);
+    setAiError('');
+    try {
+      const { data } = await api.post('/businesses/onboard-ai', { sentence });
+      setAiPreview({
+        name: data.name || '',
+        category: data.category || '',
+        vibe: data.vibe || ''
+      });
+      setVibe(String(data.vibe || '').trim());
+      setMapDisplayName((m) => m || String(data.name || '').trim());
+      const catFromAi = String(data.category || '').trim();
+      setPrimaryCategory(PRIMARY_CATEGORIES.includes(catFromAi) ? catFromAi : 'Other');
+      setForm((f) => ({
+        ...f,
+        name: data.name || f.name,
+        description: data.description || f.description,
+        category: PRIMARY_CATEGORIES.includes(catFromAi) ? catFromAi : (catFromAi || f.category),
+        avgPrice: typeof data.avgPrice === 'number' ? data.avgPrice : f.avgPrice,
+        openingHours: data.openingHours || f.openingHours,
+        isFree: typeof data.isFree === 'boolean' ? data.isFree : f.isFree,
+        tags: Array.isArray(data.tags) && data.tags.length ? data.tags.join(', ') : f.tags,
+        menu: Array.isArray(data.menu) && data.menu.length ? data.menu.join(', ') : f.menu,
+        greenInitiatives: Array.isArray(data.greenInitiatives) && data.greenInitiatives.length ?
+          data.greenInitiatives.join(', ') :
+          f.greenInitiatives
+      }));
+      addToast({
+        type: 'success',
+        title: data.fromCache ? 'Loaded from cache' : 'Form filled with AI',
+        message: data.fromCache ? 'Same description was used recently — instant fill.' : 'Review and edit before registering.'
+      });
+    } catch (err) {
+      const msg = err.response?.data?.error || err.message || 'AI fill failed';
+      setAiError(msg);
+      addToast({ type: 'error', title: 'AI fill failed', message: msg });
+    } finally {
+      setAiBusy(false);
+    }
+  };
 
   const takeCurrentLocation = async () => {
     setLocationStatus('');
@@ -192,47 +240,60 @@ export default function Merchant() {
     };
   }, [showRegistrationForm, suggestedLocation?.lat, suggestedLocation?.lng]);
 
-  // Debounce Smart Onboarding requests so we do not hit Gemini on every keystroke.
-  useEffect(() => {
-    if (!showRegistrationForm) return;
-    const normalized = smartInput.trim();
-    if (normalized.length < 12) return;
-    if (normalized === lastAutoExtractRef.current) return;
-    const timer = setTimeout(() => {
-      lastAutoExtractRef.current = normalized;
-      smartExtract(normalized);
-    }, 1200);
-    return () => clearTimeout(timer);
-  }, [smartInput, showRegistrationForm]);
-
-  const isAiFilled = (key) => aiFilled.includes(key);
-
   const registerBusiness = async (e) => {
     e.preventDefault();
     try {
       if (!suggestedLocation?.lat || !suggestedLocation?.lng) {
-        setExtractError('Please capture GPS location or select your location from the map before registering.');
         addToast({ type: 'error', title: 'Location required', message: 'Capture GPS location or select location from map before registering.' });
         return;
       }
       const coords = [suggestedLocation.lng, suggestedLocation.lat];
-      const resolvedAddress = formatAddressFromLocation(suggestedLocation) || form.address;
+      const splitList = (s) => String(s || '')
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean);
+      const category = primaryCategory === 'Other' ? (form.category || 'Other') : primaryCategory;
       const { data } = await api.post('/businesses', {
-        ...form,
-        address: resolvedAddress,
-        tags: (form.tags || '').split(',').map((s) => s.trim()).filter(Boolean),
-        menu: (form.menu || '').split(',').map((s) => s.trim()).filter(Boolean),
-        greenInitiatives: (form.greenInitiatives || '').split(',').map((s) => s.trim()).filter(Boolean),
+        name: form.name,
+        mapDisplayName: mapDisplayName.trim() || form.name,
+        description: form.description,
+        category,
+        vibe: vibe.trim(),
+        phone: form.phone,
+        contactEmail: contactEmail.trim(),
+        avgPrice: form.avgPrice,
+        priceTier,
+        isFree: Boolean(form.isFree),
         lat: coords[1],
         lng: coords[0],
-        isFree: form.isFree,
+        addressStructured,
         openingHours: form.openingHours ? { default: form.openingHours } : undefined,
+        weeklySchedule,
+        tags: splitList(form.tags),
+        menu: splitList(form.menu),
+        greenInitiatives: splitList(form.greenInitiatives),
+        verificationDocuments: verificationDocs,
+        storefrontPhotoUrl: storefrontUrl || undefined,
+        menuCatalogFileUrl: menuFileUrl || undefined,
+        menuCatalogText,
+        localSourcingNote,
+        ecoOptions,
+        carbonWalkIncentive,
+        socialLinks,
+        notifyBuddyMeetups,
+        notifyFlashDeals
       });
       setBusiness(data);
       setCreatingNewBusiness(false);
       updateUser({ businessId: data._id });
+      addToast({ type: 'success', title: 'Business registered', message: 'Your listing is live. You can request Red Pin verification from the dashboard.' });
     } catch (err) {
       console.error(err);
+      addToast({
+        type: 'error',
+        title: 'Registration failed',
+        message: err.response?.data?.error || err.message || 'Could not register business.'
+      });
     }
   };
 
@@ -291,7 +352,7 @@ export default function Merchant() {
   if (!user) return null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 goout-animate-in">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="font-display font-bold text-2xl text-goout-dark">Merchant Dashboard</h1>
         {merchantBusinessId && !creatingNewBusiness && (
@@ -309,7 +370,7 @@ export default function Merchant() {
       </div>
 
       {business && !creatingNewBusiness && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+        <div className="goout-soft-card rounded-2xl p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-slate-600">
               <span className="font-medium text-slate-800">Current business:</span>{' '}
@@ -350,10 +411,10 @@ export default function Merchant() {
       )}
 
       {showRegistrationForm && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+        <div className="goout-surface rounded-2xl p-6">
           <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
             <h2 className="font-display font-semibold text-lg">
-              {creatingNewBusiness ? 'Register another business' : 'Smart Onboarding (AI-Driven Registration)'}
+              {creatingNewBusiness ? 'Register another business' : 'Register your business'}
             </h2>
             {creatingNewBusiness && merchantBusinessId && (
               <button
@@ -368,181 +429,519 @@ export default function Merchant() {
               </button>
             )}
           </div>
-          <p className="text-slate-600 text-sm mb-4">Describe your business in one sentence. We'll extract details. Your location may be used if address is unclear.</p>
-          <div className="mb-4 p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
-            <p className="text-sm font-medium text-slate-800">Business location setup</p>
-            <p className="text-xs text-slate-600">GPS location is captured automatically. You can adjust pin from the map if needed.</p>
-            <div className="flex items-center gap-2 flex-wrap">
-              <button type="button" onClick={takeCurrentLocation} className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-sm">
-                Refresh GPS location
+          <p className="text-slate-600 text-sm mb-6">
+            Complete each section. Your map pin refines the exact entrance; structured address helps discovery and verification.
+          </p>
+
+          <div className="mb-6 p-4 rounded-xl border border-emerald-200 bg-emerald-50/60 space-y-3">
+            <h3 className="text-sm font-semibold text-slate-900">1 · AI-driven smart onboarding</h3>
+            <label className="text-xs text-slate-600 block">Business narrative (natural language)</label>
+            <textarea
+              value={aiBlurb}
+              onChange={(e) => setAiBlurb(e.target.value)}
+              rows={5}
+              placeholder='e.g. "We are a small vegan bakery on 5th street, open 9–5, sourdough and cinnamon rolls, bright casual vibe."'
+              className="w-full px-3 py-2 border border-emerald-200 rounded-lg text-sm bg-white min-h-[120px]"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={fillWithAi}
+                disabled={aiBusy}
+                className="px-3 py-1.5 rounded-lg bg-goout-green text-white text-sm font-medium disabled:opacity-60"
+              >
+                {aiBusy ? 'Working…' : 'Fill with AI'}
               </button>
             </div>
-            <div className="space-y-2">
-              <p className="text-xs text-slate-600">Or pick directly from the map:</p>
-              <ManualLocationPicker
-                value={suggestedLocation}
-                onPick={(loc) => {
-                  setSuggestedLocation(loc);
-                  setLocationStatus('Location set from map click.');
-                  addToast({ type: 'success', title: 'Location set', message: 'Pin placed on the map.' });
-                }}
-                height={240}
+            {aiError && <p className="text-xs text-red-600">{aiError}</p>}
+            {aiPreview && (
+              <div className="rounded-lg border border-emerald-300/60 bg-white/90 p-3 space-y-2">
+                <p className="text-xs font-medium text-slate-700">AI metadata preview (read-only — confirm below before submitting)</p>
+                <dl className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+                  <div>
+                    <dt className="text-xs text-slate-500">Name</dt>
+                    <dd className="font-medium text-slate-900">{aiPreview.name || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-slate-500">Category</dt>
+                    <dd className="font-medium text-slate-900">{aiPreview.category || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-slate-500">Vibe</dt>
+                    <dd className="font-medium text-slate-900">{aiPreview.vibe || '—'}</dd>
+                  </div>
+                </dl>
+              </div>
+            )}
+          </div>
+
+          <div className="mb-6 p-4 rounded-xl border border-red-100 bg-red-50/40 space-y-3">
+            <h3 className="text-sm font-semibold text-slate-900">2 · Identity and verification (Red Pin layer)</h3>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Official business name (map markers)</label>
+              <input
+                type="text"
+                value={mapDisplayName}
+                onChange={(e) => setMapDisplayName(e.target.value)}
+                placeholder="Shown on the map (e.g. storefront sign)"
+                className="w-full px-4 py-2 border border-slate-200 rounded-lg text-sm"
               />
+              <p className="text-[11px] text-slate-500 mt-1">Legal / listing name is below; this label is what explorers see on the pin.</p>
             </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Verification uploads (license, tax ID, or storefront photo)</label>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
+                disabled={uploadBusy || verificationDocs.length >= 4}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!file) return;
+                  setUploadBusy(true);
+                  try {
+                    const url = await uploadMerchantAsset(file);
+                    setVerificationDocs((d) => [...d, { url, label: file.name }]);
+                    addToast({ type: 'success', title: 'File uploaded', message: 'Attached to your application.' });
+                  } catch (err) {
+                    addToast({ type: 'error', title: 'Upload failed', message: err.response?.data?.error || err.message });
+                  } finally {
+                    setUploadBusy(false);
+                  }
+                }}
+                className="block w-full text-sm text-slate-600"
+              />
+              {verificationDocs.length > 0 && (
+                <ul className="mt-2 text-xs text-slate-600 space-y-1">
+                  {verificationDocs.map((d) => (
+                    <li key={d.url}>
+                      <a href={d.url} target="_blank" rel="noreferrer" className="text-goout-green underline">
+                        {d.label || 'Document'}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Primary mobile (OTP / alerts)</label>
+                <input
+                  type="tel"
+                  value={form.phone}
+                  onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg text-sm"
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Owner contact email</label>
+                <input
+                  type="email"
+                  value={contactEmail}
+                  onChange={(e) => setContactEmail(e.target.value)}
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg text-sm"
+                  required
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="mb-6 p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
+            <h3 className="text-sm font-semibold text-slate-900">3 · Geospatial and map</h3>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
+                <label className="text-xs text-slate-500 block mb-1">Street</label>
+                <input
+                  type="text"
+                  value={addressStructured.street}
+                  onChange={(e) => setAddressStructured((a) => ({ ...a, street: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Neighborhood</label>
+                <input
+                  type="text"
+                  value={addressStructured.neighborhood}
+                  onChange={(e) => setAddressStructured((a) => ({ ...a, neighborhood: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">City</label>
+                <input
+                  type="text"
+                  value={addressStructured.city}
+                  onChange={(e) => setAddressStructured((a) => ({ ...a, city: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Postal code</label>
+                <input
+                  type="text"
+                  value={addressStructured.postalCode}
+                  onChange={(e) => setAddressStructured((a) => ({ ...a, postalCode: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-slate-600">Interactive pin — drag or click on the map to your shop entrance.</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button type="button" onClick={takeCurrentLocation} className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-sm">
+                Refresh GPS
+              </button>
+            </div>
+            <ManualLocationPicker
+              value={suggestedLocation}
+              onPick={(loc) => {
+                setSuggestedLocation(loc);
+                setLocationStatus('Pin updated.');
+                addToast({ type: 'success', title: 'Location set', message: 'Pin placed on the map.' });
+              }}
+              height={260}
+            />
             {locationStatus && <p className="text-xs text-slate-600">{locationStatus}</p>}
             {suggestedLocation && (
               <p className="text-xs text-goout-green">
-                Selected coordinates: {suggestedLocation.lat.toFixed(5)}, {suggestedLocation.lng.toFixed(5)}
+                Coordinates: {suggestedLocation.lat.toFixed(5)}, {suggestedLocation.lng.toFixed(5)}
               </p>
             )}
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Storefront photo (helps people find you)</label>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                disabled={uploadBusy}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!file) return;
+                  setUploadBusy(true);
+                  try {
+                    const url = await uploadMerchantAsset(file);
+                    setStorefrontUrl(url);
+                    addToast({ type: 'success', title: 'Photo uploaded', message: 'Storefront image saved.' });
+                  } catch (err) {
+                    addToast({ type: 'error', title: 'Upload failed', message: err.response?.data?.error || err.message });
+                  } finally {
+                    setUploadBusy(false);
+                  }
+                }}
+                className="block w-full text-sm text-slate-600"
+              />
+              {storefrontUrl && (
+                <img src={storefrontUrl} alt="Storefront" className="mt-2 max-h-36 rounded-lg border border-slate-200 object-cover" />
+              )}
+            </div>
           </div>
-          <div className="mb-4">
-            <textarea
-              value={smartInput}
-              onChange={(e) => { setSmartInput(e.target.value); setExtractError(''); }}
-              placeholder="e.g. I'm Ravi, I run a cozy organic cafe called GreenBeans near Central Park, open 8 AM to 8 PM."
-              rows={3}
-              className="w-full px-4 py-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-goout-green resize-none"
-            />
-            <button type="button" disabled={isExtracting} onClick={() => smartExtract()} className="mt-2 px-4 py-2 bg-goout-green text-white rounded-lg font-medium hover:bg-goout-accent disabled:opacity-60">
-              {isExtracting ? 'Extracting...' : 'Extract details'}
-            </button>
-            {extractError && (
-              <p className="mt-3 text-sm text-red-700 p-3 bg-red-50 border border-red-100 rounded-lg">{extractError}</p>
-            )}
-          </div>
-          {smartData?.feedback && (
-            <p className="text-sm text-amber-700 mb-4 p-3 bg-amber-50 rounded-lg">{smartData.feedback}</p>
-          )}
-          {smartData && !smartData.feedback && (
-            <>
-              <p className="text-sm text-slate-600 mb-2">Review and edit. Fields in <span className="bg-blue-100 px-1 rounded">blue</span> were inferred by AI — please verify.</p>
-              <div className="mb-4 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setApprovedAll(true)}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium text-sm"
-                >
-                  Approve All
-                </button>
-                <span className="text-xs text-slate-500">Required before registering</span>
+
+          <form onSubmit={registerBusiness} className="space-y-6">
+            <div className="p-4 rounded-xl border border-slate-200 space-y-3">
+              <h3 className="text-sm font-semibold text-slate-900">4 · Operations and budget metadata</h3>
+              <div>
+                <label className="text-xs text-slate-500 block mb-2">Operating hours (7-day)</label>
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                  {DAY_ORDER.map((day) => (
+                    <div key={day} className="flex flex-wrap items-center gap-2 text-sm bg-slate-50 rounded-lg px-2 py-1.5">
+                      <span className="w-10 font-medium text-slate-700">{DAY_LABELS[day]}</span>
+                      <label className="flex items-center gap-1 text-xs text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={weeklySchedule[day]?.closed}
+                          onChange={(e) => setWeeklySchedule((w) => ({
+                            ...w,
+                            [day]: { ...w[day], closed: e.target.checked }
+                          }))}
+                        />
+                        Closed
+                      </label>
+                      {!weeklySchedule[day]?.closed && (
+                        <>
+                          <input
+                            type="time"
+                            value={weeklySchedule[day]?.open || '09:00'}
+                            onChange={(e) => setWeeklySchedule((w) => ({
+                              ...w,
+                              [day]: { ...w[day], open: e.target.value }
+                            }))}
+                            className="border border-slate-200 rounded px-1 py-0.5 text-xs"
+                          />
+                          <span className="text-slate-400">–</span>
+                          <input
+                            type="time"
+                            value={weeklySchedule[day]?.close || '17:00'}
+                            onChange={(e) => setWeeklySchedule((w) => ({
+                              ...w,
+                              [day]: { ...w[day], close: e.target.value }
+                            }))}
+                            className="border border-slate-200 rounded px-1 py-0.5 text-xs"
+                          />
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[11px] text-slate-500 mt-2">Optional one-line note for AI (legacy field):</p>
+                <input
+                  type="text"
+                  value={form.openingHours}
+                  onChange={(e) => setForm((f) => ({ ...f, openingHours: e.target.value }))}
+                  placeholder="e.g. Open later on Fridays"
+                  className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                />
               </div>
-            </>
-          )}
-          <form onSubmit={registerBusiness} className="space-y-4">
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">Business name</label>
-              <input
-                type="text"
-                placeholder="Business name"
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                required
-                className={`w-full px-4 py-2 border rounded-lg ${isAiFilled('name') ? 'bg-blue-50 border-blue-200' : 'border-slate-200'}`}
-              />
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Price tier (Budget Planner)</label>
+                <div className="flex flex-wrap gap-2">
+                  {[1, 2, 3, 4].map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setPriceTier(t)}
+                      className={`px-3 py-1.5 rounded-lg text-sm border ${
+                        priceTier === t ? 'border-goout-green bg-goout-mint text-goout-green font-semibold' : 'border-slate-200 bg-white text-slate-600'
+                      }`}
+                    >
+                      {'$'.repeat(t)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Primary category</label>
+                <select
+                  value={primaryCategory}
+                  onChange={(e) => setPrimaryCategory(e.target.value)}
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg text-sm"
+                >
+                  {PRIMARY_CATEGORIES.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+                {primaryCategory === 'Other' && (
+                  <input
+                    type="text"
+                    value={form.category}
+                    onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+                    placeholder="Describe your category"
+                    className="w-full mt-2 px-4 py-2 border border-slate-200 rounded-lg text-sm"
+                    required
+                  />
+                )}
+              </div>
             </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">Description</label>
-              <textarea
-                placeholder="Description"
-                value={form.description}
-                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                className={`w-full px-4 py-2 border rounded-lg ${isAiFilled('description') ? 'bg-blue-50 border-blue-200' : 'border-slate-200'}`}
-              />
+
+            <div className="p-4 rounded-xl border border-green-100 bg-green-50/30 space-y-3">
+              <h3 className="text-sm font-semibold text-slate-900">5 · Sustainability and green indicators</h3>
+              <div className="flex flex-wrap gap-4 text-sm text-slate-700">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={ecoOptions.plasticFree}
+                    onChange={(e) => setEcoOptions((o) => ({ ...o, plasticFree: e.target.checked }))}
+                  />
+                  Plastic-free
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={ecoOptions.solarPowered}
+                    onChange={(e) => setEcoOptions((o) => ({ ...o, solarPowered: e.target.checked }))}
+                  />
+                  Solar powered
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={ecoOptions.zeroWaste}
+                    onChange={(e) => setEcoOptions((o) => ({ ...o, zeroWaste: e.target.checked }))}
+                  />
+                  Zero-waste
+                </label>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Local sourcing / handmade note</label>
+                <textarea
+                  value={localSourcingNote}
+                  onChange={(e) => setLocalSourcingNote(e.target.value)}
+                  rows={2}
+                  placeholder="Local farms, in-house baking, handmade textiles…"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={carbonWalkIncentive}
+                  onChange={(e) => setCarbonWalkIncentive(e.target.checked)}
+                />
+                We offer incentives for walkers / cyclists
+              </label>
             </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">Category</label>
-              <input
-                type="text"
-                placeholder="Category"
-                value={form.category}
-                onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
-                required
-                className={`w-full px-4 py-2 border rounded-lg ${isAiFilled('category') ? 'bg-blue-50 border-blue-200' : 'border-slate-200'}`}
-              />
+
+            <div className="p-4 rounded-xl border border-slate-200 space-y-3">
+              <h3 className="text-sm font-semibold text-slate-900">6 · Digital presence and notifications</h3>
+              <div className="grid sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1">Website</label>
+                  <input
+                    type="url"
+                    value={socialLinks.website}
+                    onChange={(e) => setSocialLinks((s) => ({ ...s, website: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                    placeholder="https://"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1">Instagram</label>
+                  <input
+                    type="text"
+                    value={socialLinks.instagram}
+                    onChange={(e) => setSocialLinks((s) => ({ ...s, instagram: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1">Facebook</label>
+                  <input
+                    type="text"
+                    value={socialLinks.facebook}
+                    onChange={(e) => setSocialLinks((s) => ({ ...s, facebook: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Menu / catalog (text)</label>
+                <textarea
+                  value={menuCatalogText}
+                  onChange={(e) => setMenuCatalogText(e.target.value)}
+                  rows={3}
+                  placeholder="Top items so AI can answer “who sells sourdough?”"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Menu / catalog file (PDF)</label>
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  disabled={uploadBusy}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = '';
+                    if (!file) return;
+                    setUploadBusy(true);
+                    try {
+                      const url = await uploadMerchantAsset(file);
+                      setMenuFileUrl(url);
+                      addToast({ type: 'success', title: 'Catalog uploaded', message: 'PDF linked to your profile.' });
+                    } catch (err) {
+                      addToast({ type: 'error', title: 'Upload failed', message: err.response?.data?.error || err.message });
+                    } finally {
+                      setUploadBusy(false);
+                    }
+                  }}
+                  className="block w-full text-sm text-slate-600"
+                />
+                {menuFileUrl && (
+                  <a href={menuFileUrl} target="_blank" rel="noreferrer" className="text-xs text-goout-green underline mt-1 inline-block">
+                    View uploaded PDF
+                  </a>
+                )}
+              </div>
+              <p className="text-xs font-medium text-slate-700">Socket.io alert preferences</p>
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={notifyBuddyMeetups} onChange={(e) => setNotifyBuddyMeetups(e.target.checked)} />
+                GoOut Buddy meetup alerts
+              </label>
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={notifyFlashDeals} onChange={(e) => setNotifyFlashDeals(e.target.checked)} />
+                Flash deal reminders
+              </label>
             </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">Opening hours (e.g. 8 AM - 8 PM)</label>
-              <input
-                type="text"
-                placeholder="Opening hours"
-                value={form.openingHours}
-                onChange={(e) => setForm((f) => ({ ...f, openingHours: e.target.value }))}
-                className={`w-full px-4 py-2 border rounded-lg ${isAiFilled('openingHours') ? 'bg-blue-50 border-blue-200' : 'border-slate-200'}`}
-              />
+
+            <div className="p-4 rounded-xl border border-slate-200 space-y-3">
+              <h3 className="text-sm font-semibold text-slate-900">Listing details</h3>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Legal / listing business name</label>
+                <input
+                  type="text"
+                  value={form.name}
+                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                  required
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Customer-facing vibe (editable)</label>
+                <input
+                  type="text"
+                  value={vibe}
+                  onChange={(e) => setVibe(e.target.value)}
+                  placeholder="Short atmosphere line"
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg text-sm"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Description</label>
+                <textarea
+                  value={form.description}
+                  onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg"
+                  rows={3}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Avg price (₹)</label>
+                <input
+                  type="number"
+                  value={form.avgPrice || ''}
+                  onChange={(e) => setForm((f) => ({ ...f, avgPrice: Number(e.target.value) || 0 }))}
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={Boolean(form.isFree)}
+                  onChange={(e) => setForm((f) => ({ ...f, isFree: e.target.checked }))}
+                />
+                Free entry / no typical paid visit
+              </label>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Tags (comma-separated)</label>
+                <input
+                  type="text"
+                  value={form.tags}
+                  onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))}
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Signature menu lines (comma-separated)</label>
+                <input
+                  type="text"
+                  value={form.menu}
+                  onChange={(e) => setForm((f) => ({ ...f, menu: e.target.value }))}
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Other green initiatives (comma-separated)</label>
+                <input
+                  type="text"
+                  value={form.greenInitiatives}
+                  onChange={(e) => setForm((f) => ({ ...f, greenInitiatives: e.target.value }))}
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg"
+                />
+              </div>
             </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">Address (auto-saved from selected location)</label>
-              <input
-                type="text"
-                placeholder="Select GPS/map location to auto-fill"
-                value={form.address || formatAddressFromLocation(suggestedLocation)}
-                readOnly
-                required
-                className={`w-full px-4 py-2 border rounded-lg bg-slate-50 ${isAiFilled('address') ? 'border-blue-200' : 'border-slate-200'}`}
-              />
-              <p className="text-xs text-slate-500 mt-1">This is auto-generated from the location pin. You don't need to type address manually.</p>
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">Menu items (comma-separated)</label>
-              <input
-                type="text"
-                placeholder="e.g. idli, dosa, tea"
-                value={form.menu}
-                onChange={(e) => setForm((f) => ({ ...f, menu: e.target.value }))}
-                className={`w-full px-4 py-2 border rounded-lg ${isAiFilled('menu') ? 'bg-blue-50 border-blue-200' : 'border-slate-200'}`}
-              />
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">Tags (comma-separated)</label>
-              <input
-                type="text"
-                placeholder="Tags"
-                value={form.tags}
-                onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))}
-                className={`w-full px-4 py-2 border rounded-lg ${isAiFilled('tags') ? 'bg-blue-50 border-blue-200' : 'border-slate-200'}`}
-              />
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">Phone</label>
-              <input
-                type="text"
-                placeholder="Phone"
-                value={form.phone}
-                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-                className={`w-full px-4 py-2 border rounded-lg ${isAiFilled('phone') ? 'bg-blue-50 border-blue-200' : 'border-slate-200'}`}
-              />
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">Avg price (₹)</label>
-              <input
-                type="number"
-                placeholder="0"
-                value={form.avgPrice || ''}
-                onChange={(e) => setForm((f) => ({ ...f, avgPrice: Number(e.target.value) || 0 }))}
-                className={`w-full px-4 py-2 border rounded-lg ${isAiFilled('avgPrice') ? 'bg-blue-50 border-blue-200' : 'border-slate-200'}`}
-              />
-            </div>
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={form.isFree} onChange={(e) => setForm((f) => ({ ...f, isFree: e.target.checked }))} />
-              <span className="text-sm">Free entry (park, library, viewpoint)</span>
-            </label>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">Green initiatives (comma-separated)</label>
-              <input
-                type="text"
-                placeholder="e.g. Plastic-free packaging, BYOC discount"
-                value={form.greenInitiatives}
-                onChange={(e) => setForm((f) => ({ ...f, greenInitiatives: e.target.value }))}
-                className="w-full px-4 py-2 border rounded-lg border-slate-200"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={!!(smartData && !smartData.feedback && !approvedAll)}
-              className="px-4 py-2 bg-goout-green text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {smartData && !smartData.feedback && !approvedAll ? 'Approve All first' : 'Register business'}
+
+            <button type="submit" className="px-5 py-2.5 bg-goout-green text-white rounded-lg font-medium">
+              Register business
             </button>
           </form>
         </div>
@@ -550,7 +949,7 @@ export default function Merchant() {
 
       {business && !creatingNewBusiness && (
         <>
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+          <div className="goout-surface rounded-2xl p-6">
             <div className="flex justify-between items-center mb-4">
               <h2 className="font-display font-semibold text-lg">Profile & semantic tags</h2>
               <button type="button" onClick={() => { setEditProfile(!editProfile); if (!editProfile) setEditTags((business.tags || []).join(', ')); }} className="px-4 py-2 bg-slate-100 rounded-lg text-sm font-medium">
@@ -559,7 +958,7 @@ export default function Merchant() {
             </div>
             {editProfile ? (
               <div className="space-y-2">
-                <p className="text-sm text-slate-600">Edit or remove AI-generated tags so users can find you (e.g. Quiet, FastWiFi, VeganFriendly).</p>
+                <p className="text-sm text-slate-600">Add tags so users can find you (e.g. Quiet, FastWiFi, VeganFriendly).</p>
                 <input type="text" value={editTags} onChange={(e) => setEditTags(e.target.value)} placeholder="Comma-separated tags" className="w-full px-4 py-2 border rounded-lg" />
                 <button type="button" onClick={async () => { try { await api.put(`/businesses/${business._id}`, { tags: editTags.split(',').map((s) => s.trim()).filter(Boolean) }); setBusiness((b) => ({ ...b, tags: editTags.split(',').map((s) => s.trim()).filter(Boolean) })); setEditProfile(false); } catch (e) { console.error(e); } }} className="px-4 py-2 bg-goout-green text-white rounded-lg text-sm">Save tags</button>
               </div>
@@ -569,15 +968,15 @@ export default function Merchant() {
           </div>
 
           <div className="grid md:grid-cols-3 gap-6">
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+            <div className="goout-soft-card rounded-2xl p-6">
               <h3 className="font-display font-semibold mb-2">Profile Views</h3>
               <p className="text-3xl font-bold text-goout-green">{analytics?.profileViews || 0}</p>
             </div>
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+            <div className="goout-soft-card rounded-2xl p-6">
               <h3 className="font-display font-semibold mb-2">Offer Clicks</h3>
               <p className="text-3xl font-bold text-goout-green">{analytics?.offerClicks || 0}</p>
             </div>
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+            <div className="goout-soft-card rounded-2xl p-6">
               <h3 className="font-display font-semibold mb-2">Crowd Level</h3>
               <div className="flex gap-2 mt-2">
                 {[0, 33, 66, 100].map((l) => (
@@ -593,7 +992,7 @@ export default function Merchant() {
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+          <div className="goout-surface rounded-2xl p-6">
             <h2 className="font-display font-semibold text-lg mb-4">Analytics (ROI from GoOut)</h2>
             <p className="text-slate-600 text-sm mb-4">One view/click per visitor per 24h. Data pre-aggregated daily.</p>
             {analytics?.daily?.length > 0 && (
@@ -628,7 +1027,7 @@ export default function Merchant() {
             )}
           </div>
 
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+          <div className="goout-surface rounded-2xl p-6">
             <div className="flex justify-between items-center mb-4">
               <h2 className="font-display font-semibold text-lg">Live Offer Feed (Flash Deals)</h2>
               <button onClick={() => setShowOffer(true)} className="px-4 py-2 bg-goout-green text-white rounded-lg font-medium text-sm">
