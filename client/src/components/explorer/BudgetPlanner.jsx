@@ -1,21 +1,15 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import api from '../../api/client';
-import { estimateMerchantSpendInr } from '../../utils/searchMapRank';
+import { useToast } from '../../context/ToastContext';
 
-function getDistance(lat1, lon1, lat2, lon2) {
-  const R = 6371e3;
-  const φ1 = lat1 * Math.PI / 180;
-  const φ2 = lat2 * Math.PI / 180;
-  const Δφ = (lat2 - lat1) * Math.PI / 180;
-  const Δλ = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
+function hasInlineBudgetHint(text) {
+  return /\$\s*\d|₹\s*\d|rs\.?\s*\d/i.test(String(text || ''));
 }
 
-export default function BudgetPlanner({ userLocation, businesses, onGoToPlace, onBudgetCapSync, onBudgetPathSync }) {
+export default function BudgetPlanner({ userLocation, businesses: _businesses, onGoToPlace, onBudgetCapSync, onBudgetPathSync }) {
+  const { addToast } = useToast();
   const [localMode, setLocalMode] = useState(true);
-  const [inputBudget, setInputBudget] = useState(500);
+  const [inputBudget, setInputBudget] = useState('');
   const [placeQuery, setPlaceQuery] = useState('');
   const [plan, setPlan] = useState([]);
   const [discoverPlaces, setDiscoverPlaces] = useState([]);
@@ -33,23 +27,34 @@ export default function BudgetPlanner({ userLocation, businesses, onGoToPlace, o
       setServerTotal(null);
       return;
     }
+    const budgetTrim = String(inputBudget).trim();
+    const params = { lng: userLocation.lng, lat: userLocation.lat, place: q };
+    if (budgetTrim !== '') {
+      const budgetNum = Number(budgetTrim);
+      if (!Number.isFinite(budgetNum) || budgetNum < 0) {
+        setPlan([]);
+        setServerTotal(null);
+        return;
+      }
+      params.budget = budgetNum;
+    } else if (!hasInlineBudgetHint(q)) {
+      setPlan([]);
+      setServerTotal(null);
+      return;
+    }
     setLoading(true);
     api.
-    get('/budget/itinerary', {
-      params: {
-        lng: userLocation.lng,
-        lat: userLocation.lat,
-        budget: inputBudget,
-        place: q
-      }
-    }).
+    get('/budget/itinerary', { params }).
     then(({ data }) => {
       setPlan(data.plan || []);
       setFrugalMode(data.frugalMode || false);
       setZeroSpend(Boolean(data.zeroSpend));
       setServerTotal(typeof data.totalEstimatedInr === 'number' ? data.totalEstimatedInr : null);
       setDiscoverPlaces([]);
-      if (typeof onBudgetCapSync === 'function') onBudgetCapSync(inputBudget);
+      if (typeof onBudgetCapSync === 'function') {
+        const cap = budgetTrim !== '' ? Number(budgetTrim) : null;
+        onBudgetCapSync(Number.isFinite(cap) ? cap : null);
+      }
     }).
     catch(() => {
       setPlan([]);
@@ -89,8 +94,24 @@ export default function BudgetPlanner({ userLocation, businesses, onGoToPlace, o
   }, [userLocation, placeQuery, onBudgetPathSync, onBudgetCapSync]);
 
   const runSuggest = () => {
-    if (localMode) fetchLocalPlan();else
-    fetchDiscoverPlaces();
+    if (localMode) {
+      const q = placeQuery.trim();
+      if (!q) {
+        addToast({ type: 'info', title: 'Describe what you want', message: 'Enter a place type or vibe (e.g. cafe, park), then click Suggest.' });
+        return;
+      }
+      if (String(inputBudget).trim() === '' && !hasInlineBudgetHint(q)) {
+        addToast({
+          type: 'info',
+          title: 'Budget required',
+          message: 'Enter your budget in ₹ (use 0 for free-only public stops), or include ₹ or $ in your search text.'
+        });
+        return;
+      }
+      fetchLocalPlan();
+    } else {
+      fetchDiscoverPlaces();
+    }
   };
 
   useEffect(() => {
@@ -115,33 +136,13 @@ export default function BudgetPlanner({ userLocation, businesses, onGoToPlace, o
     onBudgetPathSync(pts.length >= 2 ? pts : null);
   }, [localMode, plan, onBudgetPathSync]);
 
-  const clientFallback = useMemo(() => {
-    if (!localMode || plan.length > 0) return [];
-    if (!businesses?.length || !userLocation) return [];
-    if (inputBudget < 0) return [];
-    const withDist = businesses.map((b) => ({
-      ...b,
-      distance: getDistance(userLocation.lat, userLocation.lng, b.location?.coordinates?.[1], b.location?.coordinates?.[0])
-    }));
-    if (inputBudget < 1) {
-      return [];
-    }
-    if (inputBudget < 50) {
-      return withDist.filter((b) => b.isFree || (b.avgPrice || 0) === 0).sort((a, b) => a.distance - b.distance).slice(0, 3);
-    }
-    const paid = withDist.filter((b) => {
-      const est = estimateMerchantSpendInr(b);
-      return est > 0 && est <= inputBudget * 0.7;
-    }).sort((a, b) => a.distance - b.distance);
-    return paid.slice(0, 2);
-  }, [localMode, plan.length, businesses, userLocation, inputBudget]);
-
-  const displayPlan = localMode ? plan.length > 0 ? plan : clientFallback : [];
+  const displayPlan = localMode ? plan : [];
   const totalCost = displayPlan.reduce((s, b) => {
     const row = b;
-    if (row.spendEstimate != null) return s + Number(row.spendEstimate) || 0;
-    return s + estimateMerchantSpendInr(row);
+    if (row.spendEstimate != null) return s + (Number(row.spendEstimate) || 0);
+    return s + (Number(row.avgPrice) || 0);
   }, 0);
+  const budgetNumEntered = String(inputBudget).trim() === '' ? null : Number(inputBudget);
 
   return (
     <div className="grid md:grid-cols-2 gap-6">
@@ -170,7 +171,7 @@ export default function BudgetPlanner({ userLocation, businesses, onGoToPlace, o
         </div>
         <p className="text-slate-600 text-sm mb-4">
           {localMode ?
-          'Local mode: enter what you are looking for and your budget, then click Suggest local places.' :
+          'Local mode: describe what you want, enter your ₹ budget (leave no default — you choose), then click Suggest. Listings come from the server only after that.' :
           'All places: search the wider map (OSM / public POIs). No budget — results are not limited to GoOut listings.'}
         </p>
         <div className="space-y-4">
@@ -191,12 +192,22 @@ export default function BudgetPlanner({ userLocation, businesses, onGoToPlace, o
               <input
               type="number"
               value={inputBudget}
-              onChange={(e) => setInputBudget(Math.max(0, Number(e.target.value) || 0))}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === '') {
+                  setInputBudget('');
+                  return;
+                }
+                const n = Number(v);
+                if (!Number.isFinite(n) || n < 0) return;
+                setInputBudget(v);
+              }}
               min={0}
               max={100000}
               step={50}
-              className="px-4 py-2 border border-slate-200 rounded-lg w-36 focus:ring-2 focus:ring-goout-green" />
-              <p className="text-xs text-slate-500 mt-1">Use 0 for zero-spend day (parks, libraries, monuments only). You can also write $ or ₹ in the search box.</p>
+              placeholder="e.g. 500 or 0"
+              className="px-4 py-2 border border-slate-200 rounded-lg w-40 focus:ring-2 focus:ring-goout-green" />
+              <p className="text-xs text-slate-500 mt-1">Required for local suggestions. Use 0 for a zero-spend day (public places). You can also put ₹ or $ in the text box above.</p>
             
             </div>
           }
@@ -229,11 +240,13 @@ export default function BudgetPlanner({ userLocation, businesses, onGoToPlace, o
               {!userLocation ?
           <p className="text-slate-600 text-sm">Enable location to see local suggestions.</p> :
           !placeQuery.trim() ?
-          <p className="text-slate-600 text-sm">Enter a place type/name (e.g. cafe, bakery) and click Suggest local places.</p> :
-          inputBudget < 0 ?
+          <p className="text-slate-600 text-sm">Enter what you are looking for (e.g. cafe, bakery), your budget in ₹, then click Suggest local places.</p> :
+          String(inputBudget).trim() === '' && !hasInlineBudgetHint(placeQuery) ?
+          <p className="text-slate-600 text-sm">Enter your budget in ₹ (or 0 for free-only), or put ₹/$ in the search box, then click Suggest.</p> :
+          Number(inputBudget) < 0 ?
           <p className="text-slate-600 text-sm">Budget cannot be negative.</p> :
-          inputBudget < 50 ?
-          <p className="text-slate-600 text-sm">No free places nearby. Try a higher budget.</p> :
+          Number(inputBudget) > 0 && Number(inputBudget) < 50 && !loading ?
+          <p className="text-slate-600 text-sm">No free places matched. Try a higher budget or different keywords, or switch to All places.</p> :
 
           <p className="text-slate-600 text-sm">No GoOut merchants match. Try another keyword or budget, or switch to All places.</p>
           }
@@ -269,12 +282,19 @@ export default function BudgetPlanner({ userLocation, businesses, onGoToPlace, o
               );
             })}
               </ul>
+              {displayPlan.length > 0 && (budgetNumEntered != null || serverTotal != null) &&
               <p className="mt-4 text-sm text-slate-600">
-                Trip estimate: ₹{serverTotal != null ? Math.round(serverTotal) : Math.round(totalCost)} / ₹{inputBudget}{' '}
-                <span className="text-goout-green font-medium">
-                  (₹{Math.max(0, inputBudget - (serverTotal != null ? serverTotal : totalCost))} headroom)
-                </span>
+                Trip estimate: ₹{serverTotal != null ? Math.round(serverTotal) : Math.round(totalCost)}
+                {budgetNumEntered != null && Number.isFinite(budgetNumEntered) &&
+                <>
+                  {' '}
+                  / ₹{budgetNumEntered}{' '}
+                  <span className="text-goout-green font-medium">
+                    (₹{Math.max(0, budgetNumEntered - (serverTotal != null ? serverTotal : totalCost))} headroom)
+                  </span>
+                </>}
               </p>
+              }
               <p className="mt-2 text-xs text-slate-500">
                 Pay-to-stay tip: grab something small at a Red Pin, then walk to a free park from the Map search — totals stay lower and earn walk carbon nudges in Green Mode.
               </p>

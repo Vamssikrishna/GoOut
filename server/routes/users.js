@@ -15,7 +15,8 @@ router.put('/profile', protect, async (req, res) => {
     if (weight !== undefined) update.weight = weight;
     if (emergencyContact !== undefined) update.emergencyContact = emergencyContact;
     const user = await User.findByIdAndUpdate(req.user._id, update, { new: true }).
-    select('-password');
+    select('-password').
+    populate('businessId', 'name category address');
     res.json(user);
   } catch (err) {
     res.status(500).json({ error: err.message });

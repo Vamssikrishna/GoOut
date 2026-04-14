@@ -1,7 +1,14 @@
 import Business from '../models/Business.js';
 import Offer from '../models/Offer.js';
 import User from '../models/User.js';
-import { createGeminiClient, getGenerativeModelForModelId, DEFAULT_GEMINI_MODEL } from '../config/geminiConfig.js';
+import {
+  createGeminiClient,
+  getGenerativeModelForModelId,
+  DEFAULT_GEMINI_MODEL,
+  buildGeminiCandidateModels,
+  classifyGeminiError,
+  sleepMs
+} from '../config/geminiConfig.js';
 import { fetchPublicSpacesNear } from './publicPlaces.js';
 
 const USD_TO_INR = 83;
@@ -65,7 +72,18 @@ const STOPWORDS = new Set([
 ]);
 
 function extractSearchHint(message) {
-  const tokens = String(message || '')
+  const normalized = String(message || '')
+    .replace(/\bpls\b/gi, 'please')
+    .replace(/\bnear me\b/gi, 'nearby')
+    .replace(/\bwanna\b/gi, 'want to')
+    .replace(/\bgonna\b/gi, 'going to')
+    .replace(/\bhangout\b/gi, 'hang out')
+    .replace(/\bcuz\b/gi, 'because')
+    .replace(/\bvegg?\b/gi, 'vegetarian')
+    .replace(/\bchai\b/gi, 'tea')
+    .replace(/\btiffin\b/gi, 'breakfast')
+    .replace(/\bbiryani\b/gi, 'food');
+  const tokens = normalized
     .toLowerCase()
     .split(/\W+/)
     .filter((t) => t.length > 2 && !STOPWORDS.has(t))
@@ -282,42 +300,6 @@ function isCasualGreeting(message) {
   );
 }
 
-/** Outdoor / civic / landmark — not food-only (food uses LOCAL_MERCHANTS). */
-function wantsPublicSpaceContext(message) {
-  if (isCasualGreeting(message)) return false;
-  return /\b(park|garden|playground|plaza|square|outdoor|picnic|nature|trail|scenic|public\s+space|landmark|attraction|things?\s+to\s+do|green\s+space|walk|stroll|hike|library|museum|monument|memorial|historic|heritage|community\s+center|shade|trees|seating|bench|walking\s+tour|free\s+to\s+visit|recycl)\b/i.test(
-    String(message || '')
-  );
-}
-
-function wantsOpenEndedDiscovery(message) {
-  const t = String(message || '').toLowerCase();
-  if (/\b(bored|boring|nothing to do|kill time|surprise me|what should i do|day out|wander|roam|explore the area)\b/i.test(t)) return true;
-  if (/\b(hang\s*out|chill\s+out|something\s+fun)\b/i.test(t)) return true;
-  if (/\b(have|got|with)\s+(\$|₹|rs\.?|rupees?|inr|bucks?)\s*\d+/i.test(t)) return true;
-  if (/\$\s*\d+|₹\s*\d+/i.test(t) && /\b(and|budget|spend|bucks|left)\b/i.test(t)) return true;
-  return false;
-}
-
-function shouldFetchPublicConcierge(message, casualGreeting) {
-  if (casualGreeting) return false;
-  if (wantsOpenEndedDiscovery(message)) return true;
-  if (wantsPublicSpaceContext(message)) return true;
-  const t = String(message || '').toLowerCase();
-  if (/\b(both|one local|one public|local and|public and|merchant and|shop and|park and|cafe and)\b/i.test(t)) return true;
-  if (/\b(plan|itinerary|afternoon|morning|hour|hours|free things|something to do|walking\s+tour|saturday|sunday)\b/i.test(t)) return true;
-  if (/\b(safe|safely|meet|buddy|square|plaza|crowd|busy\s+area|footfall|gathering|social)\b/i.test(t)) return true;
-  if (/\b(hybrid|public[\s-]+local|park\s+then|then\s+coffee|after\s+walk)\b/i.test(t)) return true;
-  if (/\b(bookstore|tailor|artisan|handmade|gift|sustainable|flash|deal|museum|monument|library)\b/i.test(t) &&
-    /\b(near|close|walking|route|tour|plan|with|and|after|before)\b/i.test(t)) {
-    return true;
-  }
-  if (/\b(nearby|close by|around (me|here)|what'?s (near|good|around)|any (good )?places|suggest (a |some )?(place|spot)|things?\s+to\s+do|options?\b)\b/i.test(t)) {
-    return true;
-  }
-  return false;
-}
-
 const BROWSE_INTENTS = new Set(['disambiguate', 'local', 'public', 'both', 'none']);
 
 function inferBrowseIntent(message, casualGreeting, localLen, publicLen) {
@@ -384,6 +366,16 @@ function mentionsLateNight(message) {
 
 function mentionsWalkingRouteQuestion(message) {
   return /\b(how\s+long|how\s+many\s+minutes|walk(ing)?\s+from|from\s+.+\s+to\s+.+|time\s+to\s+walk)\b/i.test(String(message || ''));
+}
+
+function isHybridPlaceQuestion(message) {
+  const t = String(message || '').toLowerCase();
+  const dual =
+    /\b(and|plus|then|after that|along with|with)\b/.test(t) &&
+    /\b(cafe|coffee|restaurant|food|shop|market|bookstore|local)\b/.test(t) &&
+    /\b(park|plaza|garden|public|walk|outdoor|library|museum|monument)\b/.test(t);
+  const itineraryWords = /\b(itinerary|plan|route|walk plan|hybrid|mix)\b/.test(t);
+  return dual || itineraryWords;
 }
 
 function haversineMeters(la1, lo1, la2, lo2) {
@@ -791,6 +783,21 @@ async function buildWalkingDirectionsAppendix(message, merchants, publics) {
   return `\nWALKING_ROUTE_GOOGLE: From "${a.name}" to "${b.name}": ${route.durationText} walking, ${route.distanceText}.`;
 }
 
+async function buildAutoHybridRouteAppendix(message, merchants, publics) {
+  if (!isHybridPlaceQuestion(message)) return '';
+  const a = merchants?.[0];
+  const b = publics?.[0];
+  if (!a || !b || !Number.isFinite(a.lat) || !Number.isFinite(a.lng) || !Number.isFinite(b.lat) || !Number.isFinite(b.lng)) {
+    return '';
+  }
+  const route = await fetchGoogleWalkingSummary({ lat: a.lat, lng: a.lng }, { lat: b.lat, lng: b.lng });
+  if (route?.durationText && route?.distanceText) {
+    return `\nHYBRID_ROUTE_HINT: Suggested hybrid order: "${a.name}" then "${b.name}" (~${route.durationText} walk, ${route.distanceText}).`;
+  }
+  const meters = Math.round(haversineMeters(a.lat, a.lng, b.lat, b.lng));
+  return `\nHYBRID_ROUTE_HINT: Suggested hybrid order: "${a.name}" then "${b.name}" (~${meters}m walk).`;
+}
+
 function formatContextForPrompt(
   merchants,
   publicPlaces,
@@ -811,11 +818,17 @@ function formatContextForPrompt(
     discoveryPreferences = null,
     parsedIntent = null,
     liveMapSyncLine = '',
-    sessionSignals = []
+    sessionSignals = [],
+    explorationRadiusM = null,
+    userActivitySnapshot = null
   }
 ) {
   const lines = [];
   lines.push(`User location (lat,lng): ${userLat}, ${userLng}`);
+  const er = Number(explorationRadiusM);
+  if (Number.isFinite(er) && er >= 200) {
+    lines.push(`Explorer search radius (merchants + public fetch): ~${Math.round(er / 100) / 10} km`);
+  }
   lines.push(`Server time (UTC): ${serverIso}`);
   lines.push('');
   lines.push(
@@ -835,8 +848,9 @@ function formatContextForPrompt(
         (publicPlaces.length ?
           `Public fetch returned ${publicPlaces.length} place(s).` :
           'Public fetch ran but returned 0 places (API/geodata empty for this pin).') :
-        'Public fetch was skipped this turn (query is local/food-focused).') +
-      ' If LOCAL_MERCHANT count > 0, you MUST answer with those merchants whenever the user asks about food, shops, nearby picks, prices, Red Pin, or generic "what is good" — do not treat empty public results as "no data".'
+        'Public fetch was skipped (short greeting).') +
+      ' If LOCAL_MERCHANT count > 0, you MUST answer with those merchants whenever the user asks about food, shops, nearby picks, prices, Red Pin, or generic "what is good" — do not treat empty public results as "no data".' +
+      ' PUBLIC_SPACES lists parks, libraries, attractions and similar near the same radius when fetched — treat them as real options for outdoor/civic questions.'
   );
   if (contextNotes.length) {
     lines.push('');
@@ -863,6 +877,23 @@ function formatContextForPrompt(
       `SESSION_FROM_CHAT_HISTORY (recent messages in this chat — apply without being asked again): ${sessionSignals.join(' · ')}. Example: diet:vegan means down-rank steakhouses/bbq and favor plant-forward tags.`
     );
   }
+  const act = userActivitySnapshot && typeof userActivitySnapshot === 'object' ? userActivitySnapshot : null;
+  if (act) {
+    lines.push('');
+    lines.push(
+      'USER_ACTIVITY (logged-in explorer — from our database; cite only these numbers, do not invent):'
+    );
+    lines.push(
+      `Visits logged: ${act.visitCount} · Total walk distance (visits): ${Math.round(Number(act.totalWalkDistanceMeters) || 0)} m · Approx. calories from those walks: ${act.approximateCaloriesFromVisits ?? 'n/a'} (uses profile weight when set)`
+    );
+    const gs = act.greenStats || {};
+    lines.push(
+      `Green stats (profile): walks ${gs.totalWalks ?? 0} · calories ${gs.totalCaloriesBurned ?? 0} · CO₂ saved ~${gs.totalCO2Saved ?? 0} g · Carbon credits: ${act.carbonCredits ?? 0} · Social points: ${act.socialPoints ?? 0}`
+    );
+    if (act.weightKg != null && Number.isFinite(act.weightKg)) {
+      lines.push(`Body weight on file (kg): ${act.weightKg} (used for calorie estimates)`);
+    }
+  }
   if (
     parsedIntent &&
     (parsedIntent.goalSignals?.length ||
@@ -872,7 +903,7 @@ function formatContextForPrompt(
   ) {
     lines.push('');
     lines.push(
-      `PARSED_INTENT (server extraction — align picks): goals=[${parsedIntent.goalSignals.join(', ')}] vibes=[${parsedIntent.vibeSignals.join(', ')}] times=[${parsedIntent.timeSignals.join(', ')}] currencies=[${parsedIntent.currencyMentions.join(', ')}] zeroSpend=${parsedIntent.zeroSpend} maxInr=${parsedIntent.budgetMaxRupees ?? 'n/a'} anchor=GPS ~12km`
+      `PARSED_INTENT (server extraction — align picks): goals=[${parsedIntent.goalSignals.join(', ')}] vibes=[${parsedIntent.vibeSignals.join(', ')}] times=[${parsedIntent.timeSignals.join(', ')}] currencies=[${parsedIntent.currencyMentions.join(', ')}] zeroSpend=${parsedIntent.zeroSpend} maxInr=${parsedIntent.budgetMaxRupees ?? 'n/a'} anchor=GPS ~${Number.isFinite(Number(explorationRadiusM)) && Number(explorationRadiusM) >= 200 ? Math.round(Number(explorationRadiusM) / 1000) : 12}km`
     );
   }
   if (meetupSafety) {
@@ -1023,12 +1054,31 @@ const SYSTEM_GREETING = `${SYSTEM_BASE}
 The user sent a short greeting or thanks. Answer in one or two warm sentences. Set browseIntent to "none".
 ${JSON_SCHEMA_HINT}`;
 
+function conciergeUserIdentityInstruction(displayName) {
+  const n = String(displayName || '')
+    .trim()
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .slice(0, 80);
+  if (!n) return '';
+  return `
+
+USER_IDENTITY: The user is signed in. Their display name is "${n}". Address them by this name when it feels natural (e.g. greetings, thanks, or a warm close)—do not repeat their name in every sentence.`;
+}
+
 const SYSTEM_FULL = `${SYSTEM_BASE}
 Answer using ONLY the supplied lists. LOCAL_MERCHANTS and PUBLIC_SPACES are independent: many pins have merchants but no park rows.
 If LOCAL_MERCHANTS is non-empty, base your answer on it for food, cafés, shops, prices, Red Pin, sustainability tags, and generic "nearby" questions — even when PUBLIC_SPACES is empty or "(not loaded)".
 Mention missing parks only when the user explicitly wanted parks/outdoors or a park+shop itinerary and public data is empty; then suggest locals plus moving the map for parks.
 NATURAL_GUIDE: Sound like a friendly local — concise, warm, and actionable. When MAP_POIS, PUBLIC_SPACES, and LOCAL_MERCHANTS all contribute, weave one short story (e.g. grab tea at [merchant] then walk a few minutes to [park/bench POI]) using exact names from the lists and straight-line distances when walk times are not in WALKING_ROUTE lines.
+LANGUAGE_ADAPTATION: Mirror the user's style (simple, casual, Hinglish-like phrases, or formal) while staying clear and respectful. Understand short/slang asks and map them to nearby intents.
+HYBRID_QUESTIONS: If user asks combinations (e.g. "coffee + park", "shop and monument", "food then walk"), always provide a combined plan with sequence, route hint, and why each stop fits.
+ROUTE_FIRST: When route hints exist (WALKING_ROUTE / HYBRID_ROUTE_HINT), include them naturally in the answer.
+When USER_ACTIVITY appears in context, you may reference that user’s logged walks, calories, CO₂ and carbon credits naturally — never invent numbers beyond what is printed there.
 ${JSON_SCHEMA_HINT}`;
+
+const SYSTEM_COMPACT = `You are GoOut City Concierge.
+Use only provided lists. Do not invent places.
+Return only JSON with fields: reply,browseIntent,mapPan,highlightBusinessId,walkDistanceMeters,carbonCreditsNudge.`;
 
 function safeJsonParse(text) {
   let raw = String(text || '').trim();
@@ -1052,7 +1102,7 @@ function safeJsonParse(text) {
 
 function toGeminiHistory(history) {
   const out = [];
-  const arr = Array.isArray(history) ? history.slice(-12) : [];
+  const arr = Array.isArray(history) ? history.slice(-18) : [];
   for (const h of arr) {
     const role = h.role === 'assistant' ? 'model' : 'user';
     const text = String(h.content || '').trim();
@@ -1062,6 +1112,7 @@ function toGeminiHistory(history) {
   return out;
 }
 
+
 function buildOfflineConciergeParsed({
   message,
   casualGreeting,
@@ -1070,14 +1121,20 @@ function buildOfflineConciergeParsed({
   userLat,
   userLng,
   greenMode,
-  mapPoiCount = 0
+  mapPoiCount = 0,
+  userDisplayName = null
 }) {
   if (casualGreeting) {
+    const first =
+      typeof userDisplayName === 'string' && userDisplayName.trim() ?
+        userDisplayName.trim().split(/\s+/)[0] :
+        '';
+    const hey = first ? `Hey ${first}! ` : 'Hey! ';
     const hasPins = merchantPayload.length > 0;
     return {
       reply: hasPins ?
-        `Hey! I can’t reach the AI service right now, but your map already has ${merchantPayload.length} nearby GoOut spot(s). Try tapping a pin or searching for cafés, parks, or budget-friendly places.` :
-        'Hey! I can’t reach the AI service right now, and there are no GoOut merchants loaded very close to this pin — try moving the map or searching a wider area.',
+        `${hey}I can’t reach the AI service right now, but your map already has ${merchantPayload.length} nearby GoOut spot(s). Try tapping a pin or searching for cafés, parks, or budget-friendly places.` :
+        `${hey}I can’t reach the AI service right now, and there are no GoOut merchants loaded very close to this pin — try moving the map or searching a wider area.`,
       browseIntent: 'none',
       mapPan: null,
       highlightBusinessId: null,
@@ -1161,10 +1218,12 @@ export async function runConciergeChat({
   lng,
   history = [],
   greenMode = false,
-  maxMerchantRadiusM = 12000,
   mapContext = null,
   userId = null,
-  discoveryPreferences = null
+  discoveryPreferences = null,
+  userDisplayName = null,
+  explorationRadiusM = null,
+  userActivitySnapshot = null
 }) {
   const userLat = Number(lat);
   const userLng = Number(lng);
@@ -1186,6 +1245,10 @@ export async function runConciergeChat({
   const searchHint = extractSearchHint(rawMessage);
   const parsedIntent = parseIntentSummary(rawMessage, budget, searchHint);
   const casualGreeting = isCasualGreeting(rawMessage);
+
+  const er = Number(explorationRadiusM);
+  const maxMerchantRadiusM =
+    Number.isFinite(er) && er >= 200 && er <= 50000 ? Math.round(er) : 12000;
 
   const coords = [userLng, userLat];
   let merchantQuery = {
@@ -1298,7 +1361,7 @@ export async function runConciergeChat({
     });
   }
 
-  merchants = merchants.slice(0, casualGreeting ? 12 : 32);
+  merchants = merchants.slice(0, casualGreeting ? 16 : 48);
 
   const sliceIds = new Set(merchants.map((m) => String(m._id)));
   let liveFlashOffersForPrompt = flashOfferDocs
@@ -1311,16 +1374,14 @@ export async function runConciergeChat({
       validUntilIso: o.validUntil ? new Date(o.validUntil).toISOString() : ''
     }));
 
-  const publicFetchAttempted = !casualGreeting && shouldFetchPublicConcierge(rawMessage, casualGreeting);
+  const publicFetchAttempted = !casualGreeting;
   let publicSpaces = [];
   if (publicFetchAttempted) {
     try {
-      publicSpaces = await fetchPublicSpacesNear(
-        userLat,
-        userLng,
-        Math.min(maxMerchantRadiusM, 8000),
-        rawMessage
-      );
+      const publicRadius = Math.min(maxMerchantRadiusM, 25000);
+      publicSpaces = await fetchPublicSpacesNear(userLat, userLng, publicRadius, rawMessage, {
+        maxResults: 80
+      });
     } catch (e) {
       console.error('[concierge] public spaces', e);
     }
@@ -1383,22 +1444,71 @@ export async function runConciergeChat({
 
   const genAI = createGeminiClient();
   if (!genAI) {
+    const offlineParsed = buildOfflineConciergeParsed({
+      message: rawMessage,
+      casualGreeting,
+      merchantPayload,
+      publicPayload,
+      userLat,
+      userLng,
+      greenMode,
+      mapPoiCount: mapPoisPayload.length,
+      userDisplayName
+    });
+    const browseIntent = resolveBrowseIntent({
+      modelIntent: offlineParsed.browseIntent,
+      message: rawMessage,
+      casualGreeting,
+      localLen: merchantPayload.length,
+      publicLen: publicPayload.length + mapPoisPayload.length
+    });
+    const NEARBY_LIST_CAP = 60;
     return {
-      error:
-        'City Concierge needs GEMINI_API_KEY in server/.env (Google AI Studio). Without it, the bot cannot run. Restart the API after saving.',
-      status: 503
+      reply: String(offlineParsed.reply || '').trim(),
+      mapPan: offlineParsed.mapPan || null,
+      highlightBusinessId: offlineParsed.highlightBusinessId || null,
+      walkDistanceMeters: offlineParsed.walkDistanceMeters ?? null,
+      carbonCreditsNudge: offlineParsed.carbonCreditsNudge || null,
+      nearby: {
+        local: merchantPayload.slice(0, NEARBY_LIST_CAP),
+        public: publicPayload.slice(0, NEARBY_LIST_CAP),
+        mapPois: mapPoisPayload.slice(0, NEARBY_LIST_CAP)
+      },
+      meta: {
+        budgetMaxRupees: budget.maxInr,
+        budgetNote: budget.note,
+        isZeroSpend: budget.isZeroSpend,
+        meetupSafety,
+        greenMode,
+        merchantCount: merchantPayload.length,
+        publicSpaceCount: publicPayload.length,
+        mapPoiCount: mapPoisPayload.length,
+        mapExplorer: {
+          merchantsFromClient: mapMc?.businesses?.length || 0,
+          poisFromClient: mapPoisPayload.length,
+          offersFromClient: mapMc?.offers?.length || 0
+        },
+        geminiModel: null,
+        offline: true,
+        browseIntent,
+        parsedIntent,
+        geminiError: 'Missing GEMINI_API_KEY'
+      }
     };
   }
 
   const modelId = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
 
-  const forPromptMerchants = merchantPayload.slice(0, casualGreeting ? 10 : 22);
-  const forPromptPublic = publicPayload.slice(0, casualGreeting ? 0 : 12);
-  const forPromptPublicWithMapPois = [...forPromptPublic, ...mapPoisPayload.slice(0, 10)];
+  const forPromptMerchants = merchantPayload.slice(0, casualGreeting ? 12 : 36);
+  const forPromptPublic = publicPayload.slice(0, casualGreeting ? 0 : 40);
+  const forPromptPublicWithMapPois = [...forPromptPublic, ...mapPoisPayload.slice(0, 24)];
 
   const walkingAppendix = casualGreeting ?
     '' :
     await buildWalkingDirectionsAppendix(rawMessage, forPromptMerchants, forPromptPublicWithMapPois);
+  const hybridAppendix = casualGreeting ?
+    '' :
+    await buildAutoHybridRouteAppendix(rawMessage, forPromptMerchants, forPromptPublicWithMapPois);
 
   let weatherNote = '';
   if (greenMode && !casualGreeting) {
@@ -1435,7 +1545,7 @@ export async function runConciergeChat({
     meetupSafety,
     greenMode,
     serverIso: new Date().toISOString(),
-    walkingAppendix,
+    walkingAppendix: `${walkingAppendix || ''}${hybridAppendix || ''}`,
     contextNotes,
     rawMessage,
     publicFetchAttempted,
@@ -1445,7 +1555,9 @@ export async function runConciergeChat({
     discoveryPreferences,
     parsedIntent,
     liveMapSyncLine,
-    sessionSignals
+    sessionSignals,
+    explorationRadiusM: maxMerchantRadiusM,
+    userActivitySnapshot
   });
 
   let userBlock = `${contextText}\n\nUser message:\n${rawMessage}`;
@@ -1457,9 +1569,16 @@ export async function runConciergeChat({
 
   const geminiHistory = toGeminiHistory(history);
   const contents = [...geminiHistory, { role: 'user', parts: [{ text: userBlock }] }];
+  const compactContext = [
+    `User location: ${userLat},${userLng}`,
+    `Merchants: ${(forPromptMerchants || []).slice(0, 8).map((m) => `${m.name}|${m.category}|${m.distanceMeters ?? 'n/a'}m`).join('; ') || 'none'}`,
+    `Public: ${(forPromptPublicWithMapPois || []).slice(0, 8).map((p) => `${p.name}|${p.category}|${p.distanceMeters ?? 'n/a'}m`).join('; ') || 'none'}`,
+    `User: ${rawMessage}`
+  ].join('\n');
 
+  const nameBlock = conciergeUserIdentityInstruction(userDisplayName);
   const sharedModelOptions = {
-    systemInstruction: casualGreeting ? SYSTEM_GREETING : SYSTEM_FULL,
+    systemInstruction: (casualGreeting ? SYSTEM_GREETING : SYSTEM_FULL) + nameBlock,
     generationConfig: {
       temperature: casualGreeting ? 0.65 : 0.52,
       maxOutputTokens: casualGreeting ? 512 : 2048,
@@ -1470,16 +1589,53 @@ export async function runConciergeChat({
   let textOut = '';
   let usedOffline = false;
   let geminiError = null;
+  let usedModelId = null;
 
-  try {
-    const model = getGenerativeModelForModelId(genAI, modelId, sharedModelOptions);
-    const result = await model.generateContent({ contents });
-    textOut = result?.response?.text?.() || '';
-  } catch (e) {
-    geminiError = e;
-    console.error('[concierge] Gemini single-call failed:', e?.message || e);
-    usedOffline = true;
+  const candidateModels = buildGeminiCandidateModels(modelId);
+  for (const candidate of candidateModels) {
+    try {
+      const model = getGenerativeModelForModelId(genAI, candidate, sharedModelOptions);
+      if (!model) continue;
+      const result = await model.generateContent({ contents });
+      textOut = result?.response?.text?.() || '';
+      usedModelId = candidate;
+      geminiError = null;
+      break;
+    } catch (e) {
+      geminiError = e;
+      console.error('[concierge] Gemini call failed:', candidate, e?.message || e);
+      const kind = classifyGeminiError(e);
+      if (kind === 'transient') {
+        // Quick compact retry for transient 5xx on current candidate.
+        try {
+          const compactModel = getGenerativeModelForModelId(genAI, candidate, {
+            systemInstruction: SYSTEM_COMPACT + nameBlock,
+            generationConfig: {
+              temperature: 0.4,
+              maxOutputTokens: 768,
+              responseMimeType: 'application/json'
+            }
+          });
+          if (compactModel) {
+            const compactResult = await compactModel.generateContent({
+              contents: [{ role: 'user', parts: [{ text: compactContext }] }]
+            });
+            textOut = compactResult?.response?.text?.() || '';
+            if (textOut) {
+              usedModelId = candidate;
+              geminiError = null;
+              break;
+            }
+          }
+        } catch (compactErr) {
+          geminiError = compactErr;
+          console.error('[concierge] Gemini compact retry failed:', candidate, compactErr?.message || compactErr);
+        }
+        await sleepMs(250);
+      }
+    }
   }
+  if (!textOut) usedOffline = true;
 
   let parsed = safeJsonParse(textOut);
   if (usedOffline || !parsed || typeof parsed.reply !== 'string') {
@@ -1494,7 +1650,8 @@ export async function runConciergeChat({
       userLat,
       userLng,
       greenMode,
-      mapPoiCount: mapPoisPayload.length
+      mapPoiCount: mapPoisPayload.length,
+      userDisplayName
     });
     usedOffline = true;
   }
@@ -1579,7 +1736,7 @@ export async function runConciergeChat({
       poisFromClient: mapPoisPayload.length,
       offersFromClient: mapMc?.offers?.length || 0
     },
-    geminiModel: usedOffline ? null : modelId,
+    geminiModel: usedOffline ? null : usedModelId || modelId,
     offline: usedOffline,
     browseIntent,
     parsedIntent

@@ -148,9 +148,15 @@ router.get('/itinerary', async (req, res) => {
     const queryText = (place || preferences || '').toString().trim();
     const inlineBudget = parseInlineBudgetINR(queryText);
     const paramBudget = parseFloat(budget);
-    let maxBudget = Number.isFinite(paramBudget) ? paramBudget : 500;
-    if (inlineBudget != null && inlineBudget > 0) {
+    let maxBudget;
+    if (inlineBudget != null && inlineBudget >= 0) {
       maxBudget = inlineBudget;
+    } else if (Number.isFinite(paramBudget) && paramBudget >= 0) {
+      maxBudget = paramBudget;
+    } else {
+      return res.status(400).json({
+        error: 'Enter your budget in INR (use 0 for a free-only day), or put ₹ or $ in your search text.'
+      });
     }
     const intent = parseSearchIntent(queryText);
     const terms = intent.terms;

@@ -416,6 +416,20 @@ router.post('/groups/:id/accept-hangout', protect, async (req, res) => {
   }
 });
 
+router.post('/groups/:id/reject-hangout', protect, async (req, res) => {
+  try {
+    const group = await BuddyGroup.findById(req.params.id);
+    if (!group) return res.status(404).json({ error: 'Group not found' });
+    if (!group.inviteTargetUserId || group.inviteTargetUserId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ error: 'You are not the invited guest for this hangout.' });
+    }
+    await BuddyGroup.findByIdAndDelete(group._id);
+    res.json({ removed: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/groups/:id/post-meetup', protect, async (req, res) => {
   try {
     const { didMeet, locationSafe, walkedThere } = req.body;

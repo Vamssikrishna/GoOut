@@ -217,6 +217,21 @@ export default function Buddies() {
     }
   };
 
+  const rejectHangout = async (id) => {
+    const confirmed = window.confirm('Are you sure you want to remove this hangout invitation?');
+    if (!confirmed) return;
+    setActionGroupId(id);
+    setError('');
+    try {
+      await api.post(`/buddies/groups/${id}/reject-hangout`);
+      await refreshData();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not reject hangout.');
+    } finally {
+      setActionGroupId('');
+    }
+  };
+
   const acceptRequest = async (groupId, userId) => {
     setActionGroupId(groupId);
     setError('');
@@ -266,37 +281,42 @@ export default function Buddies() {
   ];
 
   return (
-    <div className="space-y-6 goout-animate-in">
-      <div className="flex flex-wrap justify-between items-center gap-3">
-        <div>
-          <h1 className="font-display font-bold text-2xl text-goout-dark">GoOut Buddies</h1>
-          <p className="text-sm text-slate-600 mt-1">
-            AI-assisted interest matching, Red Pin or public meetups only, and Buddy Mode privacy.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={refreshData}
-            className="px-4 py-2 border border-slate-200 bg-white rounded-lg font-medium hover:bg-slate-50 transition">
-            Refresh
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowCreate(true)}
-            className="px-4 py-2 bg-goout-green text-white rounded-lg font-medium hover:bg-goout-accent transition">
-            Create Group
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setShowPairInvite(true);
-              const c = getAnchorCoords();
-              api.get('/buddies/groups/safe-venues', { params: c }).then(({ data }) => setSafeVenues(data || { redPin: [], publicPlazas: [] })).catch(() => {});
-            }}
-            className="px-4 py-2 border border-goout-green text-goout-green rounded-lg font-medium hover:bg-goout-mint transition">
-            Pair hangout invite
-          </button>
+    <div className="space-y-8 goout-animate-in">
+      <div className="goout-glass-card rounded-2xl p-6 md:p-7 goout-hover-lift border border-white/50">
+        <div className="flex flex-wrap justify-between items-center gap-4">
+          <div>
+            <h1 className="font-display font-bold text-2xl md:text-3xl bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent">
+              GoOut Buddies
+            </h1>
+            <p className="text-sm text-slate-600 mt-2 max-w-xl leading-relaxed">
+              AI-assisted interest matching, Red Pin or public meetups only, and Buddy Mode privacy.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={refreshData} className="goout-btn-ghost text-sm py-2 px-3">
+              Refresh
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowPairInvite(false);
+                setShowCreate(true);
+              }}
+              className="goout-btn-primary text-sm py-2 px-4">
+              Create group
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowCreate(false);
+                setShowPairInvite(true);
+                const c = getAnchorCoords();
+                api.get('/buddies/groups/safe-venues', { params: c }).then(({ data }) => setSafeVenues(data || { redPin: [], publicPlazas: [] })).catch(() => {});
+              }}
+              className="goout-btn-ghost text-sm py-2 px-3 border-emerald-200/80 text-emerald-800 hover:bg-emerald-50/80">
+              Pair hangout invite
+            </button>
+          </div>
         </div>
       </div>
 
@@ -369,13 +389,22 @@ export default function Buddies() {
                     </p>
                   )}
                 </div>
-                <button
-                  type="button"
-                  disabled={actionGroupId === g._id}
-                  onClick={() => acceptHangout(g._id)}
-                  className="self-center px-4 py-2 bg-goout-green text-white rounded-lg text-sm font-medium disabled:opacity-60">
-                  {actionGroupId === g._id ? '…' : 'Accept hangout'}
-                </button>
+                <div className="self-center flex gap-2">
+                  <button
+                    type="button"
+                    disabled={actionGroupId === g._id}
+                    onClick={() => acceptHangout(g._id)}
+                    className="px-4 py-2 bg-goout-green text-white rounded-lg text-sm font-medium disabled:opacity-60">
+                    {actionGroupId === g._id ? '…' : 'Accept hangout'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={actionGroupId === g._id}
+                    onClick={() => rejectHangout(g._id)}
+                    className="px-4 py-2 bg-red-100 text-red-700 rounded-lg text-sm font-medium disabled:opacity-60">
+                    {actionGroupId === g._id ? '…' : 'Reject'}
+                  </button>
+                </div>
               </div>
             ))}
           </div>

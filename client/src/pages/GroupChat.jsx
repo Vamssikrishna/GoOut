@@ -119,7 +119,14 @@ export default function GroupChat() {
     }
   };
 
-  if (!group) return <div className="p-4">Loading...</div>;
+  if (!group) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[40vh] gap-3 goout-animate-in">
+        <div className="h-10 w-10 rounded-full border-2 border-goout-green/30 border-t-goout-green animate-spin" />
+        <p className="text-slate-600 text-sm">Loading chat…</p>
+      </div>
+    );
+  }
 
   const venue = group.safeVenue;
   const mapsMeetUrl = venue?.lat && venue?.lng
@@ -127,8 +134,12 @@ export default function GroupChat() {
     : null;
 
   return (
-    <div className="max-w-3xl mx-auto">
-      <Link to="/app/buddies" className="text-goout-green hover:underline text-sm mb-4 inline-block">← Back to Buddies</Link>
+    <div className="max-w-3xl mx-auto space-y-4 goout-animate-in">
+      <Link
+        to="/app/buddies"
+        className="goout-btn-ghost text-sm py-2 px-3 inline-flex border-slate-200 hover:border-emerald-300/50">
+        ← Back to Buddies
+      </Link>
 
       {venue?.name && (
         <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-sm text-slate-800">

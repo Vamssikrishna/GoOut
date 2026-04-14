@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import { useToast } from '../../context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
 
 function coordsOf(b) {
   const c = b?.location?.coordinates;
@@ -13,7 +15,10 @@ function coordsOf(b) {
 
 export default function GreenMode({ userLocation, businesses = [], onGreenEcoRoute, onRequestMapTab }) {
   const { addToast } = useToast();
-  const [weight, setWeight] = useState(65);
+  const { user } = useAuth();
+  const isExplorer = user?.role !== 'merchant';
+  const profileWeightKg =
+    user != null && user.weight != null && Number.isFinite(Number(user.weight)) ? Number(user.weight) : null;
   const [dashboard, setDashboard] = useState(null);
   const [leaderboard, setLeaderboard] = useState(null);
   const [dashErr, setDashErr] = useState('');
@@ -23,10 +28,6 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
   const [bundleErr, setBundleErr] = useState('');
 
   const withCoords = useMemo(() => (businesses || []).filter((b) => coordsOf(b)), [businesses]);
-
-  useEffect(() => {
-    api.get('/auth/me').then(({ data }) => setWeight(data.weight || 65)).catch(() => {});
-  }, []);
 
   useEffect(() => {
     if (withCoords.length && !idDest) setIdDest(String(withCoords[0]._id));
@@ -62,10 +63,6 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
   useEffect(() => {
     loadLeaderboard();
   }, [userLocation?.lat, userLocation?.lng]);
-
-  const updateWeight = () => {
-    api.put('/users/profile', { weight }).then(() => {}).catch(() => {});
-  };
 
   const runGreenBundle = async () => {
     setBundleErr('');
@@ -136,10 +133,39 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
               'Enable GPS so we can plan eco routes from you to a merchant.'}
           </p>
         </div>
-        <div className="mb-4 flex items-center gap-2 flex-wrap">
-          <label className="text-sm font-medium">Weight (kg)</label>
-          <input type="number" value={weight} onChange={(e) => setWeight(Number(e.target.value) || 65)} min={30} max={150} className="w-20 px-2 py-1 border rounded" />
-          <button type="button" onClick={updateWeight} className="text-sm text-goout-green hover:underline">Save</button>
+        <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 text-sm">
+          <p className="font-medium text-slate-800">Body weight (from profile)</p>
+          {!user ?
+            <p className="text-slate-600 mt-1">
+              Sign in to use the weight saved on your profile for calorie-related green stats.
+            </p> :
+            profileWeightKg != null ?
+              <p className="text-slate-700 mt-1">
+                <span className="text-lg font-semibold tabular-nums text-slate-900">{profileWeightKg}</span>
+                <span className="text-slate-600"> kg</span>
+                {isExplorer &&
+                  <span className="text-slate-600">
+                    {' '}
+                    — edit on{' '}
+                    <Link to="/app/profile" className="text-goout-green font-semibold underline underline-offset-2 hover:text-goout-accent">
+                      Profile
+                    </Link>
+                    .
+                  </span>
+                }
+              </p> :
+              <p className="text-slate-600 mt-1">
+                {isExplorer ?
+                  <>
+                    Not set yet. Add your weight under{' '}
+                    <Link to="/app/profile" className="text-goout-green font-semibold underline underline-offset-2 hover:text-goout-accent">
+                      Profile → Account &amp; safety
+                    </Link>{' '}
+                    so visits and estimates can use it.
+                  </> :
+                  'Explorer accounts can set body weight in Profile for calorie estimates.'}
+              </p>
+          }
         </div>
         {dashErr && <p className="text-sm text-amber-700 mb-2">{dashErr}</p>}
         <div className="grid grid-cols-2 gap-4">

@@ -31,14 +31,7 @@ function setCached(key, value) {
   poiCache.set(key, { value, expiresAt: Date.now() + POI_CACHE_TTL_MS });
 }
 
-const CATEGORY_SYNONYMS = {
-  hospital: ['hospital', 'clinic', 'doctor', 'medical', 'healthcare', 'pharmacy'],
-  clinic: ['clinic', 'doctor', 'hospital', 'medical'],
-  mall: ['mall', 'shopping', 'supermarket', 'department_store'],
-  park: ['park', 'garden', 'playground'],
-  hotel: ['hotel', 'resort', 'hostel', 'guest_house'],
-  restaurant: ['restaurant', 'food', 'cafe', 'fast_food']
-};
+
 
 const OVERPASS_CATEGORY_TAGS = {
   hospital: ['amenity=hospital', 'amenity=clinic', 'amenity=doctors', 'amenity=pharmacy'],
@@ -53,11 +46,7 @@ const OVERPASS_CATEGORY_TAGS = {
 function getSearchTerms(term) {
   const base = (term || '').toLowerCase().trim();
   if (!base) return [];
-  const out = [base];
-  Object.entries(CATEGORY_SYNONYMS).forEach(([k, list]) => {
-    if (base.includes(k)) list.forEach((v) => out.push(v));
-  });
-  return Array.from(new Set(out)).slice(0, 8);
+  return [base];
 }
 
 function getCategoryTagFilters(term) {
@@ -87,30 +76,7 @@ function tokenize(value) {
   filter((t) => t.length >= 2);
 }
 
-function getGoogleRelevanceScore(query, place) {
-  const q = String(query || '').trim().toLowerCase();
-  if (!q) return 0;
-  const queryTokens = tokenize(q);
-  if (!queryTokens.length) return 0;
 
-  const name = String(place?.name || '').toLowerCase();
-  const category = String(place?.category || '').toLowerCase();
-  const haystack = `${name} ${category}`;
-  const placeTokens = new Set(tokenize(haystack));
-
-  let score = 0;
-  if (name === q) score += 12;
-  if (name.startsWith(q)) score += 8;
-  if (name.includes(q)) score += 6;
-  if (category.includes(q)) score += 4;
-
-  queryTokens.forEach((qt) => {
-    if (placeTokens.has(qt)) score += 3;else
-    if (Array.from(placeTokens).some((pt) => pt.startsWith(qt) || qt.startsWith(pt))) score += 1;
-  });
-
-  return score;
-}
 
 async function fetchWithTimeout(url, opts, timeoutMs) {
   const controller = new AbortController();
@@ -217,16 +183,57 @@ router.get('/search', async (req, res) => {
 });
 
 
+router.get('/reverse-city', async (req, res) => {
+  try {
+    const { lat, lng } = req.query;
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY || '';
+    if (!apiKey) return res.status(500).json({ error: 'Google Maps API key missing' });
+    if (!lat || !lng) return res.status(400).json({ error: 'lat and lng required' });
+
+    const resp = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${apiKey}`);
+    const data = await resp.json();
+    if (data.status !== 'OK' || !data.results?.length) {
+      return res.status(404).json({ error: 'City not found' });
+    }
+
+    let city = '';
+    for (const comp of data.results[0].address_components) {
+      if (comp.types.includes('locality')) {
+        city = comp.long_name;
+        break;
+      }
+    }
+    if (!city) {
+      for (const comp of data.results[0].address_components) {
+        if (comp.types.includes('administrative_area_level_2')) {
+          city = comp.long_name;
+          break;
+        }
+      }
+    }
+    res.json({ city: city || 'Unknown City' });
+  } catch (err) {
+    console.error('Reverse Geocode Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/poi', async (req, res) => {
   try {
-    const { lat, lng, q, radius = 2000 } = req.query;
+    const { lat, lng, q, city, radius = 50000 } = req.query;
     const latNum = parseFloat(lat);
     const lngNum = parseFloat(lng);
     if (Number.isNaN(latNum) || Number.isNaN(lngNum)) {
       return res.status(400).json({ error: 'lat and lng are required' });
     }
-    const term = (q || '').toString().trim();
-    const r = Math.min(Math.max(Number(radius) || 2000, 200), 30000);
+    
+    let baseTerm = (q || '').toString().trim();
+    let term = baseTerm;
+    if (city && city.trim() !== '') {
+      term = baseTerm ? `${baseTerm} in ${city}` : `places in ${city}`;
+    }
+    
+    const r = Math.min(Math.max(Number(radius) || 50000, 200), 50000);
 
     const safeTerm = term.replace(/"/g, '');
     const relatedTerms = getSearchTerms(safeTerm);
@@ -249,14 +256,9 @@ router.get('/poi', async (req, res) => {
         const strictlyRelated = googlePlaces.
         map((p) => ({
           ...p,
-          relevanceScore: getGoogleRelevanceScore(safeTerm, p),
           distanceMeters: haversineMeters(latNum, lngNum, p.lat, p.lng)
         })).
-        filter((p) => p.relevanceScore >= 3).
-        sort((a, b) => {
-          if (b.relevanceScore !== a.relevanceScore) return b.relevanceScore - a.relevanceScore;
-          return a.distanceMeters - b.distanceMeters;
-        }).
+        sort((a, b) => a.distanceMeters - b.distanceMeters).
         slice(0, 80);
 
         if (strictlyRelated.length > 0) {

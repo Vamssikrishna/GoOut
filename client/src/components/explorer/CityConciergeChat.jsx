@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import api from '../../api/client';
 
 function formatDist(m) {
@@ -8,6 +9,15 @@ function formatDist(m) {
 }
 
 /** Slim payload so the concierge prompt matches pins on the Explorer map. */
+function buildWelcomeContent(displayName) {
+  const first =
+    typeof displayName === 'string' && displayName.trim() ?
+      displayName.trim().split(/\s+/)[0] :
+      '';
+  const hi = first ? `Hi ${first}! ` : 'Hi! ';
+  return `${hi}I am your GoOut City Concierge. Ask what is near you — I read your GPS, budget ($ / ₹), and vibe (e.g. quiet) from plain English. I blend Red Pin merchants, public parks, and live flash deals from your map. Logged in? Try: save preference prefer: quiet cafes  or  save preference avoid: loud clubs  to personalize picks.`;
+}
+
 function buildMapContextPayload(mc) {
   if (!mc || typeof mc !== 'object') return undefined;
   const slimBiz = (b) => ({
@@ -27,7 +37,8 @@ function buildMapContextPayload(mc) {
     address: typeof b.address === 'string' ? b.address.slice(0, 160) : b.address,
     description: typeof b.description === 'string' ? b.description.slice(0, 200) : undefined,
     distanceMeters: typeof b.distance === 'number' ? b.distance : b.distanceMeters,
-    openingHours: b.openingHours
+    openingHours: b.openingHours,
+    menuCatalogFileUrl: typeof b.menuCatalogFileUrl === 'string' ? b.menuCatalogFileUrl.slice(0, 400) : undefined
   });
   const slimPoi = (p) => ({
     id: p.id,
@@ -109,6 +120,10 @@ function PlaceRows({ items, kind, onPickPlace, onGoRoute }) {
 
 export default function CityConciergeChat({
   userLocation,
+  /** Signed-in user's name (from profile); concierge uses it server-side too when authenticated. */
+  userDisplayName,
+  /** Explorer map search radius in meters — keeps AI merchant/public fetch aligned with the map. */
+  explorationRadiusM,
   greenMode = false,
   /** Current Explorer map pins: { businesses, pois, offers } */
   mapContext,
@@ -122,12 +137,11 @@ export default function CityConciergeChat({
 }) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
-  const [messages, setMessages] = useState([
+  const [messages, setMessages] = useState(() => [
     {
       id: 'welcome',
       role: 'assistant',
-      content:
-        'Hi! I am your GoOut City Concierge. Ask what is near you — I read your GPS, budget ($ / ₹), and vibe (e.g. quiet) from plain English. I blend Red Pin merchants, public parks, and live flash deals from your map. Logged in? Try: save preference prefer: quiet cafes  or  save preference avoid: loud clubs  to personalize picks.'
+      content: buildWelcomeContent(userDisplayName)
     }
   ]);
   const [loading, setLoading] = useState(false);
@@ -140,6 +154,16 @@ export default function CityConciergeChat({
     if (!open) return;
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, open, loading]);
+
+  useEffect(() => {
+    const content = buildWelcomeContent(userDisplayName);
+    setMessages((prev) => {
+      if (prev.length === 1 && prev[0]?.id === 'welcome' && prev[0]?.role === 'assistant') {
+        return [{ ...prev[0], content }];
+      }
+      return prev;
+    });
+  }, [userDisplayName]);
 
   const pickPlace = useCallback(
     (place, kind) => {
@@ -205,6 +229,9 @@ export default function CityConciergeChat({
         lng: userLocation.lng,
         history: priorHistory,
         greenMode,
+        ...(Number.isFinite(Number(explorationRadiusM)) && Number(explorationRadiusM) >= 200 ?
+          { explorationRadiusM: Number(explorationRadiusM) } :
+          {}),
         ...(mapPayload ? { mapContext: mapPayload } : {})
       });
 
@@ -338,8 +365,10 @@ export default function CityConciergeChat({
     return null;
   };
 
-  return (
-    <div className={`fixed bottom-6 right-6 z-[400] flex flex-col items-end gap-2 ${className}`}>
+  /** Portal to body so position:fixed is viewport-relative (Layout route animation uses transform, which traps fixed descendants). */
+  return createPortal(
+    <div
+      className={`fixed z-[10050] flex flex-col items-end gap-2 bottom-[max(1rem,env(safe-area-inset-bottom,0px))] right-[max(1rem,env(safe-area-inset-right,0px))] sm:bottom-[max(1.5rem,env(safe-area-inset-bottom,0px))] sm:right-[max(1.5rem,env(safe-area-inset-right,0px))] ${className}`}>
       {open && (
         <div className="w-[min(100vw-2rem,400px)] max-h-[min(78vh,520px)] flex flex-col rounded-2xl border border-slate-200 bg-white shadow-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-100 bg-goout-mint/80 flex items-center justify-between gap-2">
@@ -404,6 +433,7 @@ export default function CityConciergeChat({
       >
         {open ? '×' : '💬'}
       </button>
-    </div>
+    </div>,
+    document.body
   );
 }

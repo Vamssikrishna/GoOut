@@ -46,10 +46,14 @@ export default function ResetPassword() {
   };
 
   return (
-    <div className="min-h-screen goout-auth-shell flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <Link to="/" className="block text-goout-green font-display font-bold text-2xl mb-8">GoOut</Link>
-        <div className="goout-surface rounded-2xl p-8 shadow-xl">
+    <div className="min-h-screen goout-auth-shell flex items-center justify-center p-4 relative z-10">
+      <div className="w-full max-w-md goout-animate-in">
+        <Link
+          to="/"
+          className="block font-display font-extrabold text-3xl mb-8 bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent w-fit">
+          GoOut
+        </Link>
+        <div className="goout-glass-card rounded-2xl p-8 shadow-xl border border-white/60">
           <h1 className="text-2xl font-bold text-slate-900 mb-6">Set a new password</h1>
           {!token &&
           <p className="text-amber-700 text-sm mb-4">
@@ -78,11 +82,7 @@ export default function ResetPassword() {
               autoComplete="new-password"
               className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent" />
             
-            <button
-              type="submit"
-              disabled={busy || !token}
-              className="w-full py-3 bg-goout-green text-white font-medium rounded-lg hover:bg-goout-accent transition disabled:opacity-60">
-              
+            <button type="submit" disabled={busy || !token} className="goout-btn-primary w-full py-3 rounded-xl justify-center">
               {busy ? 'Saving…' : 'Update password'}
             </button>
           </form>

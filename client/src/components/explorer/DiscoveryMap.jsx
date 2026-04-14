@@ -3,7 +3,7 @@ import { GoogleMap, useLoadScript } from '@react-google-maps/api';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import { estimateMerchantSpendInr, businessIsStrongGreen } from '../../utils/searchMapRank';
 
-const DEFAULT_ZOOM = 15;
+const DEFAULT_ZOOM = 17;
 
 /** Softer highways, lift parks & paths — Green Mode map tint (indicative, not a data layer). */
 const GREEN_MAP_STYLES = [
@@ -13,6 +13,23 @@ const GREEN_MAP_STYLES = [
   { featureType: 'road.arterial', elementType: 'geometry.stroke', stylers: [{ saturation: -35 }, { lightness: 12 }] },
   { featureType: 'transit.line', elementType: 'geometry', stylers: [{ saturation: 10 }, { lightness: -5 }] }
 ];
+
+/** Compact “my location” dot (delivery-app style): white halo, teal fill, center = GPS point. */
+function buildUserLocationMarkerIcon(google) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <circle cx="12" cy="12" r="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="0.75"/>
+  <circle cx="12" cy="12" r="7" fill="#0d9488" stroke="#ffffff" stroke-width="1.25"/>
+  <circle cx="12" cy="12" r="2.25" fill="#ffffff"/>
+</svg>`;
+  const url = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+  const size = 22;
+  const half = size / 2;
+  return {
+    url,
+    scaledSize: new google.maps.Size(size, size),
+    anchor: new google.maps.Point(half, half)
+  };
+}
 
 const PIN_ICONS = {
   red: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
@@ -52,6 +69,16 @@ function businessPopupHtml(b, { isHighlighted }) {
 
   const crowd = crowdLabel(b?.crowdLevel);
   const crowdHtml = crowd ? `<p class="text-xs mt-1">${escapeHtml(crowd)}</p>` : '';
+  const address = escapeHtml(b?.address || '');
+  const vibe = escapeHtml(b?.vibe || '');
+  const tags = Array.isArray(b?.tags) ? b.tags.slice(0, 5).map((t) => escapeHtml(t)).filter(Boolean) : [];
+  const tagsHtml = tags.length ? `<p class="text-xs mt-1 text-slate-600">Tags: ${tags.join(' · ')}</p>` : '';
+  const ecoFlags = [];
+  if (b?.ecoOptions?.plasticFree) ecoFlags.push('Plastic-free');
+  if (b?.ecoOptions?.solarPowered) ecoFlags.push('Solar powered');
+  if (b?.ecoOptions?.zeroWaste) ecoFlags.push('Zero-waste');
+  if (b?.carbonWalkIncentive) ecoFlags.push('Walker incentive');
+  const ecoHtml = ecoFlags.length ? `<p class="text-xs mt-1 text-emerald-800">Eco: ${ecoFlags.map((x) => escapeHtml(x)).join(' · ')}</p>` : '';
   const distanceText =
   typeof b?.distanceMeters === 'number' && Number.isFinite(b.distanceMeters) ?
   `<p class="text-xs mt-1 text-slate-500">Distance: ${b.distanceMeters < 1000 ? `${Math.round(b.distanceMeters)} m` : `${(b.distanceMeters / 1000).toFixed(2)} km`}</p>` :
@@ -63,15 +90,31 @@ function businessPopupHtml(b, { isHighlighted }) {
   const goLat = Number.isFinite(lat) ? lat : '';
   const goLng = Number.isFinite(lng) ? lng : '';
 
+  const menuPath = String(b?.menuCatalogFileUrl || '').trim();
+  const menuAbs =
+    typeof window !== 'undefined' && menuPath.startsWith('/')
+      ? `${window.location.origin}${menuPath}`
+      : menuPath.startsWith('http')
+        ? menuPath
+        : '';
+  const menuLinkHtml = menuAbs
+    ? `<p class="mt-2"><a href="${escapeHtml(menuAbs)}" target="_blank" rel="noopener noreferrer" class="text-emerald-700 font-semibold underline hover:text-emerald-900">View menu</a></p>`
+    : '';
+
   return `
     <div class="min-w-[200px]">
       <h3 class="font-semibold text-slate-900">${name}</h3>
       <p class="text-sm text-slate-600">${category}</p>
       <p class="text-sm">₹${avgPrice} avg · ⭐ ${rating.toFixed(1) || '—'}</p>
+      ${address ? `<p class="text-xs mt-1 text-slate-600">${address}</p>` : ''}
+      ${vibe ? `<p class="text-xs mt-1 text-slate-700">Vibe: ${vibe}</p>` : ''}
       ${verifiedHtml}
       ${recommendedHtml}
       ${crowdHtml}
       ${distanceText}
+      ${tagsHtml}
+      ${ecoHtml}
+      ${menuLinkHtml}
       ${/cafe|coffee|grocery|supermarket|bakery|restaurant|bistro|juice/i.test(String(b?.category || '')) ? '<p class="text-xs mt-1 text-emerald-800">Tip: bring a reusable cup or bag when you can.</p>' : ''}
       <p class="text-xs mt-2 text-slate-500">
         Report crowd:
@@ -86,6 +129,8 @@ function businessPopupHtml(b, { isHighlighted }) {
           data-go-route="1"
           data-lat="${goLat}"
           data-lng="${goLng}"
+          data-kind="local"
+          data-business-id="${escapeHtml(b?._id)}"
           data-label="${encodeURIComponent(mapLabel || '')}"
         >
           Go
@@ -109,6 +154,11 @@ function poiPopupHtml(p, { isSearchPrimary } = {}) {
   const distanceText =
   typeof p?.distanceMeters === 'number' ? `${(p.distanceMeters / 1000).toFixed(2)} km away` : '';
   const primaryHtml = isSearchPrimary ? '<p class="text-xs mt-1 text-purple-700 font-medium">Best match for your search</p>' : '';
+  const coordText =
+  Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lng)) ?
+  `Lat ${Number(p.lat).toFixed(5)}, Lng ${Number(p.lng).toFixed(5)}` :
+  '';
+  const placeIdHtml = p?.id ? `<p class="text-[11px] text-slate-400 mt-1">Place ref: ${escapeHtml(String(p.id))}</p>` : '';
 
   return `
     <div class="min-w-[200px]">
@@ -116,6 +166,8 @@ function poiPopupHtml(p, { isSearchPrimary } = {}) {
       <p class="text-xs text-slate-600 capitalize">${category}</p>
       ${primaryHtml}
       ${distanceText ? `<p class="text-xs text-slate-500 mt-1">${escapeHtml(distanceText)}</p>` : ''}
+      ${coordText ? `<p class="text-xs text-slate-500 mt-1">${escapeHtml(coordText)}</p>` : ''}
+      ${placeIdHtml}
       <div class="mt-3">
         <button
           type="button"
@@ -123,6 +175,7 @@ function poiPopupHtml(p, { isSearchPrimary } = {}) {
           data-go-route="1"
           data-lat="${p?.lat}"
           data-lng="${p?.lng}"
+          data-kind="poi"
           data-label="${encodeURIComponent(p?.name || '')}"
         >
           Go
@@ -134,6 +187,8 @@ function poiPopupHtml(p, { isSearchPrimary } = {}) {
 
 export default function DiscoveryMap({
   userLocation,
+  onLocationChange,
+  enablePinSelection = false,
   userLocationAccuracy = null,
   mapCenter,
   businesses,
@@ -141,10 +196,12 @@ export default function DiscoveryMap({
   pois = [],
   categoryFilter,
   highlightedPoiLatLng = null,
+  onDismissHighlightedPoi,
   isSearching = false,
   searchHasNoResults = false,
   directionsRoutes,
   selectedDirectionsRouteIndex,
+  liveTrackingPoint = null,
   highlightedBusinessId,
   conciergeHighlightBusinessId = null,
   conciergePanTo = null,
@@ -153,7 +210,10 @@ export default function DiscoveryMap({
   compareRouteOverlays = [],
   compareVersus = null,
   mapVisualTheme = 'default',
-  greenEcoRoute = null
+  greenEcoRoute = null,
+  destinationPoint = null,
+  /** Explorer search radius (meters) — shown in footer. */
+  searchRadiusM = null
 }) {
   const effectiveHighlightBusinessId = highlightedBusinessId ?? conciergeHighlightBusinessId ?? null;
 
@@ -190,6 +250,7 @@ export default function DiscoveryMap({
   const greenEcoPolyRef = useRef(null);
   const greenEcoAnimTimerRef = useRef(null);
   const accuracyCircleRef = useRef(null);
+  const destinationMarkerRef = useRef(null);
   const businessMarkerByIdRef = useRef(new Map());
   const highlightedIdRef = useRef(effectiveHighlightBusinessId != null ? String(effectiveHighlightBusinessId) : null);
   const businessesByIdRef = useRef(new Map());
@@ -204,20 +265,28 @@ export default function DiscoveryMap({
   const poiCount = (pois || []).length;
   const userLocationText =
   userLocation && Number.isFinite(userLocation.lat) && Number.isFinite(userLocation.lng) ?
-  `${Number(userLocation.lat).toFixed(6)}, ${Number(userLocation.lng).toFixed(6)}` :
+  `${Number(userLocation.lat).toFixed(8)}, ${Number(userLocation.lng).toFixed(8)}${
+    Number.isFinite(Number(userLocationAccuracy)) ? ` · ±${Math.round(userLocationAccuracy)} m` : ''
+  }` :
   'Unavailable';
+
+  const radiusKmLabel = (() => {
+    const r = Number(searchRadiusM);
+    if (Number.isFinite(r) && r >= 200) return `${Math.round(r / 100) / 10} km`;
+    return '5 km';
+  })();
 
   const footerCount = (() => {
     if (!q) {
-      return `${merchantCount} places within 5km (nearest to you)`;
+      return `Search radius: ${radiusKmLabel} · type a query and Apply to load GoOut merchants and public places`;
     }
     if (searchHasNoResults && !isSearching) {
-      return `No places found for "${q}"`;
+      return `No places found for "${q}" (within ${radiusKmLabel})`;
     }
     if (isSearching) {
-      return `Searching… (${merchantCount} GoOut · ${poiCount} public so far)`;
+      return `Searching… (${merchantCount} GoOut · ${poiCount} public within ${radiusKmLabel})`;
     }
-    return `Top match highlighted · ${merchantCount} GoOut merchants · ${poiCount} public places`;
+    return `Within ${radiusKmLabel} · ${merchantCount} GoOut merchants · ${poiCount} public places (search + area)`;
   })();
 
 
@@ -276,19 +345,23 @@ export default function DiscoveryMap({
     Number.isFinite(userLocation.lat) &&
     Number.isFinite(userLocation.lng))
     {
+      const acc = Number(userLocationAccuracy);
+      const accLabel = Number.isFinite(acc) ? ` · ±${Math.round(acc)} m GPS` : '';
       markersRef.current.userMarker = new google.maps.Marker({
         position: { lat: userLocation.lat, lng: userLocation.lng },
-        title: 'You are here',
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          fillColor: '#2563eb',
-          fillOpacity: 1,
-          strokeColor: '#ffffff',
-          strokeWeight: 2,
-          scale: 7
-        },
+        title: `Your location${accLabel}`,
+        icon: buildUserLocationMarkerIcon(google),
+        draggable: true,
+        optimized: false,
         zIndex: 9999
       });
+      if (typeof onLocationChange === 'function') {
+        markersRef.current.userMarker.addListener('dragend', (e) => {
+          const ll = e?.latLng;
+          if (!ll) return;
+          onLocationChange(ll.lat(), ll.lng());
+        });
+      }
       markersRef.current.userMarker.setMap(map);
       const radius = Number.isFinite(Number(userLocationAccuracy)) ? Math.max(8, Number(userLocationAccuracy)) : null;
       if (radius) {
@@ -420,24 +493,6 @@ export default function DiscoveryMap({
 
 
   useEffect(() => {
-    if (!isLoaded || loadError) return;
-    const highlightedId = effectiveHighlightBusinessId != null ? String(effectiveHighlightBusinessId) : null;
-    if (!highlightedId) return;
-    const map = mapRef.current;
-    const infoWindow = infoWindowRef.current;
-    if (!map || !infoWindow) return;
-
-    const marker = businessMarkerByIdRef.current.get(highlightedId);
-    const b = businessesByIdRef.current.get(highlightedId);
-    if (!marker || !b) return;
-
-    const hasLiveDeal = offerIds.has(String(b?._id));
-    const popupModel = { ...b, __hasLiveDeal: hasLiveDeal };
-    infoWindow.setContent(businessPopupHtml(popupModel, { isHighlighted: true }));
-    infoWindow.open({ map, anchor: marker });
-  }, [isLoaded, loadError, effectiveHighlightBusinessId, offerIds]);
-
-  useEffect(() => {
     if (!isLoaded || loadError || !conciergePanTo) return;
     const map = mapRef.current;
     if (!map || !window.google) return;
@@ -446,7 +501,7 @@ export default function DiscoveryMap({
     if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
     map.panTo({ lat: la, lng: lo });
     const z = map.getZoom();
-    if (!Number.isFinite(z) || z < 15) map.setZoom(15);
+    if (!Number.isFinite(z) || z < DEFAULT_ZOOM) map.setZoom(DEFAULT_ZOOM);
   }, [isLoaded, loadError, conciergePanTo]);
 
 
@@ -496,6 +551,9 @@ export default function DiscoveryMap({
     polylinesRef.current = lines;
 
     if (!lines.length) return;
+    if (liveTrackingPoint && Number.isFinite(liveTrackingPoint.lat) && Number.isFinite(liveTrackingPoint.lng)) {
+      return;
+    }
     try {
       map.fitBounds(bounds, {
         top: 30,
@@ -507,7 +565,7 @@ export default function DiscoveryMap({
     } catch {
 
     }
-  }, [isLoaded, loadError, directionsRoutes, selectedDirectionsRouteIndex]);
+  }, [isLoaded, loadError, directionsRoutes, selectedDirectionsRouteIndex, liveTrackingPoint]);
 
   useEffect(() => {
     if (!isLoaded || loadError || !mapRef.current || !window.google) return;
@@ -668,6 +726,39 @@ export default function DiscoveryMap({
     };
   }, [isLoaded, loadError, greenEcoRoute]);
 
+  useEffect(() => {
+    if (!isLoaded || loadError || !mapRef.current || !window.google) return;
+    const google = window.google;
+    const map = mapRef.current;
+    try {
+      destinationMarkerRef.current?.setMap?.(null);
+    } catch {}
+    destinationMarkerRef.current = null;
+    const la = Number(destinationPoint?.lat);
+    const lo = Number(destinationPoint?.lng);
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
+    const marker = new google.maps.Marker({
+      map,
+      position: { lat: la, lng: lo },
+      title: destinationPoint?.label ? `Destination: ${destinationPoint.label}` : 'Destination',
+      zIndex: 9800,
+      icon: {
+        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36"><path d="M12 0C5.4 0 0 5.4 0 12c0 9.7 12 24 12 24s12-14.3 12-24C24 5.4 18.6 0 12 0z" fill="#111111"/><circle cx="12" cy="12" r="4.5" fill="#ffffff"/></svg>'
+        )}`,
+        scaledSize: new google.maps.Size(24, 36),
+        anchor: new google.maps.Point(12, 36)
+      },
+      optimized: false
+    });
+    destinationMarkerRef.current = marker;
+    return () => {
+      try {
+        marker.setMap(null);
+      } catch {}
+    };
+  }, [isLoaded, loadError, destinationPoint]);
+
   if (!apiKey) {
     return (
       <div className="rounded-2xl overflow-hidden border border-slate-200 bg-white shadow-sm p-4 text-sm text-slate-700">
@@ -687,6 +778,22 @@ export default function DiscoveryMap({
   return (
     <div className="rounded-2xl overflow-hidden border border-slate-200 bg-white shadow-sm">
       <div className="h-[500px] relative">
+        {highlightedPoiLatLng && typeof onDismissHighlightedPoi === 'function' &&
+        <button
+          type="button"
+          className="absolute top-3 left-3 z-[6] flex h-11 w-11 items-center justify-center rounded-full border-2 border-slate-200/90 bg-white/95 text-slate-500 shadow-lg backdrop-blur-sm transition-all duration-200 hover:scale-105 hover:border-red-300 hover:bg-red-50 hover:text-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDismissHighlightedPoi();
+          }}
+          aria-label="Hide this search result from the map"
+          title="Hide from map">
+          
+            <span className="text-2xl font-light leading-none select-none" aria-hidden>
+              ×
+            </span>
+          </button>
+        }
         {greenEcoRoute && Number.isFinite(Number(greenEcoRoute.co2SavedGrams)) &&
         <div className="absolute bottom-3 left-3 z-[5] max-w-[min(92vw,260px)] rounded-xl bg-emerald-950/90 text-emerald-50 border border-emerald-600/50 shadow-lg px-3 py-2 text-xs pointer-events-none">
             <p className="font-semibold flex items-center gap-1.5">
@@ -731,6 +838,15 @@ export default function DiscoveryMap({
         <GoogleMap
           onLoad={(map) => {
             mapRef.current = map;
+            try {
+              map.setTilt(0);
+            } catch {}
+          }}
+          onClick={(e) => {
+            if (!enablePinSelection || typeof onLocationChange !== 'function') return;
+            const ll = e?.latLng;
+            if (!ll) return;
+            onLocationChange(ll.lat(), ll.lng());
           }}
           center={center}
           zoom={DEFAULT_ZOOM}
@@ -739,13 +855,20 @@ export default function DiscoveryMap({
             streetViewControl: false,
             mapTypeControl: false,
             fullscreenControl: false,
-            clickableIcons: false
+            clickableIcons: false,
+            tilt: 0,
+            heading: 0
           }} />
 
         }
+        {enablePinSelection &&
+        <div className="absolute top-3 left-3 z-[6] rounded-lg bg-emerald-50/95 border border-emerald-200 px-3 py-2 text-xs text-emerald-900 shadow-sm">
+            Pin mode ON: click map to set exact location.
+          </div>
+        }
       </div>
       <div className="p-4 bg-slate-50 border-t flex flex-col gap-1 text-sm">
-        <span><strong>🔵 User location:</strong> {userLocationText}</span>
+        <span><strong>Your location:</strong> {userLocationText}</span>
         <span><strong>Public places found by search:</strong> {q ? poiCount : 0}</span>
         <span><strong>Local places found by search:</strong> {q ? merchantCount : 0}</span>
         {Number.isFinite(Number(budgetCapInr)) && Number(budgetCapInr) > 0 &&

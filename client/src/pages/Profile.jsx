@@ -1,0 +1,493 @@
+import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
+import api from '../api/client';
+import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+
+function businessIdFromUser(user) {
+  if (!user?.businessId) return null;
+  return user.businessId._id || user.businessId;
+}
+
+function parseTags(line) {
+  return line.split(/[,;\n]/).map((s) => s.trim()).filter(Boolean);
+}
+
+export default function Profile() {
+  const { user, refreshUser, logout } = useAuth();
+  const { addToast } = useToast();
+  const isMerchant = user?.role === 'merchant';
+  const bid = businessIdFromUser(user);
+
+  const [loading, setLoading] = useState(true);
+  const [savingAccount, setSavingAccount] = useState(false);
+  const [savingExplorer, setSavingExplorer] = useState(false);
+  const [savingBusiness, setSavingBusiness] = useState(false);
+
+  const [name, setName] = useState('');
+  const [interestsLine, setInterestsLine] = useState('');
+  const [weight, setWeight] = useState('');
+  const [emergencyContact, setEmergencyContact] = useState('');
+  const [buddyMode, setBuddyMode] = useState(false);
+  const [preferLine, setPreferLine] = useState('');
+  const [avoidLine, setAvoidLine] = useState('');
+  const [discoveryNotes, setDiscoveryNotes] = useState('');
+
+  const [bizName, setBizName] = useState('');
+  const [bizPhone, setBizPhone] = useState('');
+  const [bizContactEmail, setBizContactEmail] = useState('');
+  const [bizDescription, setBizDescription] = useState('');
+  const [bizVibe, setBizVibe] = useState('');
+  const [bizAddress, setBizAddress] = useState('');
+  const [bizWebsite, setBizWebsite] = useState('');
+  const [bizInstagram, setBizInstagram] = useState('');
+  const [bizFacebook, setBizFacebook] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const u = await refreshUser();
+      if (!u) {
+        addToast({ type: 'error', title: 'Could not load profile', message: 'Try signing in again.' });
+        return;
+      }
+      const roleMerchant = u.role === 'merchant';
+      setName(u.name || '');
+      setInterestsLine(Array.isArray(u.interests) ? u.interests.join(', ') : '');
+      setWeight(u.weight != null ? String(u.weight) : '');
+      setEmergencyContact(u.emergencyContact || '');
+      setBuddyMode(Boolean(u.buddyMode));
+      if (!roleMerchant) {
+        try {
+          const { data } = await api.get('/users/discovery-preferences');
+          setPreferLine((data.prefer || []).join(', '));
+          setAvoidLine((data.avoid || []).join(', '));
+          setDiscoveryNotes(data.notes || '');
+        } catch {
+          setPreferLine('');
+          setAvoidLine('');
+          setDiscoveryNotes('');
+        }
+      }
+      const id = businessIdFromUser(u);
+      if (roleMerchant && id) {
+        const { data: b } = await api.get(`/businesses/${id}`);
+        setBizName(b.name || '');
+        setBizPhone(b.phone || '');
+        setBizContactEmail(b.contactEmail || '');
+        setBizDescription(b.description || '');
+        setBizVibe(b.vibe || '');
+        setBizAddress(b.address || '');
+        setBizWebsite(b.socialLinks?.website || '');
+        setBizInstagram(b.socialLinks?.instagram || '');
+        setBizFacebook(b.socialLinks?.facebook || '');
+      }
+    } catch (e) {
+      addToast({ type: 'error', title: 'Could not load profile', message: e?.response?.data?.error || 'Try again.' });
+    } finally {
+      setLoading(false);
+    }
+  }, [refreshUser, addToast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const saveAccount = async (e) => {
+    e.preventDefault();
+    setSavingAccount(true);
+    try {
+      const body = { name: name.trim() };
+      if (!isMerchant) {
+        body.interests = parseTags(interestsLine);
+        const w = parseFloat(weight);
+        if (Number.isFinite(w)) body.weight = w;
+        body.emergencyContact = emergencyContact.trim();
+        body.buddyMode = buddyMode;
+      }
+      await api.put('/users/profile', body);
+      await refreshUser();
+      addToast({ type: 'success', title: 'Saved', message: 'Your account details were updated.' });
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Save failed',
+        message: err?.response?.data?.error || 'Could not update profile.'
+      });
+    } finally {
+      setSavingAccount(false);
+    }
+  };
+
+  const saveDiscovery = async (e) => {
+    e.preventDefault();
+    setSavingExplorer(true);
+    try {
+      await api.put('/users/discovery-preferences', {
+        prefer: parseTags(preferLine),
+        avoid: parseTags(avoidLine),
+        notes: discoveryNotes
+      });
+      addToast({ type: 'success', title: 'Saved', message: 'Discovery preferences updated for the concierge.' });
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Save failed',
+        message: err?.response?.data?.error || 'Could not save preferences.'
+      });
+    } finally {
+      setSavingExplorer(false);
+    }
+  };
+
+  const saveBusiness = async (e) => {
+    e.preventDefault();
+    if (!bid) return;
+    setSavingBusiness(true);
+    try {
+      await api.put(`/businesses/${bid}`, {
+        name: bizName.trim(),
+        phone: bizPhone.trim(),
+        contactEmail: bizContactEmail.trim(),
+        description: bizDescription,
+        vibe: bizVibe.trim(),
+        address: bizAddress.trim(),
+        socialLinks: {
+          website: bizWebsite.trim(),
+          instagram: bizInstagram.trim(),
+          facebook: bizFacebook.trim()
+        }
+      });
+      addToast({ type: 'success', title: 'Business updated', message: 'Your public listing details were saved.' });
+      await refreshUser();
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Save failed',
+        message: err?.response?.data?.error || 'Could not update business.'
+      });
+    } finally {
+      setSavingBusiness(false);
+    }
+  };
+
+  function getInitials(name) {
+    if (!name) return '?';
+    return name.
+    split(' ').
+    filter(Boolean).
+    slice(0, 2).
+    map((n) => n[0]?.toUpperCase()).
+    join('');
+  }
+
+  const handleLogout = () => {
+    addToast({ type: 'info', title: 'Logged out', message: 'See you soon.' });
+    logout();
+  };
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[40vh] gap-4 goout-animate-in">
+        <div className="h-12 w-12 rounded-full border-2 border-goout-green/30 border-t-goout-green animate-spin" />
+        <p className="text-slate-600 text-sm">Loading your profile…</p>
+      </div>
+    );
+  }
+
+  const bizPopulated = user?.businessId && typeof user.businessId === 'object';
+  const linkedBizName = bizPopulated ? user.businessId.name : '';
+  const linkedBizCategory = bizPopulated ? user.businessId.category : '';
+  const linkedBizAddress = bizPopulated ? user.businessId.address : '';
+
+  return (
+    <div className="max-w-3xl mx-auto space-y-8 pb-16 goout-animate-in">
+      <div className="goout-animate-stagger space-y-2">
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-goout-green/90">Account</p>
+        <h1 className="font-display text-3xl md:text-4xl font-bold text-slate-900 tracking-tight">Your profile</h1>
+        <p className="text-slate-600 text-sm md:text-base max-w-xl">
+          {isMerchant
+            ? 'Everything about your account and storefront in one place — review details below and save when you make changes.'
+            : 'Your account, safety, concierge preferences, and activity — review and update below.'}
+        </p>
+      </div>
+
+      <section className="goout-glass-card rounded-2xl p-6 md:p-8 goout-hover-lift border border-white/50">
+        <div className="flex flex-wrap items-start gap-5">
+          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-xl font-bold text-white shadow-lg shadow-emerald-500/25">
+            {getInitials(user?.name)}
+          </div>
+          <div className="min-w-0 flex-1 space-y-3">
+            <div className="flex flex-wrap items-center gap-2 gap-y-2">
+              <h2 className="font-display text-xl font-bold text-slate-900 truncate">{user?.name || 'Member'}</h2>
+              <span className={`goout-role-pill ${isMerchant ? 'goout-role-pill--merchant' : 'goout-role-pill--explorer'}`}>
+                {isMerchant ? 'Merchant' : 'Explorer'}
+              </span>
+              {user?.verified &&
+              <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-sky-100 text-sky-800">Verified</span>
+              }
+            </div>
+            <p className="text-sm text-slate-600 break-all">
+              <span className="goout-label !inline mr-2">Email</span>
+              {user?.email || '—'}
+            </p>
+            {!isMerchant && user?.greenStats && (
+              <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/50 px-4 py-3 text-sm text-slate-700">
+                <p className="font-semibold text-emerald-900 mb-2 text-xs uppercase tracking-wide">Green mode (activity)</p>
+                <ul className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs sm:text-sm">
+                  <li>Walks: <strong className="text-slate-900">{user.greenStats.totalWalks ?? 0}</strong></li>
+                  <li>Calories: <strong className="text-slate-900">{user.greenStats.totalCaloriesBurned ?? 0}</strong></li>
+                  <li>CO₂ saved: <strong className="text-slate-900">{user.greenStats.totalCO2Saved ?? 0}</strong> g</li>
+                </ul>
+              </div>
+            )}
+            {isMerchant && (
+              <div className="rounded-xl border border-amber-200/70 bg-amber-50/40 px-4 py-3 text-sm text-slate-700">
+                <p className="font-semibold text-amber-900/90 mb-1 text-xs uppercase tracking-wide">Business link</p>
+                {bid ? (
+                  <>
+                    <p className="font-medium text-slate-900">{linkedBizName || bizName || 'Your storefront'}</p>
+                    {linkedBizCategory && <p className="text-xs text-slate-600 mt-0.5">Category: {linkedBizCategory}</p>}
+                    {linkedBizAddress && <p className="text-xs text-slate-500 mt-1 line-clamp-2">{linkedBizAddress}</p>}
+                    <p className="text-xs text-emerald-800 mt-2">Use the form below to edit listing fields explorers see.</p>
+                  </>
+                ) : (
+                  <p className="text-sm">No business linked yet. Open the Merchant tab to register your storefront, then return here to edit details.</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <form onSubmit={saveAccount} className="goout-glass-card rounded-2xl p-6 md:p-8 space-y-5 goout-hover-lift">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <h2 className="font-display text-lg font-semibold text-slate-900">Account &amp; safety</h2>
+          <span
+            className={`goout-role-pill ${isMerchant ? 'goout-role-pill--merchant' : 'goout-role-pill--explorer'}`}>
+            {isMerchant ? 'Merchant' : 'Explorer'}
+          </span>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="block sm:col-span-2">
+            <span className="goout-label">Display name</span>
+            <input
+              className="goout-input mt-1"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              autoComplete="name"
+            />
+          </label>
+          <label className="block sm:col-span-2">
+            <span className="goout-label">Email</span>
+            <input className="goout-input mt-1 opacity-80 cursor-not-allowed" value={user?.email || ''} readOnly />
+            <span className="text-xs text-slate-500 mt-1 block">Email cannot be changed here.</span>
+          </label>
+        </div>
+
+        {!isMerchant && (
+          <>
+            <label className="block">
+              <span className="goout-label">Interests (comma-separated)</span>
+              <input
+                className="goout-input mt-1"
+                value={interestsLine}
+                onChange={(e) => setInterestsLine(e.target.value)}
+                placeholder="coffee, live music, hiking…"
+              />
+            </label>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className="goout-label">Weight (kg)</span>
+                <input
+                  className="goout-input mt-1"
+                  type="number"
+                  min="20"
+                  max="300"
+                  step="0.1"
+                  value={weight}
+                  onChange={(e) => setWeight(e.target.value)}
+                  placeholder="65"
+                />
+                <span className="text-xs text-slate-500 mt-1 block">
+                  Used for visit calorie estimates and shown read-only in Green Mode — change it only here.
+                </span>
+              </label>
+              <label className="block">
+                <span className="goout-label">Emergency contact</span>
+                <input
+                  className="goout-input mt-1"
+                  value={emergencyContact}
+                  onChange={(e) => setEmergencyContact(e.target.value)}
+                  placeholder="Name or phone"
+                />
+              </label>
+            </div>
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-goout-green focus:ring-goout-green"
+                checked={buddyMode}
+                onChange={(e) => setBuddyMode(e.target.checked)}
+              />
+              <span className="text-sm text-slate-700 group-hover:text-slate-900 transition-colors">
+                Buddy mode — show me peer suggestions and safe venues
+              </span>
+            </label>
+          </>
+        )}
+
+        <div className="flex flex-wrap gap-3 pt-2">
+          <button type="submit" className="goout-btn-primary" disabled={savingAccount}>
+            {savingAccount ? 'Saving…' : 'Save account'}
+          </button>
+          <button type="button" className="goout-btn-ghost" onClick={load}>
+            Reload
+          </button>
+        </div>
+      </form>
+
+      {!isMerchant && (
+        <form onSubmit={saveDiscovery} className="goout-glass-card rounded-2xl p-6 md:p-8 space-y-5 goout-hover-lift">
+          <h2 className="font-display text-lg font-semibold text-slate-900">Discovery &amp; concierge</h2>
+          <p className="text-sm text-slate-600">
+            Short chips help the AI concierge bias recommendations. Separate items with commas.
+          </p>
+          <label className="block">
+            <span className="goout-label">Prefer</span>
+            <input
+              className="goout-input mt-1"
+              value={preferLine}
+              onChange={(e) => setPreferLine(e.target.value)}
+              placeholder="quiet spots, vegetarian, indie bookstores…"
+            />
+          </label>
+          <label className="block">
+            <span className="goout-label">Avoid</span>
+            <input
+              className="goout-input mt-1"
+              value={avoidLine}
+              onChange={(e) => setAvoidLine(e.target.value)}
+              placeholder="loud bars, chains, stairs…"
+            />
+          </label>
+          <label className="block">
+            <span className="goout-label">Notes for concierge</span>
+            <textarea
+              className="goout-input mt-1 min-h-[100px] resize-y"
+              value={discoveryNotes}
+              onChange={(e) => setDiscoveryNotes(e.target.value)}
+              maxLength={800}
+              placeholder="Anything else we should keep in mind…"
+            />
+          </label>
+          <button type="submit" className="goout-btn-primary" disabled={savingExplorer}>
+            {savingExplorer ? 'Saving…' : 'Save discovery preferences'}
+          </button>
+        </form>
+      )}
+
+      {isMerchant && (
+        <div className="goout-glass-card rounded-2xl p-6 md:p-8 space-y-6 goout-hover-lift">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <h2 className="font-display text-lg font-semibold text-slate-900">Business listing</h2>
+            {!bid && (
+              <Link to="/app/merchant" className="goout-btn-primary text-sm py-2 px-4 inline-flex">
+                Register business
+              </Link>
+            )}
+          </div>
+          {!bid ? (
+            <p className="text-sm text-slate-600">
+              You don&apos;t have a business linked yet. Open the merchant dashboard to create your storefront; then
+              return here to fine-tune public details.
+            </p>
+          ) : (
+            <form onSubmit={saveBusiness} className="space-y-4">
+              <label className="block">
+                <span className="goout-label">Business name</span>
+                <input className="goout-input mt-1" value={bizName} onChange={(e) => setBizName(e.target.value)} required />
+              </label>
+              <label className="block">
+                <span className="goout-label">Public description</span>
+                <textarea
+                  className="goout-input mt-1 min-h-[100px] resize-y"
+                  value={bizDescription}
+                  onChange={(e) => setBizDescription(e.target.value)}
+                />
+              </label>
+              <label className="block">
+                <span className="goout-label">Vibe</span>
+                <input className="goout-input mt-1" value={bizVibe} onChange={(e) => setBizVibe(e.target.value)} />
+              </label>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="block">
+                  <span className="goout-label">Phone</span>
+                  <input className="goout-input mt-1" value={bizPhone} onChange={(e) => setBizPhone(e.target.value)} />
+                </label>
+                <label className="block">
+                  <span className="goout-label">Contact email</span>
+                  <input
+                    type="email"
+                    className="goout-input mt-1"
+                    value={bizContactEmail}
+                    onChange={(e) => setBizContactEmail(e.target.value)}
+                  />
+                </label>
+              </div>
+              <label className="block">
+                <span className="goout-label">Address (shown to explorers)</span>
+                <input className="goout-input mt-1" value={bizAddress} onChange={(e) => setBizAddress(e.target.value)} />
+              </label>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <label className="block">
+                  <span className="goout-label">Website</span>
+                  <input className="goout-input mt-1" value={bizWebsite} onChange={(e) => setBizWebsite(e.target.value)} />
+                </label>
+                <label className="block">
+                  <span className="goout-label">Instagram</span>
+                  <input
+                    className="goout-input mt-1"
+                    value={bizInstagram}
+                    onChange={(e) => setBizInstagram(e.target.value)}
+                  />
+                </label>
+                <label className="block">
+                  <span className="goout-label">Facebook</span>
+                  <input
+                    className="goout-input mt-1"
+                    value={bizFacebook}
+                    onChange={(e) => setBizFacebook(e.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-3 pt-2">
+                <button type="submit" className="goout-btn-primary" disabled={savingBusiness}>
+                  {savingBusiness ? 'Saving…' : 'Save business profile'}
+                </button>
+                <Link to="/app/merchant" className="goout-btn-ghost inline-flex items-center">
+                  Full merchant dashboard
+                </Link>
+              </div>
+              <p className="text-xs text-slate-500 pt-2 border-t border-slate-100">
+                Customer menu with prices &amp; PDF (shown as &quot;View menu&quot; on the map):{' '}
+                <Link to="/app/merchant" className="text-goout-green font-semibold underline">
+                  Merchant → Customer menu
+                </Link>
+              </p>
+            </form>
+          )}
+        </div>
+      )}
+
+      <section className="goout-glass-card rounded-2xl p-6 md:p-8 border border-slate-200/60">
+        <h2 className="font-display text-lg font-semibold text-slate-900 mb-2">Session</h2>
+        <p className="text-sm text-slate-600 mb-4">Sign out on this device. You can sign in again anytime.</p>
+        <button type="button" onClick={handleLogout} className="goout-btn-ghost border-red-200 text-red-700 hover:bg-red-50 hover:border-red-300">
+          Log out
+        </button>
+      </section>
+    </div>
+  );
+}

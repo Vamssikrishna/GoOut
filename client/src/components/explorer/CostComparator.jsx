@@ -21,6 +21,8 @@ export default function CostComparator({
   userLocation,
   businesses,
   offers = [],
+  hasReachedDestination = false,
+  arrivedBusinessId = '',
   onComparatorTargets,
   onCompareMapLayers,
   onClearCompareMap,
@@ -41,6 +43,10 @@ export default function CostComparator({
   const [feedbackMatched, setFeedbackMatched] = useState(true);
   const [feedbackNote, setFeedbackNote] = useState('');
   const [feedbackStatus, setFeedbackStatus] = useState('');
+  const [mealInput, setMealInput] = useState('');
+  const [mealCompareBusy, setMealCompareBusy] = useState(false);
+  const [mealCompareError, setMealCompareError] = useState('');
+  const [mealCompareResult, setMealCompareResult] = useState(null);
 
   const withCoords = useMemo(
     () => (businesses || []).filter((b) => coordsOf(b)),
@@ -201,6 +207,42 @@ export default function CostComparator({
     setRoutesById({});
     setRouteLegs(null);
     onComparatorTargets?.([]);
+  };
+
+  const runMealCompare = async () => {
+    setMealCompareError('');
+    setMealCompareResult(null);
+    const text = mealInput.trim();
+    if (!text) {
+      setMealCompareError('Tell us what you ate first.');
+      return;
+    }
+    if (!hasReachedDestination || !arrivedBusinessId) {
+      setMealCompareError('Walk to a local destination first, then enter what you ate.');
+      return;
+    }
+    const ids = [arrivedBusinessId, idA, idB].filter(Boolean);
+    const uniqIds = Array.from(new Set(ids.map(String)));
+    const compareIds = uniqIds.slice(0, 2);
+    if (!compareIds.includes(String(arrivedBusinessId)) && String(arrivedBusinessId)) {
+      compareIds[0] = String(arrivedBusinessId);
+    }
+    if (compareIds.length < 1) {
+      setMealCompareError('Pick at least one place.');
+      return;
+    }
+    setMealCompareBusy(true);
+    try {
+      const { data } = await api.post('/compare/meal-price-compare', {
+        text,
+        businessIds: compareIds
+      });
+      setMealCompareResult(data);
+    } catch (e) {
+      setMealCompareError(e.response?.data?.error || e.message || 'Could not compare meal prices');
+    } finally {
+      setMealCompareBusy(false);
+    }
   };
 
   const latestVisitByBusinessId = visits.reduce((acc, visit) => {
@@ -412,6 +454,80 @@ export default function CostComparator({
                 </p>
               </div>
           }
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+              <p className="text-sm font-medium text-slate-800">Meal-based real price check</p>
+              <p className="text-xs text-slate-600">
+                After you reach a local shop, enter what you ate. AI matches menu items and shows real savings vs another option.
+              </p>
+              {!hasReachedDestination && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  Start a walking route from Map and reach a local destination to unlock this.
+                </div>
+              )}
+              <textarea
+                value={mealInput}
+                onChange={(e) => setMealInput(e.target.value)}
+                placeholder="e.g. 1 cappuccino, 1 garlic bread, 2 samosa"
+                rows={2}
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+              />
+              <div className="flex gap-2 items-center">
+                <button
+                  type="button"
+                  onClick={runMealCompare}
+                  disabled={mealCompareBusy || !hasReachedDestination || !arrivedBusinessId}
+                  className="px-3 py-2 rounded-lg bg-slate-800 text-white text-sm font-medium disabled:opacity-60">
+                  {mealCompareBusy ? 'Checking…' : 'Compare meal prices'}
+                </button>
+                {mealCompareResult?.aiModel && (
+                  <span className="text-xs text-slate-500">AI: {mealCompareResult.aiModel}</span>
+                )}
+              </div>
+              {mealCompareError && <p className="text-xs text-red-600">{mealCompareError}</p>}
+              {mealCompareResult?.comparisons?.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs text-slate-600">
+                    Parsed items: {(mealCompareResult.parsedItems || []).map((x) => `${x.qty}× ${x.name}`).join(', ')}
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-left">
+                          <th className="py-2 pr-2">Place</th>
+                          <th className="py-2 pr-2">Estimated total</th>
+                          <th className="py-2">Matched items</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {mealCompareResult.comparisons.map((c, idx) => (
+                          <tr key={c.businessId} className={`border-b border-slate-100 ${idx === 0 ? 'bg-emerald-50/80' : ''}`}>
+                            <td className="py-2 pr-2 font-medium">{c.name}</td>
+                            <td className="py-2 pr-2">₹{Math.round(Number(c.estimatedTotalInr) || 0)}</td>
+                            <td className="py-2 text-xs text-slate-600">
+                              {(c.lines || []).slice(0, 4).map((l) => `${l.qty}× ${l.matchedName || l.asked} (₹${Math.round(Number(l.unitPrice) || 0)})`).join(' · ')}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {mealCompareResult.comparisons.length >= 2 && (
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                      You saved about ₹
+                      {Math.max(
+                        0,
+                        Math.round(
+                          Number(mealCompareResult.comparisons[1]?.estimatedTotalInr || 0) -
+                          Number(mealCompareResult.comparisons[0]?.estimatedTotalInr || 0)
+                        )
+                      )}
+                      {' '}
+                      by eating at {mealCompareResult.comparisons[0]?.name}.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         }
       </div>

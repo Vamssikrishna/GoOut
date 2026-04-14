@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import api from '../api/client';
 
 const AuthContext = createContext(null);
@@ -85,16 +85,46 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
-  const updateUser = (data) =>
-  setUser((u) => {
-    if (!u) return null;
-    const nextUser = { ...u, ...data };
-    localStorage.setItem(USER_CACHE_KEY, JSON.stringify(nextUser));
-    return nextUser;
-  });
+  const updateUser = (data) => {
+    if (!data || typeof data !== 'object') return;
+    setUser((u) => {
+      if (!u) return null;
+      const patch = { ...data };
+      if (patch._id != null && patch.id == null) {
+        patch.id = patch._id;
+      }
+      if (
+        typeof patch.businessId === 'string' &&
+        u.businessId &&
+        typeof u.businessId === 'object'
+      ) {
+        const oid = u.businessId._id ?? u.businessId.id;
+        if (oid != null && String(oid) === String(patch.businessId)) {
+          delete patch.businessId;
+        }
+      }
+      const nextUser = { ...u, ...patch };
+      localStorage.setItem(USER_CACHE_KEY, JSON.stringify(nextUser));
+      return nextUser;
+    });
+  };
+
+  const refreshUser = useCallback(async () => {
+    const token = localStorage.getItem('goout_token');
+    if (!token) return null;
+    try {
+      const { data } = await api.get('/auth/me');
+      const nextUser = { ...data, id: data._id || data.id };
+      setUser(nextUser);
+      localStorage.setItem(USER_CACHE_KEY, JSON.stringify(nextUser));
+      return nextUser;
+    } catch {
+      return null;
+    }
+  }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, verifyLoginOtp, register, logout, updateUser }}>
+    <AuthContext.Provider value={{ user, loading, login, verifyLoginOtp, register, logout, updateUser, refreshUser }}>
       {children}
     </AuthContext.Provider>);
 

@@ -8,6 +8,8 @@ import { protect, merchantOnly, optionalProtect } from '../middleware/auth.js';
 import AnalyticsHit from '../models/AnalyticsHit.js';
 import DailyStats from '../models/DailyStats.js';
 import { extractMerchantOnboardingFromSentence } from '../services/merchantOnboardingAi.js';
+import { generateAndSaveMenuPdf } from '../services/menuPdfService.js';
+import { verifyOnboardingDocuments } from '../services/merchantVerificationAi.js';
 
 const router = express.Router();
 const RED_PIN_PRIORITY_MULTIPLIER = 1.35;
@@ -117,6 +119,21 @@ function coercePriceTier(n) {
   return t;
 }
 
+function sanitizeMenuItemsBody(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') continue;
+    const name = String(row.name || '').trim().slice(0, 120);
+    const price = Number(row.price);
+    const description = String(row.description || '').trim().slice(0, 300);
+    if (!name || !Number.isFinite(price) || price < 0 || price > 9_999_999) continue;
+    out.push({ name, price, description });
+    if (out.length >= 80) break;
+  }
+  return out;
+}
+
 function pinLine(lat, lng) {
   const la = Number(lat);
   const ln = Number(lng);
@@ -128,18 +145,7 @@ function escapeRegexChars(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** OR of whitespace-separated tokens; safe for arbitrary user input. */
-function buildOrRegexFromQuery(q) {
-  const raw = String(q || '').trim();
-  if (!raw) return null;
-  const tokens = raw.split(/\s+/).map((t) => escapeRegexChars(t)).filter(Boolean);
-  if (!tokens.length) return null;
-  try {
-    return new RegExp(tokens.join('|'), 'i');
-  } catch {
-    return null;
-  }
-}
+
 
 function applyLocalPrioritySorting(items) {
   return [...items].sort((a, b) => {
@@ -156,30 +162,55 @@ function applyLocalPrioritySorting(items) {
 
 router.get('/nearby', async (req, res) => {
   try {
-    const { lng, lat, maxDistance: maxDistanceParam, category, q } = req.query;
+    const { lng, lat, city, category, q } = req.query;
     const coords = [parseFloat(lng) || 0, parseFloat(lat) || 0];
-    const defaultMax = category || q ? 50000 : 5000;
-    const maxDistance = Number(maxDistanceParam) || defaultMax;
-    let query = {
-      location: { $nearSphere: { $geometry: { type: 'Point', coordinates: coords }, $maxDistance: maxDistance } }
-    };
+
+    // Build the query object
+    let query = {};
+    if (city && String(city).trim() !== '' && String(city).trim().toLowerCase() !== 'unknown city') {
+      const escapedCity = escapeRegexChars(String(city).trim());
+      query['addressStructured.city'] = new RegExp(escapedCity, 'i');
+    } else {
+      query.location = { $nearSphere: { $geometry: { type: 'Point', coordinates: coords } } };
+    }
+
+    const SEARCHABLE_FIELDS = ['category', 'name', 'mapDisplayName', 'tags', 'vibe', 'description', 'greenInitiatives', 'localSourcingNote'];
+
     if (category && String(category).trim()) {
       const escaped = escapeRegexChars(String(category).trim());
       try {
         const c = new RegExp(escaped, 'i');
-        query.$or = [{ category: c }, { name: c }, { tags: c }];
+        query.$or = SEARCHABLE_FIELDS.map((field) => ({ [field]: c }));
       } catch {
         /* ignore invalid pattern */
       }
     }
+    
     if (q && String(q).trim()) {
-      const r = buildOrRegexFromQuery(q);
-      if (r) {
-        query.$or = [{ category: r }, { name: r }, { tags: r }];
+      const tokens = String(q).trim().split(/\s+/).map(t => escapeRegexChars(t)).filter(Boolean);
+      if (tokens.length > 0) {
+        const tokenClauses = tokens.map((t) => {
+          try {
+            const r = new RegExp(t, 'i');
+            return { $or: SEARCHABLE_FIELDS.map((field) => ({ [field]: r })) };
+          } catch {
+            return null;
+          }
+        }).filter(Boolean);
+        
+        if (tokenClauses.length > 0) {
+          if (query.$or) {
+            query.$and = [{ $or: query.$or }, { $or: tokenClauses.map((c) => c.$or).flat() }];
+            delete query.$or;
+          } else {
+            query.$or = tokenClauses.map((c) => c.$or).flat();
+          }
+        }
       } else {
         return res.json([]);
       }
     }
+
     const businesses = await Business.find(query).limit(100).populate('ownerId', 'name verified');
     res.json(applyLocalPrioritySorting(businesses));
   } catch (err) {
@@ -245,6 +276,34 @@ router.post('/onboard-ai', protect, merchantOnly, async (req, res) => {
   } catch (err) {
     console.error('[merchant onboard-ai] failed', err?.message || err);
     return res.status(500).json({ error: err.message || 'AI extraction failed' });
+  }
+});
+
+router.post('/verify-onboarding-docs', protect, merchantOnly, async (req, res) => {
+  try {
+    const mapDisplayName = String(req.body?.mapDisplayName || '').trim();
+    const licenseDocUrl = String(req.body?.licenseDocUrl || '').trim();
+    const ownerIdDocUrl = String(req.body?.ownerIdDocUrl || '').trim();
+    const storefrontPhotoUrl = String(req.body?.storefrontPhotoUrl || '').trim();
+    const lat = Number(req.body?.lat);
+    const lng = Number(req.body?.lng);
+    if (!mapDisplayName || !licenseDocUrl || !ownerIdDocUrl || !storefrontPhotoUrl) {
+      return res.status(400).json({ error: 'Map display name, license, owner ID, and storefront photo are required.' });
+    }
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({ error: 'Valid coordinates are required.' });
+    }
+    const result = await verifyOnboardingDocuments({
+      mapDisplayName,
+      licenseDocUrl,
+      ownerIdDocUrl,
+      storefrontPhotoUrl,
+      lat,
+      lng
+    });
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Verification failed' });
   }
 });
 
@@ -323,6 +382,10 @@ router.post('/', protect, merchantOnly, async (req, res) => {
       notifyBuddyMeetups,
       notifyFlashDeals,
       storefrontPhotoUrl
+      ,
+      menuItems,
+      autoVerifiedLocal,
+      autoVerificationNotes
     } = body;
 
     const coords = [parseFloat(lng) || 0, parseFloat(lat) || 0];
@@ -338,8 +401,14 @@ router.post('/', protect, merchantOnly, async (req, res) => {
       (lineFromStruct ? `${lineFromStruct} · ${pin}` : pin);
 
     const tier = coercePriceTier(priceTier);
+    const menuItemsClean = sanitizeMenuItemsBody(menuItems);
+    let avgPriceFromMenu = 0;
+    if (menuItemsClean.length > 0) {
+      avgPriceFromMenu = Math.round(menuItemsClean.reduce((sum, row) => sum + Number(row.price || 0), 0) / menuItemsClean.length);
+    }
     let avgPrice = Math.round(Number(bodyAvgPrice));
     if (!Number.isFinite(avgPrice) || avgPrice < 0) avgPrice = 0;
+    if (avgPriceFromMenu > 0) avgPrice = avgPriceFromMenu;
     const free = Boolean(isFree);
     if (!free && avgPrice === 0) avgPrice = PRICE_TIER_AVG_INR[tier] || 450;
 
@@ -381,6 +450,7 @@ router.post('/', protect, merchantOnly, async (req, res) => {
       weeklySchedule: weekly,
       openingHours: hours,
       menu: Array.isArray(menu) ? menu : [],
+      menuItems: menuItemsClean,
       menuCatalogText: String(menuCatalogText || '').trim().slice(0, 8000),
       menuCatalogFileUrl: menuFile.startsWith('/uploads/') ? menuFile.slice(0, 400) : '',
       localSourcingNote: String(localSourcingNote || '').trim().slice(0, 2000),
@@ -402,6 +472,15 @@ router.post('/', protect, merchantOnly, async (req, res) => {
       images,
       localKarmaScore: Math.min(100, mergedGreen.length * 10)
     });
+    if (autoVerifiedLocal === true && ver.length >= 2 && storefront.startsWith('/uploads/')) {
+      business.localVerification = {
+        status: 'verified',
+        redPin: true,
+        verifiedAt: new Date(),
+        notes: String(autoVerificationNotes || 'Auto-verified during onboarding').slice(0, 220)
+      };
+      await business.save();
+    }
     await User.findByIdAndUpdate(req.user._id, { businessId: business._id });
     res.status(201).json(business);
   } catch (err) {
@@ -446,7 +525,8 @@ router.put('/:id', protect, async (req, res) => {
       carbonWalkIncentive,
       notifyBuddyMeetups,
       notifyFlashDeals,
-      storefrontPhotoUrl
+      storefrontPhotoUrl,
+      menuItems
     } = req.body;
     if (name) business.name = name;
     if (description !== undefined) business.description = description;
@@ -470,6 +550,7 @@ router.put('/:id', protect, async (req, res) => {
     if (priceTier !== undefined) business.priceTier = coercePriceTier(priceTier);
     if (isFree !== undefined) business.isFree = isFree;
     if (menu !== undefined) business.menu = Array.isArray(menu) ? menu : [];
+    if (menuItems !== undefined) business.menuItems = sanitizeMenuItemsBody(menuItems);
     if (menuCatalogText !== undefined) business.menuCatalogText = String(menuCatalogText || '').trim().slice(0, 8000);
     if (menuCatalogFileUrl !== undefined) {
       const mf = String(menuCatalogFileUrl || '').trim();
@@ -536,6 +617,28 @@ router.put('/:id', protect, async (req, res) => {
   }
 });
 
+/** Save priced menu items, run Gemini tagline + PDF generation, set menuCatalogFileUrl for explorers. */
+router.post('/:id/menu/publish', protect, async (req, res) => {
+  try {
+    const business = await Business.findById(req.params.id);
+    if (!business || business.ownerId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+    const items = sanitizeMenuItemsBody(req.body?.menuItems);
+    if (!items.length) {
+      return res.status(400).json({ error: 'Add at least one menu item with a name and valid price (INR).' });
+    }
+    business.menuItems = items;
+    const { pdfUrl, aiTagline } = await generateAndSaveMenuPdf(business);
+    business.menuCatalogFileUrl = pdfUrl;
+    await business.save();
+    res.json({ business, pdfUrl, aiTagline: aiTagline || '' });
+  } catch (err) {
+    console.error('[menu/publish]', err);
+    res.status(500).json({ error: err.message || 'Could not publish menu PDF' });
+  }
+});
+
 router.patch('/:id/verify-local', protect, merchantOnly, async (req, res) => {
   try {
     const business = await Business.findById(req.params.id);
@@ -591,6 +694,9 @@ router.delete('/:id', protect, merchantOnly, async (req, res) => {
       { _id: req.user._id, businessId: business._id },
       { $unset: { businessId: 1 } }
     );
+
+    const io = req.app.get('io');
+    if (io) io.emit('business-removed', { businessId: String(business._id) });
 
     res.json({ message: 'Business deleted successfully' });
   } catch (err) {

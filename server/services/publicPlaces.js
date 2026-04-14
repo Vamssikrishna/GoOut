@@ -93,7 +93,7 @@ async function fetchGooglePlacesTextOnce({ searchTerm, latNum, lngNum, radiusMet
 
 /** Richer OSM: parks + libraries + attractions for concierge / landmark questions. */
 async function fetchOsmPublicSpaces(latNum, lngNum, radiusM) {
-  const r = Math.min(Math.max(Math.round(radiusM), 200), 12000);
+  const r = Math.min(Math.max(Math.round(radiusM), 200), 25000);
   const query = `[out:json][timeout:22];
 (
   node(around:${r},${latNum},${lngNum})[leisure=park];
@@ -182,7 +182,8 @@ export function buildGooglePlacesConciergeQuery(userMessage) {
  * At most one Google Places request; OSM fills gaps (also one request).
  * @param {string} [userMessage] optional user text to bias Google search.
  */
-export async function fetchPublicSpacesNear(lat, lng, radiusMeters = 5000, userMessage = '') {
+export async function fetchPublicSpacesNear(lat, lng, radiusMeters = 5000, userMessage = '', opts = {}) {
+  const maxResults = Math.min(80, Math.max(8, Number(opts.maxResults) || 20));
   const latNum = Number(lat);
   const lngNum = Number(lng);
   if (!Number.isFinite(latNum) || !Number.isFinite(lngNum)) return [];
@@ -225,5 +226,5 @@ export async function fetchPublicSpacesNear(lat, lng, radiusMeters = 5000, userM
       distanceMeters: haversineMeters(latNum, lngNum, p.lat, p.lng)
     }))
     .sort((a, b) => a.distanceMeters - b.distanceMeters)
-    .slice(0, 20);
+    .slice(0, maxResults);
 }

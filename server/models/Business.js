@@ -51,6 +51,12 @@ const businessSchema = new mongoose.Schema({
   crowdLevel: { type: Number, default: 50, min: 0, max: 100 },
   crowdLastPing: { type: Date, default: Date.now },
   isFree: { type: Boolean, default: false },
+  /** Priced lines for customer PDF + map "View menu". */
+  menuItems: [{
+    name: { type: String, required: true, trim: true, maxlength: 120 },
+    price: { type: Number, required: true, min: 0 },
+    description: { type: String, default: '', trim: true, maxlength: 300 }
+  }],
   menu: [{ type: String }],
   greenInitiatives: [{ type: String }],
   localVerification: {

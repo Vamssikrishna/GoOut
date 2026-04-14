@@ -27,10 +27,14 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen goout-auth-shell flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <Link to="/" className="block text-goout-green font-display font-bold text-2xl mb-8">GoOut</Link>
-        <div className="goout-surface rounded-2xl p-8 shadow-xl">
+    <div className="min-h-screen goout-auth-shell flex items-center justify-center p-4 relative z-10">
+      <div className="w-full max-w-md goout-animate-in">
+        <Link
+          to="/"
+          className="block font-display font-extrabold text-3xl mb-8 bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent hover:opacity-90 transition-opacity w-fit">
+          GoOut
+        </Link>
+        <div className="goout-glass-card rounded-2xl p-8 shadow-xl border border-white/60">
           <h1 className="text-2xl font-bold text-slate-900 mb-6">Create account</h1>
           <form onSubmit={handleSubmit} className="space-y-4">
             {err && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{err}</div>}
@@ -48,7 +52,7 @@ export default function Register() {
                 <option value="merchant">Merchant (local business owner)</option>
               </select>
             </div>
-            <button type="submit" className="w-full py-3 bg-goout-green text-white font-medium rounded-lg hover:bg-goout-accent transition">
+            <button type="submit" className="goout-btn-primary w-full py-3 rounded-xl justify-center">
               Register
             </button>
           </form>
