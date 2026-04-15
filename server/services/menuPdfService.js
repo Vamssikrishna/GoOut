@@ -3,7 +3,7 @@ import { mkdir, unlink } from 'fs/promises';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import PDFDocument from 'pdfkit';
-import { createGeminiClient, getGenerativeModelForModelId, DEFAULT_GEMINI_MODEL } from '../config/geminiConfig.js';
+import { createGeminiClient, getGenerativeModelForModelId, DEFAULT_GEMINI_MODEL, GEMINI_KEY_SCOPES } from '../config/geminiConfig.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UPLOADS_ROOT = join(__dirname, '..', 'uploads');
@@ -12,7 +12,7 @@ const UPLOADS_ROOT = join(__dirname, '..', 'uploads');
  * Optional one-line subtitle for the PDF header (Gemini). Empty if API unavailable.
  */
 async function fetchMenuTaglineAi(businessName, category, items) {
-  const genAI = createGeminiClient();
+  const genAI = createGeminiClient(GEMINI_KEY_SCOPES.MERCHANT);
   if (!genAI) return '';
   try {
     const modelId = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;

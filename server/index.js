@@ -76,5 +76,29 @@ app.use((err, req, res, next) => {
 app.set('io', io);
 setupSocketHandlers(io);
 
-const PORT = process.env.PORT || 5000;
-httpServer.listen(PORT, () => console.log(`GoOut server running on port ${PORT}`));
+function getCliArgValue(flag) {
+  const idx = process.argv.indexOf(flag);
+  if (idx === -1) return null;
+  return process.argv[idx + 1] ?? null;
+}
+
+const cliPort = Number.parseInt(getCliArgValue('--port') || '', 10);
+const cliHost = getCliArgValue('--host');
+const requestedPort = Number.isFinite(cliPort) ? cliPort : Number.parseInt(process.env.PORT || '5000', 10);
+const requestedHost = cliHost || process.env.HOST || '0.0.0.0';
+
+function startServer(port) {
+  httpServer.listen(port, requestedHost, () => {
+    console.log(`GoOut server running on http://${requestedHost}:${port}`);
+  });
+}
+
+httpServer.on('error', (err) => {
+  if (err?.code === 'EADDRINUSE') {
+    console.error(`Port ${requestedPort} is already in use. Set a free port via "--port <port>" or PORT in .env.`);
+    process.exit(1);
+  }
+  throw err;
+});
+
+startServer(requestedPort);

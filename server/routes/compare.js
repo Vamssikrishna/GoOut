@@ -1,12 +1,16 @@
 import express from 'express';
 import mongoose from 'mongoose';
 import Business from '../models/Business.js';
+import Visit from '../models/Visit.js';
 import { protect } from '../middleware/auth.js';
 import {
   createGeminiClient,
   getGenerativeModelForModelId,
   DEFAULT_GEMINI_MODEL,
-  buildGeminiCandidateModels
+  buildGeminiCandidateModels,
+  GEMINI_KEY_SCOPES,
+  isLikelyGeminiError,
+  formatGeminiUserMessage
 } from '../config/geminiConfig.js';
 import {
   scoreMerchantOption,
@@ -64,7 +68,7 @@ function safeJsonParseLoose(text) {
 }
 
 async function extractMealItemsAi(text) {
-  const genAI = createGeminiClient();
+  const genAI = createGeminiClient(GEMINI_KEY_SCOPES.COMPARE_GREEN);
   if (!genAI) return { items: heuristicMealItems(text), model: null };
   const prompt = `User says what they ate. Extract food/drink item names + quantity.
 Return JSON only: {"items":[{"name":"string","qty":number}]}
@@ -123,6 +127,89 @@ function matchMenuItem(queryName, menuItems) {
   }
   if (best && bestScore >= 0.35) return { ...best, score: bestScore };
   return null;
+}
+
+function buildScenarioEstimates(localTotal) {
+  const base = Math.max(0, Number(localTotal) || 0);
+  const deliveryTotal = Math.round((base * 1.25 + 55) * 100) / 100;
+  const basicRestaurantTotal = Math.round((base * 1.55) * 100) / 100;
+  const highClassRestaurantTotal = Math.round((base * 2.3) * 100) / 100;
+  return {
+    localShopTotal: base,
+    deliveryTotal,
+    basicRestaurantTotal,
+    highClassRestaurantTotal,
+    savingsVsDelivery: Math.round((deliveryTotal - base) * 100) / 100,
+    savingsVsBasicRestaurant: Math.round((basicRestaurantTotal - base) * 100) / 100,
+    savingsVsHighClassRestaurant: Math.round((highClassRestaurantTotal - base) * 100) / 100
+  };
+}
+
+function toSafeMoney(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.round(n * 100) / 100);
+}
+
+async function estimateScenarioCostsAi({ items, localTotal, localName = '' }) {
+  const genAI = createGeminiClient(GEMINI_KEY_SCOPES.COMPARE_GREEN);
+  if (!genAI) return { estimate: null, model: null };
+  const compactItems = (items || []).map((x) => `${x.qty} x ${x.name}`).join(', ');
+  const prompt = `Estimate meal costs in INR for India.
+Given:
+- local_shop_name: ${localName || 'Local shop'}
+- local_shop_total_inr: ${toSafeMoney(localTotal)}
+- meal_items: ${compactItems}
+
+Return STRICT JSON only:
+{
+  "deliveryCostInr": number,
+  "basicRestaurantCostInr": number,
+  "highClassRestaurantCostInr": number
+}
+
+Rules:
+- deliveryCostInr should include platform/tax/packaging impact
+- basicRestaurantCostInr should be above local price
+- highClassRestaurantCostInr should be above basic restaurant
+- all numbers must be >= local_shop_total_inr
+- no markdown, no explanation`;
+  const candidates = buildGeminiCandidateModels(process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL);
+  for (const modelId of candidates) {
+    try {
+      const model = getGenerativeModelForModelId(genAI, modelId, {
+        generationConfig: { temperature: 0.1, maxOutputTokens: 280, responseMimeType: 'application/json' }
+      });
+      if (!model) continue;
+      const result = await model.generateContent({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }]
+      });
+      const txt = String(result?.response?.text?.() || '').trim();
+      const parsed = safeJsonParseLoose(txt);
+      const local = toSafeMoney(localTotal);
+      const delivery = Math.max(local, toSafeMoney(parsed?.deliveryCostInr));
+      const basic = Math.max(delivery, toSafeMoney(parsed?.basicRestaurantCostInr));
+      const high = Math.max(basic, toSafeMoney(parsed?.highClassRestaurantCostInr));
+      if (delivery > 0 && basic > 0 && high > 0) {
+        return {
+          estimate: {
+            localShopTotal: local,
+            deliveryTotal: delivery,
+            basicRestaurantTotal: basic,
+            highClassRestaurantTotal: high,
+            savingsVsDelivery: toSafeMoney(delivery - local),
+            savingsVsBasicRestaurant: toSafeMoney(basic - local),
+            savingsVsHighClassRestaurant: toSafeMoney(high - local),
+            source: 'ai'
+          },
+          model: modelId
+        };
+      }
+    } catch {
+      // next model
+    }
+  }
+  return { estimate: null, model: null };
 }
 
 /**
@@ -200,6 +287,9 @@ router.post('/value-scores', protect, async (req, res) => {
       intentEcho: String(intent).slice(0, 200)
     });
   } catch (err) {
+    if (isLikelyGeminiError(err)) {
+      return res.status(503).json({ error: formatGeminiUserMessage(err) });
+    }
     res.status(500).json({ error: err.message });
   }
 });
@@ -208,11 +298,17 @@ router.post('/meal-price-compare', protect, async (req, res) => {
   try {
     const text = String(req.body?.text || '').trim();
     const idsRaw = Array.isArray(req.body?.businessIds) ? req.body.businessIds : [];
+    const localBusinessId = String(req.body?.localBusinessId || '').trim();
     if (!text) return res.status(400).json({ error: 'Please enter what you ate.' });
+    if (!localBusinessId || !mongoose.Types.ObjectId.isValid(localBusinessId)) {
+      return res.status(400).json({ error: 'Valid localBusinessId is required.' });
+    }
     if (!idsRaw.length) return res.status(400).json({ error: 'Choose places to compare.' });
 
     const objectIds = [];
-    for (const id of idsRaw.slice(0, 4)) {
+    const allIds = [localBusinessId, ...idsRaw];
+    const uniq = Array.from(new Set(allIds.map((x) => String(x))));
+    for (const id of uniq.slice(0, 4)) {
       if (!mongoose.Types.ObjectId.isValid(id)) continue;
       objectIds.push(new mongoose.Types.ObjectId(id));
     }
@@ -225,6 +321,26 @@ router.post('/meal-price-compare', protect, async (req, res) => {
 
     const { items, model } = await extractMealItemsAi(text);
     if (!items.length) return res.status(400).json({ error: 'Could not understand meal items. Try comma-separated names.' });
+
+    const localBusiness = businesses.find((b) => String(b._id) === String(localBusinessId));
+    if (!localBusiness) {
+      return res.status(404).json({ error: 'Local business not found for this compare.' });
+    }
+
+    const localMenu = Array.isArray(localBusiness.menuItems) ? localBusiness.menuItems : [];
+    const localLines = items.map((it) => {
+      const hit = matchMenuItem(it.name, localMenu);
+      const unit = hit ? Number(hit.price) : Number(localBusiness.avgPrice || 0);
+      const subtotal = Math.round((unit * it.qty) * 100) / 100;
+      return {
+        asked: it.name,
+        qty: it.qty,
+        matchedName: hit?.name || null,
+        unitPrice: unit,
+        subtotal
+      };
+    });
+    const localTotal = Math.round(localLines.reduce((s, l) => s + Number(l.subtotal || 0), 0) * 100) / 100;
 
     const comparisons = businesses.map((b) => {
       const menu = Array.isArray(b.menuItems) ? b.menuItems : [];
@@ -250,12 +366,53 @@ router.post('/meal-price-compare', protect, async (req, res) => {
     });
 
     comparisons.sort((a, b) => a.estimatedTotalInr - b.estimatedTotalInr);
+    const { estimate: aiScenario, model: scenarioModel } = await estimateScenarioCostsAi({
+      items,
+      localTotal,
+      localName: localBusiness.mapDisplayName || localBusiness.name
+    });
+    const scenarioEstimates = aiScenario || {
+      ...buildScenarioEstimates(localTotal),
+      source: 'heuristic'
+    };
+
+    const recentVisit = await Visit.findOne({
+      userId: req.user._id,
+      businessId: new mongoose.Types.ObjectId(localBusinessId),
+      visitedAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+    }).sort({ visitedAt: -1 });
+    if (recentVisit) {
+      recentVisit.mealComparedAt = new Date();
+      recentVisit.mealItems = localLines.map((l) => ({
+        name: l.asked,
+        matchedName: l.matchedName || '',
+        qty: Number(l.qty) || 1,
+        unitPrice: toSafeMoney(l.unitPrice),
+        subtotal: toSafeMoney(l.subtotal)
+      }));
+      recentVisit.localMealTotalInr = toSafeMoney(scenarioEstimates.localShopTotal);
+      recentVisit.aiDeliveryCostInr = toSafeMoney(scenarioEstimates.deliveryTotal);
+      recentVisit.aiBasicRestaurantCostInr = toSafeMoney(scenarioEstimates.basicRestaurantTotal);
+      recentVisit.aiHighClassRestaurantCostInr = toSafeMoney(scenarioEstimates.highClassRestaurantTotal);
+      recentVisit.savedVsDeliveryInr = toSafeMoney(scenarioEstimates.savingsVsDelivery);
+      recentVisit.savedVsBasicRestaurantInr = toSafeMoney(scenarioEstimates.savingsVsBasicRestaurant);
+      recentVisit.savedVsHighClassRestaurantInr = toSafeMoney(scenarioEstimates.savingsVsHighClassRestaurant);
+      await recentVisit.save();
+    }
+
     res.json({
       parsedItems: items,
       comparisons,
-      aiModel: model
+      scenarioEstimates,
+      aiModel: model || scenarioModel || null,
+      scenarioModel: scenarioModel || null,
+      localBusinessId,
+      visitSaved: Boolean(recentVisit)
     });
   } catch (err) {
+    if (isLikelyGeminiError(err)) {
+      return res.status(503).json({ error: formatGeminiUserMessage(err) });
+    }
     res.status(500).json({ error: err.message || 'Could not compare meal prices' });
   }
 });

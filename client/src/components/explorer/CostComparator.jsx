@@ -17,6 +17,13 @@ function coordsOf(b) {
   return { lat, lng };
 }
 
+function isRestaurantLike(b) {
+  const category = String(b?.category || '').toLowerCase();
+  const tags = Array.isArray(b?.tags) ? b.tags.map((t) => String(t).toLowerCase()).join(' ') : '';
+  const blob = `${category} ${tags}`;
+  return /\b(restaurant|restro|diner|eatery|food|bistro|cafe|coffee|bakery)\b/.test(blob);
+}
+
 export default function CostComparator({
   userLocation,
   businesses,
@@ -47,10 +54,16 @@ export default function CostComparator({
   const [mealCompareBusy, setMealCompareBusy] = useState(false);
   const [mealCompareError, setMealCompareError] = useState('');
   const [mealCompareResult, setMealCompareResult] = useState(null);
+  const [showAllVisits, setShowAllVisits] = useState(false);
+
+  const restaurantWithCoords = useMemo(
+    () => (businesses || []).filter((b) => coordsOf(b) && isRestaurantLike(b)),
+    [businesses]
+  );
 
   const withCoords = useMemo(
-    () => (businesses || []).filter((b) => coordsOf(b)),
-    [businesses]
+    () => restaurantWithCoords,
+    [restaurantWithCoords]
   );
 
   useEffect(() => {
@@ -235,7 +248,8 @@ export default function CostComparator({
     try {
       const { data } = await api.post('/compare/meal-price-compare', {
         text,
-        businessIds: compareIds
+        businessIds: compareIds,
+        localBusinessId: String(arrivedBusinessId)
       });
       setMealCompareResult(data);
     } catch (e) {
@@ -274,37 +288,29 @@ export default function CostComparator({
     }
   };
 
-  const groupedVisitHistory = useMemo(() => {
-    const grouped = visits.reduce((acc, v) => {
-      const isPublic = v.placeType === 'public' || !v.businessId;
-      const name = isPublic ? v.placeName || 'Public place' : v.businessId?.name || v.placeName || 'Local place';
-      const groupKey = isPublic ?
-      `public:${String(name).toLowerCase()}` :
-      `local:${v.businessId?._id || String(name).toLowerCase()}`;
-      if (!acc[groupKey]) {
-        acc[groupKey] = {
-          key: groupKey,
-          name,
-          placeType: isPublic ? 'public' : 'local',
-          visits: 0,
-          latestVisitedAt: v.visitedAt || null
-        };
-      }
-      acc[groupKey].visits += 1;
-      if (v.visitedAt && (!acc[groupKey].latestVisitedAt || new Date(v.visitedAt).getTime() > new Date(acc[groupKey].latestVisitedAt).getTime())) {
-        acc[groupKey].latestVisitedAt = v.visitedAt;
-      }
-      return acc;
-    }, {});
-    return Object.values(grouped).sort((a, b) => new Date(b.latestVisitedAt || 0).getTime() - new Date(a.latestVisitedAt || 0).getTime());
-  }, [visits]);
+  const visitHistoryRows = useMemo(
+    () =>
+      (visits || [])
+        .map((v, idx) => {
+          const isPublic = v.placeType === 'public' || !v.businessId;
+          const name = isPublic ? v.placeName || 'Public place' : v.businessId?.name || v.placeName || 'Local place';
+          return {
+            key: `${v._id || idx}`,
+            name,
+            placeType: isPublic ? 'public' : 'local',
+            visitedAt: v.visitedAt || null
+          };
+        })
+        .sort((a, b) => new Date(b.visitedAt || 0).getTime() - new Date(a.visitedAt || 0).getTime()),
+    [visits]
+  );
 
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
         <h2 className="font-display font-semibold text-lg mb-1">Cost–benefit comparator</h2>
         <p className="text-slate-600 text-sm mb-4">
-          We combine visit price (or live flash deal), travel time as ₹ opportunity cost, and a light footprint penalty, then stack sustainability, local impact, Red Pin safety, and reward hints. Say what you care about (e.g. &quot;eco local safe&quot;) to re-weight benefits.
+          We compare restaurant options only. We combine visit price (or live flash deal), travel time as ₹ opportunity cost, and a light footprint penalty, then stack sustainability, local impact, Red Pin safety, and reward hints.
         </p>
 
         {visitStats && visitStats.totalVisits > 0 &&
@@ -316,7 +322,7 @@ export default function CostComparator({
 
         {withCoords.length < 2 ?
         <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            Need at least two nearby merchants with coordinates. Search the map tab first.
+            Need at least two nearby restaurant places with coordinates. Search restaurants on the map first.
           </p> :
 
         <div className="space-y-4">
@@ -326,7 +332,7 @@ export default function CostComparator({
                 <select
                 value={idA}
                 onChange={(e) => setIdA(e.target.value)}
-                className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm">
+                className="mt-1 w-full px-3 py-2 border border-cyan-200/60 rounded-lg text-sm">
 
                   {withCoords.map((b) =>
                 <option key={b._id} value={b._id}>{b.mapDisplayName || b.name}</option>
@@ -338,7 +344,7 @@ export default function CostComparator({
                 <select
                 value={idB}
                 onChange={(e) => setIdB(e.target.value)}
-                className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm">
+                className="mt-1 w-full px-3 py-2 border border-cyan-200/60 rounded-lg text-sm">
 
                   {withCoords.map((b) =>
                 <option key={b._id} value={b._id}>{b.mapDisplayName || b.name}</option>
@@ -353,12 +359,12 @@ export default function CostComparator({
               value={intent}
               onChange={(e) => setIntent(e.target.value)}
               placeholder="e.g. eco-friendly, local, budget, safe meetup"
-              className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" />
+              className="mt-1 w-full px-3 py-2 border border-cyan-200/60 rounded-lg text-sm" />
 
             </label>
             <div className="flex flex-wrap gap-3 items-center">
               <span className="text-sm text-slate-600">Travel mode</span>
-              {['walking', 'cycling', 'driving'].map((m) =>
+              {['walking'].map((m) =>
             <button
               key={m}
               type="button"
@@ -408,6 +414,18 @@ export default function CostComparator({
                     <p className="mt-1">{compareResult.tradeoff}</p>
                   </div>
             }
+                {(() => {
+              const opts = Array.isArray(compareResult.options) ? compareResult.options : [];
+              const top = opts.find((o) => String(o.businessId) === String(compareResult.topPickId));
+              const second = opts.find((o) => String(o.businessId) !== String(compareResult.topPickId));
+              if (!top || !second) return null;
+              const saved = Math.max(0, Math.round(Number(second.totalCostScore || 0) - Number(top.totalCostScore || 0)));
+              return (
+                <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-900">
+                    You save about <strong>₹{saved}</strong> by choosing <strong>{top.mapDisplayName || top.name}</strong> over {second.mapDisplayName || second.name}.
+                  </div>
+              );
+            })()}
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -469,7 +487,7 @@ export default function CostComparator({
                 onChange={(e) => setMealInput(e.target.value)}
                 placeholder="e.g. 1 cappuccino, 1 garlic bread, 2 samosa"
                 rows={2}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                className="w-full px-3 py-2 border border-cyan-200/60 rounded-lg text-sm bg-white"
               />
               <div className="flex gap-2 items-center">
                 <button
@@ -525,6 +543,21 @@ export default function CostComparator({
                       by eating at {mealCompareResult.comparisons[0]?.name}.
                     </div>
                   )}
+                  {mealCompareResult?.scenarioEstimates && (
+                    <div className="rounded-lg border border-cyan-200/60 bg-white/80 backdrop-blur px-3 py-2 text-xs text-slate-700 space-y-1">
+                      <p className="font-semibold text-slate-900">If same meal elsewhere</p>
+                      <p className="text-[11px] text-slate-500">
+                        Source: {mealCompareResult.scenarioEstimates.source === 'ai' ? `AI estimate${mealCompareResult.scenarioModel ? ` (${mealCompareResult.scenarioModel})` : ''}` : 'fallback estimate'}
+                      </p>
+                      <p>At local shop: ₹{Math.round(Number(mealCompareResult.scenarioEstimates.localShopTotal || 0))}</p>
+                      <p>Delivery order: ₹{Math.round(Number(mealCompareResult.scenarioEstimates.deliveryTotal || 0))} (saved ₹{Math.round(Number(mealCompareResult.scenarioEstimates.savingsVsDelivery || 0))})</p>
+                      <p>Basic restaurant: ₹{Math.round(Number(mealCompareResult.scenarioEstimates.basicRestaurantTotal || 0))} (saved ₹{Math.round(Number(mealCompareResult.scenarioEstimates.savingsVsBasicRestaurant || 0))})</p>
+                      <p>High class restaurant: ₹{Math.round(Number(mealCompareResult.scenarioEstimates.highClassRestaurantTotal || 0))} (saved ₹{Math.round(Number(mealCompareResult.scenarioEstimates.savingsVsHighClassRestaurant || 0))})</p>
+                      {mealCompareResult.visitSaved && (
+                        <p className="text-emerald-700 font-medium">Saved to your verified visit history.</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -543,7 +576,7 @@ export default function CostComparator({
             <select
             value={feedbackBiz}
             onChange={(e) => setFeedbackBiz(e.target.value)}
-            className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm">
+            className="mt-1 w-full px-3 py-2 border border-cyan-200/60 rounded-lg text-sm">
 
               <option value="">Select…</option>
               {withCoords.map((b) =>
@@ -566,7 +599,7 @@ export default function CostComparator({
         onChange={(e) => setFeedbackNote(e.target.value)}
         placeholder="Optional note"
         rows={2}
-        className="mt-2 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" />
+        className="mt-2 w-full px-3 py-2 border border-cyan-200/60 rounded-lg text-sm" />
 
         <button
         type="button"
@@ -578,29 +611,41 @@ export default function CostComparator({
         {feedbackStatus && <p className="mt-2 text-sm text-slate-600">{feedbackStatus}</p>}
       </div>
 
-      {visits.length > 0 &&
       <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
           <h3 className="font-display font-semibold text-lg mb-4">Visit history</h3>
-          <ul className="space-y-2">
-            {groupedVisitHistory.slice(0, 10).map((v) =>
-          <li key={v.key} className="flex justify-between py-2 border-b border-slate-100 last:border-0">
-                <div className="min-w-0">
-                  <p className="font-medium text-slate-800">{v.name} — {v.visits} {v.visits === 1 ? 'visit' : 'visits'}</p>
-                  <p className="text-xs text-slate-500">{formatVisitDateTime(v.latestVisitedAt)}</p>
-                </div>
-              </li>
-          )}
-          </ul>
-          <p className="mt-3 text-xs text-slate-500">
-            Last visit per merchant (table):{' '}
-            {withCoords.slice(0, 5).map((b) =>
-          <span key={b._id} className="mr-3">
-                {b.name}: {formatVisitDateTime(latestVisitByBusinessId[b._id])}
-              </span>
-          )}
-          </p>
+          {!visitHistoryRows.length ?
+          <p className="text-sm text-slate-600">No places visited yet.</p> :
+          <>
+              <ul className="space-y-2">
+                {(showAllVisits ? visitHistoryRows : visitHistoryRows.slice(0, 3)).map((v) =>
+              <li key={v.key} className="flex justify-between py-2 border-b border-slate-100 last:border-0 gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium text-slate-800">{v.name}</p>
+                      <p className="text-xs text-slate-500 capitalize">{v.placeType} place</p>
+                    </div>
+                    <p className="text-xs text-slate-500 shrink-0">{formatVisitDateTime(v.visitedAt)}</p>
+                  </li>
+              )}
+              </ul>
+              {visitHistoryRows.length > 3 &&
+            <button
+              type="button"
+              onClick={() => setShowAllVisits((s) => !s)}
+              className="mt-3 text-sm font-medium text-goout-green hover:text-goout-accent underline underline-offset-2">
+                  {showAllVisits ? 'View less' : 'View all'}
+                </button>
+            }
+              <p className="mt-3 text-xs text-slate-500">
+                Last visit per merchant (table):{' '}
+                {withCoords.slice(0, 5).map((b) =>
+              <span key={b._id} className="mr-3">
+                    {b.name}: {formatVisitDateTime(latestVisitByBusinessId[b._id])}
+                  </span>
+              )}
+              </p>
+            </>
+          }
         </div>
-      }
     </div>);
 
 }

@@ -69,6 +69,45 @@ function expandVibeTokens(queryTokens) {
   return [...new Set([...queryTokens, ...extra])];
 }
 
+const SIMILAR_QUERY_GROUPS = [
+  ['cafe', 'coffee', 'espresso', 'latte', 'bakery', 'brunch', 'tea'],
+  ['restaurant', 'food', 'dining', 'eatery', 'diner', 'bistro', 'kitchen'],
+  ['bar', 'pub', 'lounge', 'brewery'],
+  ['park', 'garden', 'playground', 'plaza'],
+  ['library', 'book', 'bookstore', 'reading'],
+  ['gym', 'fitness', 'workout', 'yoga', 'sports'],
+  ['market', 'grocery', 'supermarket', 'mart', 'store', 'shop']
+];
+
+const INTENT_GROUPS = {
+  cafe: ['cafe', 'coffee', 'espresso', 'latte', 'tea', 'bakery', 'brunch'],
+  park: ['park', 'garden', 'playground', 'plaza'],
+  restaurant: ['restaurant', 'food', 'eatery', 'dining', 'bistro', 'diner', 'kitchen'],
+  library: ['library', 'bookstore', 'reading', 'books'],
+  gym: ['gym', 'fitness', 'workout', 'yoga', 'sports'],
+  shopping: ['shop', 'store', 'market', 'mall', 'grocery', 'supermarket']
+};
+
+function detectQueryIntent(query) {
+  const qTokens = tokenize(String(query || ''));
+  for (const [intent, words] of Object.entries(INTENT_GROUPS)) {
+    if (qTokens.some((t) => words.includes(t))) {
+      return { intent, tokens: words };
+    }
+  }
+  return { intent: null, tokens: qTokens };
+}
+
+function querySimilarityTokens(queryTokens) {
+  const out = new Set(queryTokens);
+  queryTokens.forEach((t) => {
+    SIMILAR_QUERY_GROUPS.forEach((group) => {
+      if (group.includes(t)) group.forEach((g) => out.add(g));
+    });
+  });
+  return [...out];
+}
+
 function timeOfDayBoost(business, hour) {
   const h = Number(hour);
   if (!Number.isFinite(h)) return 0;
@@ -114,6 +153,50 @@ export function businessSearchRelevanceScore(query, business) {
   });
 
   return score;
+}
+
+export function businessMatchesQueryIntent(query, business) {
+  const q = String(query || '').trim().toLowerCase();
+  const qTokens = tokenize(q);
+  if (!qTokens.length) return true;
+
+  const expanded = querySimilarityTokens(expandVibeTokens(qTokens));
+  const category = String(business?.category || '').toLowerCase();
+  const name = String(business?.name || '').toLowerCase();
+  const tags = Array.isArray(business?.tags) ? business.tags.join(' ').toLowerCase() : '';
+  const desc = String(business?.description || '').toLowerCase();
+  const blob = `${name} ${category} ${tags} ${desc}`;
+  const placeTokens = new Set(tokenize(blob));
+
+  const tokenHit = expanded.some(
+    (qt) => placeTokens.has(qt) || category.includes(qt) || tags.includes(qt) || name.includes(qt)
+  );
+  if (tokenHit) return true;
+  return businessSearchRelevanceScore(query, business) >= 2;
+}
+
+export function businessMatchesPreciseQuery(query, business) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return true;
+  const { tokens } = detectQueryIntent(q);
+  if (!tokens.length) return false;
+  const name = String(business?.name || '').toLowerCase();
+  const category = String(business?.category || '').toLowerCase();
+  const tags = Array.isArray(business?.tags) ? business.tags.join(' ').toLowerCase() : '';
+  const desc = String(business?.description || '').toLowerCase();
+  const blob = `${name} ${category} ${tags} ${desc}`;
+  return tokens.some((t) => blob.includes(t));
+}
+
+export function poiMatchesPreciseQuery(query, poi) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return true;
+  const { tokens } = detectQueryIntent(q);
+  if (!tokens.length) return false;
+  const name = String(poi?.name || '').toLowerCase();
+  const category = String(poi?.category || '').toLowerCase();
+  const blob = `${name} ${category}`;
+  return tokens.some((t) => blob.includes(t));
 }
 
 /**

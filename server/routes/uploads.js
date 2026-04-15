@@ -7,18 +7,37 @@ import { dirname, join } from 'path';
 import { protect, merchantOnly } from '../middleware/auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const uploadDir = join(__dirname, '../uploads/merchants');
-fs.mkdirSync(uploadDir, { recursive: true });
+const merchantUploadDir = join(__dirname, '../uploads/merchants');
+const chatUploadDir = join(__dirname, '../uploads/chat');
+fs.mkdirSync(merchantUploadDir, { recursive: true });
+fs.mkdirSync(chatUploadDir, { recursive: true });
 
-const allowedMime = new Set([
+const allowedMerchantMime = new Set([
   'image/jpeg',
   'image/png',
   'image/webp',
   'application/pdf'
 ]);
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadDir),
+const allowedChatMime = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'video/mp4',
+  'video/quicktime',
+  'video/x-msvideo',
+  'video/webm',
+  'audio/mpeg',
+  'audio/wav',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/plain'
+]);
+
+const merchantStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, merchantUploadDir),
   filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname || '') || '.bin';
     const safeExt = ext.length <= 8 ? ext : '.bin';
@@ -26,19 +45,44 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({
-  storage,
+const chatStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, chatUploadDir),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || '') || '.bin';
+    const safeExt = ext.length <= 8 ? ext : '.bin';
+    cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 10)}${safeExt}`);
+  }
+});
+
+const merchantUpload = multer({
+  storage: merchantStorage,
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    if (allowedMime.has(file.mimetype)) return cb(null, true);
+    if (allowedMerchantMime.has(file.mimetype)) return cb(null, true);
     cb(new Error('Only JPEG, PNG, WebP, or PDF files are allowed.'));
   }
 });
 
+const chatUpload = multer({
+  storage: chatStorage,
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB for chat media
+  fileFilter: (_req, file, cb) => {
+    if (allowedChatMime.has(file.mimetype)) return cb(null, true);
+    cb(new Error('File type not allowed for chat'));
+  }
+});
+
+function getMimeTypeCategory(mimeType) {
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType.startsWith('video/')) return 'video';
+  if (mimeType.startsWith('audio/')) return 'audio';
+  return 'file';
+}
+
 const router = express.Router();
 
 router.post('/merchant-asset', protect, merchantOnly, (req, res) => {
-  upload.single('file')(req, res, (err) => {
+  merchantUpload.single('file')(req, res, (err) => {
     if (err) {
       const msg = err.message || 'Upload failed';
       return res.status(400).json({ error: msg });
@@ -48,6 +92,26 @@ router.post('/merchant-asset', protect, merchantOnly, (req, res) => {
     }
     const url = `/uploads/merchants/${req.file.filename}`;
     return res.json({ url, filename: req.file.filename, mimeType: req.file.mimetype });
+  });
+});
+
+router.post('/chat-media', protect, (req, res) => {
+  chatUpload.single('file')(req, res, (err) => {
+    if (err) {
+      const msg = err.message || 'Upload failed';
+      return res.status(400).json({ error: msg });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+    const url = `/uploads/chat/${req.file.filename}`;
+    const type = getMimeTypeCategory(req.file.mimetype);
+    return res.json({ 
+      url, 
+      filename: req.file.originalname || req.file.filename,
+      mimeType: req.file.mimetype,
+      type 
+    });
   });
 });
 

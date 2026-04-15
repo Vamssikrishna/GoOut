@@ -49,10 +49,20 @@ const PHRASE_ALIASES = [
   { pattern: /\bview\b|\bscenic\b|\bpanorama\b/, terms: ['view', 'terrace', 'rooftop', 'outdoor'] }
 ];
 
+const BUDGET_INTENT_GROUPS = [
+  ['cafe', 'coffee', 'espresso', 'latte', 'tea', 'bakery', 'brunch'],
+  ['park', 'garden', 'playground', 'plaza'],
+  ['restaurant', 'food', 'eatery', 'bistro', 'dining', 'diner'],
+  ['library', 'bookstore', 'reading'],
+  ['gym', 'fitness', 'workout', 'yoga']
+];
+
+const DYNAMIC_QUERY_STRIP_RE = /\b(near me|nearby|around me|close by|closest|best|show me|find me)\b/gi;
+
 const CHAIN_RE = /\b(starbucks|mcdonald|kfc|subway|domino|pizza hut|burger king|costa|dunkin)\b/i;
 
 function parseSearchIntent(rawQuery) {
-  const query = String(rawQuery || '').toLowerCase().trim();
+  const query = String(rawQuery || '').toLowerCase().replace(DYNAMIC_QUERY_STRIP_RE, ' ').trim();
   const compact = query.replace(/\s+/g, ' ');
   const baseTokens = tokenize(compact).filter((t) => !STOPWORDS.has(t));
   const termSet = new Set(baseTokens);
@@ -141,23 +151,52 @@ function getQueryRelevance(business, queryText, intentTerms = []) {
   return { score, isRelevant };
 }
 
+function expandIntentTerms(terms) {
+  const out = new Set((terms || []).map((t) => String(t).toLowerCase()));
+  (terms || []).forEach((t) => {
+    BUDGET_INTENT_GROUPS.forEach((g) => {
+      if (g.includes(String(t).toLowerCase())) g.forEach((x) => out.add(x));
+    });
+  });
+  return Array.from(out);
+}
+
+function rowTextBlob(row) {
+  const name = String(row?.name || '').toLowerCase();
+  const category = String(row?.category || '').toLowerCase();
+  const tags = Array.isArray(row?.tags) ? row.tags.join(' ').toLowerCase() : '';
+  const desc = String(row?.description || '').toLowerCase();
+  const vibe = String(row?.vibe || '').toLowerCase();
+  return `${name} ${category} ${tags} ${desc} ${vibe}`;
+}
+
+function matchesDynamicIntent(row, intentTerms) {
+  if (!Array.isArray(intentTerms) || intentTerms.length === 0) return true;
+  const blob = rowTextBlob(row);
+  return intentTerms.some((t) => {
+    const token = String(t || '').toLowerCase().trim();
+    if (!token) return false;
+    return (
+      blob.includes(token) ||
+      blob.split(/\s+/).some((w) => w.startsWith(token) || token.startsWith(w))
+    );
+  });
+}
+
 router.get('/itinerary', async (req, res) => {
   try {
-    const { lng, lat, budget, preferences, place } = req.query;
+    const { lng, lat, budget, preferences, place, mode } = req.query;
     const coords = [parseFloat(lng) || 0, parseFloat(lat) || 0];
     const queryText = (place || preferences || '').toString().trim();
     const inlineBudget = parseInlineBudgetINR(queryText);
     const paramBudget = parseFloat(budget);
-    let maxBudget;
+    let maxBudget = null;
     if (inlineBudget != null && inlineBudget >= 0) {
       maxBudget = inlineBudget;
     } else if (Number.isFinite(paramBudget) && paramBudget >= 0) {
       maxBudget = paramBudget;
-    } else {
-      return res.status(400).json({
-        error: 'Enter your budget in INR (use 0 for a free-only day), or put ₹ or $ in your search text.'
-      });
     }
+    const localOnlyMode = String(mode || '').toLowerCase() === 'local';
     const intent = parseSearchIntent(queryText);
     const terms = intent.terms;
 
@@ -166,32 +205,55 @@ router.get('/itinerary', async (req, res) => {
     let zeroSpend = false;
     const hour = new Date().getHours();
 
-    if (maxBudget < 1) {
+    if (maxBudget != null && maxBudget < 1) {
       zeroSpend = true;
       frugalMode = true;
-      const bias =
-        hour >= 17 ?
-          'well lit public plaza park evening' :
-          hour >= 5 && hour < 11 ?
-            'morning park cafe outdoor library' :
-            'park library monument plaza garden viewpoint';
-      const raw = await fetchPublicSpacesNear(coords[1], coords[0], 15000, `${intent.originalQuery} ${bias}`.trim());
-      plan = (raw || []).slice(0, 14).map((p, i) => ({
-        _id: `public-${i}-${String(p.name || '').slice(0, 12)}`,
-        name: p.name,
-        category: p.category || 'public',
-        avgPrice: 0,
-        isFree: true,
-        isPublicStop: true,
-        location: { type: 'Point', coordinates: [p.lng, p.lat] },
-        distance: p.distanceMeters != null ? p.distanceMeters : getDistance(coords[1], coords[0], p.lat, p.lng)
-      }));
-      if (terms.length) {
-        plan = plan.filter((row) =>
-          terms.some((t) => String(row.name || '').toLowerCase().includes(t) || String(row.category || '').toLowerCase().includes(t))
-        ).slice(0, 10);
+      if (localOnlyMode) {
+        const freeLocal = await Business.find({
+          location: { $nearSphere: { $geometry: { type: 'Point', coordinates: coords }, $maxDistance: 5000 } },
+          $or: [{ isFree: true }, { avgPrice: 0 }]
+        }).limit(80).populate('ownerId', 'name');
+        const expandedTerms = expandIntentTerms(terms);
+        plan = freeLocal
+          .map((b) => {
+            const bo = b.toObject();
+            return {
+              ...bo,
+              distance: getDistance(coords[1], coords[0], b.location.coordinates[1], b.location.coordinates[0]),
+              spendEstimate: 0
+            };
+          })
+          .filter((row) => (
+            expandedTerms.length === 0 ||
+            expandedTerms.some((t) => matchesCategory(row, t) || String(row.name || '').toLowerCase().includes(t))
+          ))
+          .sort((a, b) => a.distance - b.distance)
+          .slice(0, 8);
+      } else {
+        const bias =
+          hour >= 17 ?
+            'well lit public plaza park evening' :
+            hour >= 5 && hour < 11 ?
+              'morning park cafe outdoor library' :
+              'park library monument plaza garden viewpoint';
+        const raw = await fetchPublicSpacesNear(coords[1], coords[0], 15000, `${intent.originalQuery} ${bias}`.trim());
+        plan = (raw || []).slice(0, 14).map((p, i) => ({
+          _id: `public-${i}-${String(p.name || '').slice(0, 12)}`,
+          name: p.name,
+          category: p.category || 'public',
+          avgPrice: 0,
+          isFree: true,
+          isPublicStop: true,
+          location: { type: 'Point', coordinates: [p.lng, p.lat] },
+          distance: p.distanceMeters != null ? p.distanceMeters : getDistance(coords[1], coords[0], p.lat, p.lng)
+        }));
+        if (terms.length) {
+          plan = plan.filter((row) =>
+            terms.some((t) => String(row.name || '').toLowerCase().includes(t) || String(row.category || '').toLowerCase().includes(t))
+          ).slice(0, 10);
+        }
       }
-    } else if (maxBudget < 50) {
+    } else if (maxBudget != null && maxBudget < 50) {
       frugalMode = true;
       const free = await Business.find({
         location: { $nearSphere: { $geometry: { type: 'Point', coordinates: coords }, $maxDistance: 5000 } },
@@ -217,22 +279,24 @@ router.get('/itinerary', async (req, res) => {
       }).limit(80).populate('ownerId', 'name');
 
       const normalizedTerm = intent.normalizedQuery || queryText.toLowerCase();
+      const expandedTerms = expandIntentTerms(terms);
       const scored = nearby.
         map((b) => {
           const bo = b.toObject();
           const spend = effectiveSpendInr(bo);
           const distance = getDistance(coords[1], coords[0], b.location.coordinates[1], b.location.coordinates[0]);
-          const relevance = getQueryRelevance(bo, normalizedTerm, terms);
-          const termBonus = terms.some((t) => matchesCategory(bo, t) || (bo.name || '').toLowerCase().includes(t.toLowerCase())) ? 2 : 0;
+          const relevance = getQueryRelevance(bo, normalizedTerm, expandedTerms);
+          const termBonus = expandedTerms.some((t) => matchesCategory(bo, t) || (bo.name || '').toLowerCase().includes(t.toLowerCase())) ? 2 : 0;
           const localGreen = localGreenSortBonus(bo);
           const timeHint =
             hour >= 5 && hour < 11 && /\b(cafe|coffee|bakery|breakfast)\b/i.test(`${bo.category} ${(bo.tags || []).join(' ')}`) ? 1.2 :
               hour >= 17 && hour < 22 && /\b(plaza|park|walk|view)\b/i.test(`${bo.category} ${(bo.tags || []).join(' ')}`) ? 1.2 :
                 0;
           const matchScore = (normalizedTerm ? relevance.score + termBonus : 1) + localGreen + timeHint;
-          return { ...bo, distance, spendEstimate: spend, matchScore, isRelevant: relevance.isRelevant };
+          const strongIntentMatch = matchesDynamicIntent(bo, expandedTerms);
+          return { ...bo, distance, spendEstimate: spend, matchScore, isRelevant: relevance.isRelevant, strongIntentMatch };
         }).
-        filter((row) => row.spendEstimate <= maxBudget && (!normalizedTerm || (row.matchScore > 0 && row.isRelevant))).
+        filter((row) => (maxBudget == null || row.spendEstimate <= maxBudget) && (!normalizedTerm || (row.matchScore > 0 && row.isRelevant && row.strongIntentMatch))).
         sort((a, b) => {
           if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
           if (a.distance !== b.distance) return a.distance - b.distance;
@@ -252,9 +316,28 @@ router.get('/itinerary', async (req, res) => {
               matchScore: localGreenSortBonus(bo)
             };
           }).
-          filter((row) => row.spendEstimate <= maxBudget).
+          filter((row) => (maxBudget == null || row.spendEstimate <= maxBudget)).
           sort((a, b) => {
             if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
+            if (a.distance !== b.distance) return a.distance - b.distance;
+            return (a.spendEstimate || 0) - (b.spendEstimate || 0);
+          }).
+          slice(0, 8);
+      } else {
+        // Final fallback: if strict matching returns empty, still show nearest budget-fit rows.
+        plan = nearby.
+          map((b) => {
+            const bo = b.toObject();
+            return {
+              ...bo,
+              spendEstimate: effectiveSpendInr(bo),
+              distance: getDistance(coords[1], coords[0], b.location.coordinates[1], b.location.coordinates[0]),
+              matchScore: localGreenSortBonus(bo)
+            };
+          }).
+          filter((row) => (maxBudget == null || row.spendEstimate <= maxBudget)).
+          filter((row) => matchesDynamicIntent(row, expandedTerms)).
+          sort((a, b) => {
             if (a.distance !== b.distance) return a.distance - b.distance;
             return (a.spendEstimate || 0) - (b.spendEstimate || 0);
           }).

@@ -10,7 +10,9 @@ export default {
           accent: '#34D399',
           mint: '#D1FAE5',
           violet: '#8B5CF6',
-          sky: '#38BDF8'
+          sky: '#38BDF8',
+          neon: '#22D3EE',
+          fuchsia: '#D946EF'
         }
       },
       fontFamily: {
@@ -28,7 +30,8 @@ export default {
         'spin-slow': 'spin 14s linear infinite',
         'glow-pulse': 'glowPulse 2.8s ease-in-out infinite',
         'border-glow': 'borderGlow 4s ease-in-out infinite',
-        'scale-in': 'scaleIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards'
+        'scale-in': 'scaleIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+        'neon-pan': 'neonPan 8s linear infinite'
       },
       keyframes: {
         fadeIn: {
@@ -70,6 +73,10 @@ export default {
         scaleIn: {
           '0%': { opacity: '0', transform: 'scale(0.96)' },
           '100%': { opacity: '1', transform: 'scale(1)' }
+        },
+        neonPan: {
+          '0%': { backgroundPosition: '0% 50%' },
+          '100%': { backgroundPosition: '200% 50%' }
         }
       },
       transitionTimingFunction: {

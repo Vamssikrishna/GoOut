@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { GoogleMap, useLoadScript } from '@react-google-maps/api';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import { estimateMerchantSpendInr, businessIsStrongGreen } from '../../utils/searchMapRank';
@@ -14,15 +14,32 @@ const GREEN_MAP_STYLES = [
   { featureType: 'transit.line', elementType: 'geometry', stylers: [{ saturation: 10 }, { lightness: -5 }] }
 ];
 
+const DARK_MAP_STYLES = [
+  { elementType: 'geometry', stylers: [{ color: '#0f172a' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#0b1220' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#94a3b8' }] },
+  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#cbd5e1' }] },
+  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#9ca3af' }] },
+  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#14532d' }] },
+  { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#86efac' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1e293b' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#0f172a' }] },
+  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#cbd5e1' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#334155' }] },
+  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#1e293b' }] },
+  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#1f2937' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#082f49' }] },
+  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#7dd3fc' }] }
+];
+
 /** Compact “my location” dot (delivery-app style): white halo, teal fill, center = GPS point. */
-function buildUserLocationMarkerIcon(google) {
+function buildUserLocationMarkerIcon(google, size = 22) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <circle cx="12" cy="12" r="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="0.75"/>
-  <circle cx="12" cy="12" r="7" fill="#0d9488" stroke="#ffffff" stroke-width="1.25"/>
+  <circle cx="12" cy="12" r="7" fill="#16a34a" stroke="#ffffff" stroke-width="1.25"/>
   <circle cx="12" cy="12" r="2.25" fill="#ffffff"/>
 </svg>`;
   const url = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
-  const size = 22;
   const half = size / 2;
   return {
     url,
@@ -33,10 +50,7 @@ function buildUserLocationMarkerIcon(google) {
 
 const PIN_ICONS = {
   red: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
-  green: 'https://maps.google.com/mapfiles/ms/icons/green-dot.png',
-  blue: 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png',
-  yellow: 'https://maps.google.com/mapfiles/ms/icons/yellow-dot.png',
-  purple: 'https://maps.google.com/mapfiles/ms/icons/purple-dot.png'
+  blue: 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png'
 };
 
 function escapeHtml(s) {
@@ -100,13 +114,18 @@ function businessPopupHtml(b, { isHighlighted }) {
   const menuLinkHtml = menuAbs
     ? `<p class="mt-2"><a href="${escapeHtml(menuAbs)}" target="_blank" rel="noopener noreferrer" class="text-emerald-700 font-semibold underline hover:text-emerald-900">View menu</a></p>`
     : '';
+  const menuAnchorHtml = menuAbs
+    ? `<a href="${escapeHtml(menuAbs)}" target="_blank" rel="noopener noreferrer" class="text-emerald-700 font-semibold underline hover:text-emerald-900">View menu</a>`
+    : '';
 
   return `
     <div class="min-w-[200px]">
-      <h3 class="font-semibold text-slate-900">${name}</h3>
-      <p class="text-sm text-slate-600">${category}</p>
-      <p class="text-sm">₹${avgPrice} avg · ⭐ ${rating.toFixed(1) || '—'}</p>
-      ${address ? `<p class="text-xs mt-1 text-slate-600">${address}</p>` : ''}
+      <h3 class="font-semibold text-slate-900">Title: ${name}</h3>
+      <p class="text-sm text-slate-600">Category: ${category || 'N/A'}</p>
+      <p class="text-sm">Average Price: ₹${avgPrice || 0}</p>
+      <p class="text-xs mt-1 text-slate-600">Location: ${address || 'Location not available'}</p>
+      ${menuAnchorHtml ? `<p class="mt-2">View menu: ${menuAnchorHtml}</p>` : '<p class="mt-2 text-xs text-slate-500">View menu: Not available</p>'}
+      <p class="text-xs mt-1 text-slate-500">Rating: ⭐ ${rating.toFixed(1) || '—'}</p>
       ${vibe ? `<p class="text-xs mt-1 text-slate-700">Vibe: ${vibe}</p>` : ''}
       ${verifiedHtml}
       ${recommendedHtml}
@@ -114,7 +133,6 @@ function businessPopupHtml(b, { isHighlighted }) {
       ${distanceText}
       ${tagsHtml}
       ${ecoHtml}
-      ${menuLinkHtml}
       ${/cafe|coffee|grocery|supermarket|bakery|restaurant|bistro|juice/i.test(String(b?.category || '')) ? '<p class="text-xs mt-1 text-emerald-800">Tip: bring a reusable cup or bag when you can.</p>' : ''}
       <p class="text-xs mt-2 text-slate-500">
         Report crowd:
@@ -151,23 +169,20 @@ function poiLatLngMatch(p, hl) {
 function poiPopupHtml(p, { isSearchPrimary } = {}) {
   const name = escapeHtml(p?.name);
   const category = escapeHtml(p?.category || 'place');
-  const distanceText =
-  typeof p?.distanceMeters === 'number' ? `${(p.distanceMeters / 1000).toFixed(2)} km away` : '';
+  const stars = Number.isFinite(Number(p?.rating)) ? Number(p.rating).toFixed(1) : 'N/A';
   const primaryHtml = isSearchPrimary ? '<p class="text-xs mt-1 text-purple-700 font-medium">Best match for your search</p>' : '';
-  const coordText =
+  const locationText =
   Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lng)) ?
-  `Lat ${Number(p.lat).toFixed(5)}, Lng ${Number(p.lng).toFixed(5)}` :
-  '';
-  const placeIdHtml = p?.id ? `<p class="text-[11px] text-slate-400 mt-1">Place ref: ${escapeHtml(String(p.id))}</p>` : '';
+  `${Number(p.lat).toFixed(5)}, ${Number(p.lng).toFixed(5)}` :
+  'Location not available';
 
   return `
     <div class="min-w-[200px]">
-      <h3 class="font-semibold text-slate-900">${name}</h3>
-      <p class="text-xs text-slate-600 capitalize">${category}</p>
+      <h3 class="font-semibold text-slate-900">Name: ${name}</h3>
+      <p class="text-xs text-slate-600 capitalize">Category: ${category}</p>
+      <p class="text-xs text-slate-600">Stars: ${stars}</p>
+      <p class="text-xs text-slate-600">Location: ${escapeHtml(locationText)}</p>
       ${primaryHtml}
-      ${distanceText ? `<p class="text-xs text-slate-500 mt-1">${escapeHtml(distanceText)}</p>` : ''}
-      ${coordText ? `<p class="text-xs text-slate-500 mt-1">${escapeHtml(coordText)}</p>` : ''}
-      ${placeIdHtml}
       <div class="mt-3">
         <button
           type="button"
@@ -185,7 +200,7 @@ function poiPopupHtml(p, { isSearchPrimary } = {}) {
   `;
 }
 
-export default function DiscoveryMap({
+function DiscoveryMap({
   userLocation,
   onLocationChange,
   enablePinSelection = false,
@@ -198,6 +213,7 @@ export default function DiscoveryMap({
   highlightedPoiLatLng = null,
   onDismissHighlightedPoi,
   isSearching = false,
+  showResultsLoader = false,
   searchHasNoResults = false,
   directionsRoutes,
   selectedDirectionsRouteIndex,
@@ -217,7 +233,26 @@ export default function DiscoveryMap({
 }) {
   const effectiveHighlightBusinessId = highlightedBusinessId ?? conciergeHighlightBusinessId ?? null;
 
-  const center = mapCenter ? { lat: mapCenter.lat, lng: mapCenter.lng } : { lat: userLocation.lat, lng: userLocation.lng };
+  const safeCenter = useMemo(() => {
+    const la = Number(mapCenter?.lat);
+    const lo = Number(mapCenter?.lng);
+    if (Number.isFinite(la) && Number.isFinite(lo)) return { lat: la, lng: lo };
+    const ula = Number(userLocation?.lat);
+    const ulo = Number(userLocation?.lng);
+    if (Number.isFinite(ula) && Number.isFinite(ulo)) return { lat: ula, lng: ulo };
+    return { lat: 28.6139, lng: 77.2090 };
+  }, [mapCenter?.lat, mapCenter?.lng, userLocation?.lat, userLocation?.lng]);
+
+  const [isDarkMode, setIsDarkMode] = useState(
+    typeof document !== 'undefined' &&
+    document.documentElement.classList.contains('theme-dark')
+  );
+
+  const activeMapStyles = useMemo(() => {
+    if (isDarkMode) return DARK_MAP_STYLES;
+    if (mapVisualTheme === 'green') return GREEN_MAP_STYLES;
+    return [];
+  }, [isDarkMode, mapVisualTheme]);
 
   const offerIds = useMemo(
     () =>
@@ -251,9 +286,22 @@ export default function DiscoveryMap({
   const greenEcoAnimTimerRef = useRef(null);
   const accuracyCircleRef = useRef(null);
   const destinationMarkerRef = useRef(null);
+  const routeEndpointMarkersRef = useRef({ start: null, end: null });
+  const userZoomListenerRef = useRef(null);
   const businessMarkerByIdRef = useRef(new Map());
   const highlightedIdRef = useRef(effectiveHighlightBusinessId != null ? String(effectiveHighlightBusinessId) : null);
   const businessesByIdRef = useRef(new Map());
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    const update = () => {
+      const active = document.documentElement.classList.contains('theme-dark');
+      setIsDarkMode(active);
+    };
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     highlightedIdRef.current = effectiveHighlightBusinessId != null ? String(effectiveHighlightBusinessId) : null;
@@ -299,6 +347,10 @@ export default function DiscoveryMap({
 
 
     const cleanup = () => {
+      try {
+        userZoomListenerRef.current?.remove?.();
+      } catch {}
+      userZoomListenerRef.current = null;
       try {
         markersRef.current.businessCluster?.clearMarkers?.();
       } catch {}
@@ -350,18 +402,10 @@ export default function DiscoveryMap({
       markersRef.current.userMarker = new google.maps.Marker({
         position: { lat: userLocation.lat, lng: userLocation.lng },
         title: `Your location${accLabel}`,
-        icon: buildUserLocationMarkerIcon(google),
-        draggable: true,
+        icon: buildUserLocationMarkerIcon(google, 22),
         optimized: false,
         zIndex: 9999
       });
-      if (typeof onLocationChange === 'function') {
-        markersRef.current.userMarker.addListener('dragend', (e) => {
-          const ll = e?.latLng;
-          if (!ll) return;
-          onLocationChange(ll.lat(), ll.lng());
-        });
-      }
       markersRef.current.userMarker.setMap(map);
       const radius = Number.isFinite(Number(userLocationAccuracy)) ? Math.max(8, Number(userLocationAccuracy)) : null;
       if (radius) {
@@ -377,6 +421,27 @@ export default function DiscoveryMap({
           zIndex: 1
         });
       }
+
+      const applyPrecisionStylingForZoom = () => {
+        const zoom = Number(map.getZoom());
+        const iconSize =
+          zoom >= 20 ? 14 :
+          zoom >= 18 ? 16 :
+          zoom >= 16 ? 18 : 22;
+        try {
+          markersRef.current.userMarker?.setIcon?.(buildUserLocationMarkerIcon(google, iconSize));
+        } catch {}
+        try {
+          accuracyCircleRef.current?.setOptions?.({
+            strokeOpacity: zoom >= 19 ? 0.65 : 0.45,
+            fillOpacity: zoom >= 19 ? 0.05 : 0.08
+          });
+        } catch {}
+      };
+      applyPrecisionStylingForZoom();
+      try {
+        userZoomListenerRef.current = map.addListener('zoom_changed', applyPrecisionStylingForZoom);
+      } catch {}
     }
 
     const businessMarkers = [];
@@ -408,37 +473,13 @@ export default function DiscoveryMap({
       })() :
       null;
 
-      let icon = PIN_ICONS.green;
-      if (isHighlighted) {
-        icon = PIN_ICONS.purple;
-      } else if (overBudget) {
-        icon = {
-          path: google.maps.SymbolPath.CIRCLE,
-          fillColor: '#94a3b8',
-          fillOpacity: 0.55,
-          strokeColor: '#e2e8f0',
-          strokeWeight: 1,
-          scale: 6
-        };
-      } else if (strongGreen) {
-        icon = {
-          path: google.maps.SymbolPath.CIRCLE,
-          fillColor: '#059669',
-          fillOpacity: 1,
-          strokeColor: '#ecfdf5',
-          strokeWeight: 2,
-          scale: 8
-        };
-      } else if (isRedPin) {
-        icon = PIN_ICONS.red;
-      } else if (hasLiveDeal) {
-        icon = PIN_ICONS.yellow;
-      }
+      // Local shops must always be red (single local pin color policy).
+      const icon = PIN_ICONS.red;
 
       const marker = new google.maps.Marker({
         position: { lat: Number(lat), lng: Number(lng) },
         icon,
-        zIndex: overBudget ? 1 : strongGreen ? 700 : isHighlighted ? 900 : hasLiveDeal ? 500 : 300
+        zIndex: isHighlighted ? 900 : 300
       });
 
       marker.addListener('click', () => {
@@ -462,13 +503,13 @@ export default function DiscoveryMap({
     const poiMarkers = [];
     (pois || []).forEach((p) => {
       if (!Number.isFinite(p?.lat) || !Number.isFinite(p?.lng)) return;
-      const isSearchPrimary = Boolean(highlightedPoiLatLng && poiLatLngMatch(p, highlightedPoiLatLng));
       const marker = new google.maps.Marker({
         position: { lat: p.lat, lng: p.lng },
-        icon: isSearchPrimary ? PIN_ICONS.purple : PIN_ICONS.blue
+        icon: PIN_ICONS.blue
       });
 
       marker.addListener('click', () => {
+        const isSearchPrimary = Boolean(highlightedPoiLatLng && poiLatLngMatch(p, highlightedPoiLatLng));
         infoWindow.setContent(poiPopupHtml(p, { isSearchPrimary }));
         infoWindow.open({ map, anchor: marker });
       });
@@ -503,6 +544,23 @@ export default function DiscoveryMap({
     const z = map.getZoom();
     if (!Number.isFinite(z) || z < DEFAULT_ZOOM) map.setZoom(DEFAULT_ZOOM);
   }, [isLoaded, loadError, conciergePanTo]);
+
+  const hasMountedPanRef = useRef(false);
+  useEffect(() => {
+    if (!isLoaded || loadError) return;
+    const map = mapRef.current;
+    if (!map) return;
+    const la = Number(mapCenter?.lat);
+    const lo = Number(mapCenter?.lng);
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
+
+    // Skip first run so map does not jump unexpectedly on mount.
+    if (!hasMountedPanRef.current) {
+      hasMountedPanRef.current = true;
+      return;
+    }
+    map.panTo({ lat: la, lng: lo });
+  }, [isLoaded, loadError, mapCenter?.lat, mapCenter?.lng]);
 
 
   useEffect(() => {
@@ -655,9 +713,9 @@ export default function DiscoveryMap({
     if (!isLoaded || loadError || !mapRef.current || !window.google) return;
     const map = mapRef.current;
     try {
-      map.setOptions({ styles: mapVisualTheme === 'green' ? GREEN_MAP_STYLES : [] });
+      map.setOptions({ styles: activeMapStyles });
     } catch {}
-  }, [isLoaded, loadError, mapVisualTheme]);
+  }, [isLoaded, loadError, activeMapStyles]);
 
   useEffect(() => {
     if (!isLoaded || loadError || !mapRef.current || !window.google) return;
@@ -728,36 +786,77 @@ export default function DiscoveryMap({
 
   useEffect(() => {
     if (!isLoaded || loadError || !mapRef.current || !window.google) return;
-    const google = window.google;
     const map = mapRef.current;
     try {
       destinationMarkerRef.current?.setMap?.(null);
     } catch {}
     destinationMarkerRef.current = null;
-    const la = Number(destinationPoint?.lat);
-    const lo = Number(destinationPoint?.lng);
-    if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
-    const marker = new google.maps.Marker({
-      map,
-      position: { lat: la, lng: lo },
-      title: destinationPoint?.label ? `Destination: ${destinationPoint.label}` : 'Destination',
-      zIndex: 9800,
-      icon: {
-        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
-          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36"><path d="M12 0C5.4 0 0 5.4 0 12c0 9.7 12 24 12 24s12-14.3 12-24C24 5.4 18.6 0 12 0z" fill="#111111"/><circle cx="12" cy="12" r="4.5" fill="#ffffff"/></svg>'
-        )}`,
-        scaledSize: new google.maps.Size(24, 36),
-        anchor: new google.maps.Point(12, 36)
-      },
-      optimized: false
-    });
-    destinationMarkerRef.current = marker;
+    // Destination marker intentionally disabled:
+    // destination is represented by the selected place pin + route endpoint.
     return () => {
       try {
-        marker.setMap(null);
+        destinationMarkerRef.current?.setMap?.(null);
       } catch {}
+      destinationMarkerRef.current = null;
     };
   }, [isLoaded, loadError, destinationPoint]);
+
+  useEffect(() => {
+    if (!isLoaded || loadError || !mapRef.current || !window.google) return;
+    const google = window.google;
+    const map = mapRef.current;
+    const clearEndpoints = () => {
+      try {
+        routeEndpointMarkersRef.current.start?.setMap?.(null);
+      } catch {}
+      try {
+        routeEndpointMarkersRef.current.end?.setMap?.(null);
+      } catch {}
+      routeEndpointMarkersRef.current = { start: null, end: null };
+    };
+
+    clearEndpoints();
+    if (!Array.isArray(directionsRoutes) || directionsRoutes.length === 0) return;
+
+    const startLat = Number(liveTrackingPoint?.lat ?? userLocation?.lat);
+    const startLng = Number(liveTrackingPoint?.lng ?? userLocation?.lng);
+    const endLat = Number(destinationPoint?.lat);
+    const endLng = Number(destinationPoint?.lng);
+    if (!Number.isFinite(startLat) || !Number.isFinite(startLng) || !Number.isFinite(endLat) || !Number.isFinite(endLng)) {
+      return;
+    }
+
+    const startMarker = new google.maps.Marker({
+      map,
+      position: { lat: startLat, lng: startLng },
+      title: 'Route start',
+      icon: buildUserLocationMarkerIcon(google, 18),
+      optimized: false,
+      zIndex: 9800
+    });
+    const endMarker = new google.maps.Marker({
+      map,
+      position: { lat: endLat, lng: endLng },
+      title: destinationPoint?.label ? `Destination: ${destinationPoint.label}` : 'Route destination',
+      icon: destinationPoint?.kind === 'local' ? PIN_ICONS.red : PIN_ICONS.blue,
+      optimized: false,
+      zIndex: 9700
+    });
+    routeEndpointMarkersRef.current = { start: startMarker, end: endMarker };
+    return clearEndpoints;
+  }, [
+    isLoaded,
+    loadError,
+    directionsRoutes,
+    userLocation?.lat,
+    userLocation?.lng,
+    liveTrackingPoint?.lat,
+    liveTrackingPoint?.lng,
+    destinationPoint?.lat,
+    destinationPoint?.lng,
+    destinationPoint?.kind,
+    destinationPoint?.label
+  ]);
 
   if (!apiKey) {
     return (
@@ -848,7 +947,7 @@ export default function DiscoveryMap({
             if (!ll) return;
             onLocationChange(ll.lat(), ll.lng());
           }}
-          center={center}
+          center={safeCenter}
           zoom={DEFAULT_ZOOM}
           mapContainerStyle={{ width: '100%', height: '100%' }}
           options={{
@@ -856,11 +955,19 @@ export default function DiscoveryMap({
             mapTypeControl: false,
             fullscreenControl: false,
             clickableIcons: false,
+            styles: activeMapStyles,
             tilt: 0,
             heading: 0
           }} />
 
         }
+        {(isSearching || showResultsLoader) && (
+          <div className="absolute inset-0 z-[7] pointer-events-none bg-white/45 backdrop-blur-[1px] flex items-center justify-center">
+            <div className="rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-xs text-slate-700 shadow">
+              Loading places...
+            </div>
+          </div>
+        )}
         {enablePinSelection &&
         <div className="absolute top-3 left-3 z-[6] rounded-lg bg-emerald-50/95 border border-emerald-200 px-3 py-2 text-xs text-emerald-900 shadow-sm">
             Pin mode ON: click map to set exact location.
@@ -890,3 +997,5 @@ export default function DiscoveryMap({
     </div>);
 
 }
+
+export default DiscoveryMap;

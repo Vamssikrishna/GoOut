@@ -1,0 +1,37 @@
+BUSINESS REGISTRATION CERTIFICATE
+
+Document Type: GST Certificate / Udyam Certificate / FSSAI License / Shop & Establishment / Incorporation Certificate
+
+Legal Business Name: <ENTER LEGAL BUSINESS NAME EXACTLY AS LISTING NAME>
+Trade Name (if any): <OPTIONAL>
+
+Registration Number: <ENTER GSTIN / UDYAM / FSSAI / CIN NUMBER>
+Registration Type: <GSTIN | UDYAM | FSSAI | SHOP ACT | CIN>
+
+Issue Date: <DD-MM-YYYY>
+Valid Upto: <DD-MM-YYYY OR "LIFETIME">
+Issuing Authority: <ENTER AUTHORITY NAME>
+
+Registered Address Line 1: <ENTER ADDRESS>
+Registered Address Line 2: <ENTER ADDRESS>
+City: <ENTER CITY>
+State: <ENTER STATE>
+Postal Code: <ENTER PINCODE>
+
+Contact Phone: <ENTER PHONE>
+Contact Email: <ENTER EMAIL>
+
+Declaration:
+I/We certify that the above business details are true and correspond to the uploaded merchant onboarding listing.
+
+Authorized Signatory Name: <ENTER FULL NAME>
+Authorized Signatory Designation: <ENTER DESIGNATION>
+Signature: <SIGN HERE>
+Date: <DD-MM-YYYY>
+Official Stamp/Seal: <STAMP>
+
+OCR Checklist (must be visible/clear):
+1) Business/legal certificate/license keywords visible (e.g. GST / UDYAM / FSSAI / License / Registration / Certificate)
+2) Registration number visible and readable
+3) Legal business name matches onboarding listing name
+4) File is upright, clear, not cropped

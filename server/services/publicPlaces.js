@@ -91,7 +91,7 @@ async function fetchGooglePlacesTextOnce({ searchTerm, latNum, lngNum, radiusMet
     .filter(Boolean);
 }
 
-/** Richer OSM: parks + libraries + attractions for concierge / landmark questions. */
+/** Richer OSM: parks + libraries + attractions + civic/cultural places. */
 async function fetchOsmPublicSpaces(latNum, lngNum, radiusM) {
   const r = Math.min(Math.max(Math.round(radiusM), 200), 25000);
   const query = `[out:json][timeout:22];
@@ -104,8 +104,18 @@ async function fetchOsmPublicSpaces(latNum, lngNum, radiusM) {
   way(around:${r},${latNum},${lngNum})[leisure=playground];
   node(around:${r},${latNum},${lngNum})[tourism=attraction];
   way(around:${r},${latNum},${lngNum})[tourism=attraction];
+  node(around:${r},${latNum},${lngNum})[tourism=museum];
+  way(around:${r},${latNum},${lngNum})[tourism=museum];
+  node(around:${r},${latNum},${lngNum})[tourism=gallery];
+  way(around:${r},${latNum},${lngNum})[tourism=gallery];
+  node(around:${r},${latNum},${lngNum})[historic];
+  way(around:${r},${latNum},${lngNum})[historic];
   node(around:${r},${latNum},${lngNum})[amenity=library];
   way(around:${r},${latNum},${lngNum})[amenity=library];
+  node(around:${r},${latNum},${lngNum})[amenity=community_centre];
+  way(around:${r},${latNum},${lngNum})[amenity=community_centre];
+  node(around:${r},${latNum},${lngNum})[amenity=theatre];
+  way(around:${r},${latNum},${lngNum})[amenity=theatre];
 );
 out center tags;`;
 
@@ -164,7 +174,11 @@ out center tags;`;
  */
 export function buildGooglePlacesConciergeQuery(userMessage) {
   const t = String(userMessage || '').toLowerCase();
-  const parts = ['parks public gardens plazas playgrounds outdoor recreation walking paths'];
+  const parts = [
+    'public places points of interest civic cultural landmarks',
+    'parks public gardens plazas playgrounds outdoor recreation walking paths',
+    'libraries museums galleries monuments memorials community centers theatres'
+  ];
   if (/\b(library|libraries|reading room)\b/.test(t)) parts.push('public library');
   if (/\b(museum|art gallery|gallery)\b/.test(t)) parts.push('museum art gallery');
   if (/\b(monument|memorial|historic|heritage site)\b/.test(t)) parts.push('historic monument landmark');
@@ -174,6 +188,9 @@ export function buildGooglePlacesConciergeQuery(userMessage) {
   if (/\b(quiet)\b/.test(t)) parts.push('quiet park library garden');
   if (/\b(free).*\b(visit|landmark|attraction|museum)\b|\b(free things)\b/.test(t)) parts.push('free viewpoint landmark');
   if (/\b(recycl)\b/.test(t)) parts.push('recycling drop-off');
+  if (/\b(cultural|history|historical|heritage)\b/.test(t)) parts.push('heritage site museum monument gallery');
+  if (/\b(indoor|inside)\b/.test(t)) parts.push('indoor public museum library gallery');
+  if (/\b(kids|family|children)\b/.test(t)) parts.push('family park playground children museum');
   return [...new Set(parts)].join(' ');
 }
 

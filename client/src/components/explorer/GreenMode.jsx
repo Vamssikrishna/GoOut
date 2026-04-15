@@ -210,7 +210,7 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
               <select
               value={idDest}
               onChange={(e) => setIdDest(e.target.value)}
-              className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm">
+              className="mt-1 w-full px-3 py-2 border border-cyan-200/60 rounded-lg text-sm">
 
                 {withCoords.map((b) =>
               <option key={b._id} value={b._id}>{b.mapDisplayName || b.name}</option>

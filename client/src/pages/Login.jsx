@@ -92,7 +92,7 @@ export default function Login() {
           className="block font-display font-extrabold text-3xl mb-8 bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent hover:opacity-90 transition-opacity w-fit">
           GoOut
         </Link>
-        <div className="goout-glass-card rounded-2xl p-8 shadow-xl border border-white/60">
+        <div className="goout-glass-card goout-neon-panel rounded-2xl p-8 shadow-xl border border-white/60">
           {step === 'credentials' ?
           <>
               <h1 className="text-2xl font-bold text-slate-900 mb-6">Welcome back</h1>
@@ -105,7 +105,7 @@ export default function Login() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 autoComplete="email"
-                className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent" />
+                className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent goout-neon-input" />
               
                 <input
                 type="password"
@@ -114,7 +114,7 @@ export default function Login() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
-                className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent" />
+                className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent goout-neon-input" />
               
                 <div className="flex justify-end">
                   <Link to="/forgot-password" className="text-sm text-goout-green font-medium hover:underline">
@@ -150,7 +150,7 @@ export default function Login() {
                 onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 required
                 autoComplete="one-time-code"
-                className="w-full px-4 py-3 rounded-lg border border-slate-200 text-center text-2xl tracking-[0.5em] font-mono focus:ring-2 focus:ring-goout-green focus:border-transparent" />
+                className="w-full px-4 py-3 rounded-lg border border-slate-200 text-center text-2xl tracking-[0.5em] font-mono focus:ring-2 focus:ring-goout-green focus:border-transparent goout-neon-input" />
               
                 <button
                 type="submit"

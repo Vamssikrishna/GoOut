@@ -6,15 +6,23 @@ export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
 
   const removeToast = useCallback((id) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+    // Trigger exit transition first, then remove from list.
+    setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, visible: false } : t)));
+    window.setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 240);
   }, []);
 
   const addToast = useCallback(
-    ({ type = 'info', title = '', message = '', durationMs = 3500 } = {}) => {
+    ({ type = 'info', title = '', message = '', durationMs = 2000 } = {}) => {
       const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      const toast = { id, type, title, message, durationMs };
+      const toast = { id, type, title, message, durationMs, visible: false };
       setToasts((prev) => [toast, ...prev].slice(0, 5));
-      window.setTimeout(() => removeToast(id), durationMs);
+      // Next frame: enter transition.
+      window.setTimeout(() => {
+        setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, visible: true } : t)));
+      }, 16);
+      window.setTimeout(() => removeToast(id), Math.max(400, Number(durationMs) || 2000));
       return id;
     },
     [removeToast]

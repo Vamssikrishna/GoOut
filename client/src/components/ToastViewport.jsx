@@ -5,24 +5,24 @@ function getStyles(type) {
   switch (type) {
     case 'success':
       return {
-        bar: 'bg-emerald-500',
+        bar: 'bg-gradient-to-r from-emerald-500 via-cyan-400 to-violet-500',
         text: 'text-emerald-900',
-        bg: 'bg-emerald-50',
-        border: 'border-emerald-200'
+        bg: 'bg-emerald-50/85',
+        border: 'border-emerald-200/80'
       };
     case 'error':
       return {
-        bar: 'bg-red-500',
+        bar: 'bg-gradient-to-r from-red-500 via-fuchsia-500 to-violet-500',
         text: 'text-red-900',
-        bg: 'bg-red-50',
-        border: 'border-red-200'
+        bg: 'bg-red-50/85',
+        border: 'border-red-200/80'
       };
     default:
       return {
-        bar: 'bg-goout-green',
+        bar: 'bg-gradient-to-r from-goout-green via-goout-neon to-goout-violet',
         text: 'text-slate-900',
-        bg: 'bg-white',
-        border: 'border-slate-200'
+        bg: 'bg-white/90',
+        border: 'border-cyan-200/80'
       };
   }
 }
@@ -42,7 +42,9 @@ export default function ToastViewport() {
         return (
           <div
             key={t.id}
-            className={`rounded-xl border ${styles.border} shadow-lg ${styles.bg} overflow-hidden goout-animate-in transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-xl`}
+            className={`rounded-xl border ${styles.border} shadow-2xl shadow-cyan-500/10 ${styles.bg} backdrop-blur-md overflow-hidden transform-gpu transition-all duration-300 ease-out ${
+              t.visible ? 'translate-x-0 opacity-100' : 'translate-x-8 opacity-0'
+            } hover:-translate-y-0.5 hover:shadow-xl`}
             role="status"
             aria-live="polite">
             

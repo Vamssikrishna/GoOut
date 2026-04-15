@@ -8,6 +8,27 @@ function formatDist(m) {
   return `${(m / 1000).toFixed(1)} km`;
 }
 
+function formatLocalLocation(place) {
+  const address = String(place?.address || '').trim();
+  if (address) return address;
+  const coords = place?.location?.coordinates || [];
+  const lng = Number(coords?.[0]);
+  const lat = Number(coords?.[1]);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  }
+  return 'Location not available';
+}
+
+function formatPublicLocation(place) {
+  const address = String(place?.address || '').trim();
+  if (address) return address;
+  const lat = Number(place?.lat);
+  const lng = Number(place?.lng);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  return 'Location not available';
+}
+
 /** Slim payload so the concierge prompt matches pins on the Explorer map. */
 function buildWelcomeContent(displayName) {
   const first =
@@ -84,13 +105,38 @@ function PlaceRows({ items, kind, onPickPlace, onGoRoute }) {
             onClick={() => onPickPlace(p, kind)}
             className="flex-1 min-w-0 text-left px-2.5 py-2.5 text-xs flex flex-col gap-0.5"
           >
-            <span className="font-medium text-slate-900 truncate">{p.name}</span>
-            <span className="text-slate-600">
-              {p.category}
-              {p.distanceMeters != null && ` · ${formatDist(p.distanceMeters)}`}
-              {kind === 'local' && p.redPin && <span className="text-red-700 font-medium"> · Red Pin</span>}
-              {kind === 'local' && p.avgPrice != null && ` · ~₹${p.avgPrice}`}
-            </span>
+            {kind === 'local' ? (
+              <>
+                <span className="font-medium text-slate-900 truncate">Title: {p.name}</span>
+                <span className="text-slate-600 truncate">Category: {p.category || 'N/A'}</span>
+                <span className="text-slate-600">
+                  Average Price: {p.avgPrice != null ? `₹${p.avgPrice}` : 'N/A'}
+                </span>
+                <span className="text-slate-600 truncate">Location: {formatLocalLocation(p)}</span>
+                {p.menuCatalogFileUrl ? (
+                  <a
+                    href={p.menuCatalogFileUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-emerald-700 font-medium underline w-fit"
+                  >
+                    View menu
+                  </a>
+                ) : (
+                  <span className="text-slate-500">View menu: Not available</span>
+                )}
+              </>
+            ) : (
+              <>
+                <span className="font-medium text-slate-900 truncate">Name: {p.name}</span>
+                <span className="text-slate-600 truncate">Category: {p.category || 'N/A'}</span>
+                <span className="text-slate-600">
+                  Stars: {Number.isFinite(Number(p.rating)) ? Number(p.rating).toFixed(1) : 'N/A'}
+                </span>
+                <span className="text-slate-600 truncate">Location: {formatPublicLocation(p)}</span>
+              </>
+            )}
           </button>
           <div className="flex items-center pr-1.5 py-1.5">
             <button
@@ -250,11 +296,8 @@ export default function CityConciergeChat({
 
       setMessages((prev) => [...prev, assistantMsg]);
 
-      if (data.mapPan && Number.isFinite(data.mapPan.lat) && Number.isFinite(data.mapPan.lng)) {
-        onMapPan?.({ lat: data.mapPan.lat, lng: data.mapPan.lng });
-      } else {
-        onMapPan?.(null);
-      }
+      // Do not auto-pan map from AI response.
+      // Map should move only when user explicitly interacts (Go / row click).
 
       onHighlightBusiness?.(data.highlightBusinessId ? String(data.highlightBusinessId) : null);
 
@@ -370,7 +413,7 @@ export default function CityConciergeChat({
     <div
       className={`fixed z-[10050] flex flex-col items-end gap-2 bottom-[max(1rem,env(safe-area-inset-bottom,0px))] right-[max(1rem,env(safe-area-inset-right,0px))] sm:bottom-[max(1.5rem,env(safe-area-inset-bottom,0px))] sm:right-[max(1.5rem,env(safe-area-inset-right,0px))] ${className}`}>
       {open && (
-        <div className="w-[min(100vw-2rem,400px)] max-h-[min(78vh,520px)] flex flex-col rounded-2xl border border-slate-200 bg-white shadow-xl overflow-hidden">
+        <div className="w-[min(100vw-2rem,400px)] max-h-[min(78vh,520px)] flex flex-col rounded-2xl border border-cyan-200/60 bg-white/80 backdrop-blur shadow-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-100 bg-goout-mint/80 flex items-center justify-between gap-2">
             <div>
               <p className="font-display font-semibold text-goout-dark text-sm">City Concierge</p>

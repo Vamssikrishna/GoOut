@@ -7,7 +7,8 @@ import {
   DEFAULT_GEMINI_MODEL,
   buildGeminiCandidateModels,
   classifyGeminiError,
-  sleepMs
+  sleepMs,
+  GEMINI_KEY_SCOPES
 } from '../config/geminiConfig.js';
 import { fetchPublicSpacesNear } from './publicPlaces.js';
 
@@ -1442,7 +1443,7 @@ export async function runConciergeChat({
     };
   }
 
-  const genAI = createGeminiClient();
+  const genAI = createGeminiClient(GEMINI_KEY_SCOPES.CHATBOT);
   if (!genAI) {
     const offlineParsed = buildOfflineConciergeParsed({
       message: rawMessage,

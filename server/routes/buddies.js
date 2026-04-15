@@ -4,6 +4,14 @@ import User from '../models/User.js';
 import Business from '../models/Business.js';
 import { protect } from '../middleware/auth.js';
 import { fetchPublicSpacesNear } from '../services/publicPlaces.js';
+import { generateGroupDescription, generateMultipleDescriptions } from '../services/buddyGroupAi.js';
+import {
+  createGeminiClient,
+  getGenerativeModelForModelId,
+  DEFAULT_GEMINI_MODEL,
+  buildGeminiCandidateModels,
+  GEMINI_KEY_SCOPES
+} from '../config/geminiConfig.js';
 
 const router = express.Router();
 const PARENT_CATEGORIES = { pottery: 'art', history: 'history', art: 'art', sports: 'sports', music: 'music', food: 'food', reading: 'books', books: 'books' };
@@ -14,6 +22,16 @@ function jaccard(a, b) {
   const inter = [...sa].filter((x) => sb.has(x)).length;
   const union = new Set([...sa, ...sb]).size;
   return union === 0 ? 0 : inter / union;
+}
+
+function distanceMeters(la1, lo1, la2, lo2) {
+  const R = 6371e3;
+  const phi1 = la1 * Math.PI / 180;
+  const phi2 = la2 * Math.PI / 180;
+  const dPhi = (la2 - la1) * Math.PI / 180;
+  const dLambda = (lo2 - lo1) * Math.PI / 180;
+  const a = Math.sin(dPhi / 2) ** 2 + Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLambda / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 function firstName(name) {
@@ -68,11 +86,62 @@ function buddyPublicPreview(u) {
   };
 }
 
+function safeJson(raw) {
+  try {
+    return JSON.parse(String(raw || '').trim());
+  } catch {
+    return null;
+  }
+}
+
+async function expandBuddyIntentKeywords(intentText) {
+  const base = String(intentText || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 2 && w.length < 24)
+    .slice(0, 12);
+  if (!base.length) return base;
+  const genAI = createGeminiClient(GEMINI_KEY_SCOPES.BUDDIES_MATCHING);
+  if (!genAI) return base;
+
+  const prompt = `Expand this buddy meetup intent into concise keyword tags.
+Intent: "${String(intentText || '').slice(0, 180)}"
+Return strict JSON only:
+{"keywords":["string"]}
+Rules:
+- output 4 to 10 short words/phrases
+- focus on activities and vibe
+- no sentences`;
+  const candidates = buildGeminiCandidateModels(process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL);
+  for (const modelId of candidates) {
+    try {
+      const model = getGenerativeModelForModelId(genAI, modelId, {
+        generationConfig: { temperature: 0.2, maxOutputTokens: 180, responseMimeType: 'application/json' }
+      });
+      if (!model) continue;
+      const result = await model.generateContent(prompt);
+      const parsed = safeJson(result?.response?.text?.() || '');
+      const aiWords = Array.isArray(parsed?.keywords) ?
+        parsed.keywords.map((x) => String(x || '').toLowerCase().trim()).filter(Boolean).slice(0, 12) :
+        [];
+      const merged = Array.from(new Set([...base, ...aiWords]));
+      if (merged.length) return merged;
+    } catch {
+      // try next model
+    }
+  }
+  return base;
+}
+
 router.get('/match', protect, async (req, res) => {
   try {
-    const { lng, lat, interests, maxDistance = 5000 } = req.query;
+    const { lng, lat, interests, intent, maxDistance = 5000 } = req.query;
     const coords = [parseFloat(lng) || 0, parseFloat(lat) || 0];
-    const userTags = interests ? interests.split(',').map((s) => s.trim()).filter(Boolean) : req.user.interests || [];
+    const rawIntent = String(intent || interests || '').trim();
+    const aiExpanded = rawIntent ? await expandBuddyIntentKeywords(rawIntent) : [];
+    const userTags = rawIntent ?
+      aiExpanded :
+      (req.user.interests || []).map((x) => String(x).trim()).filter(Boolean);
     const query = {
       location: { $nearSphere: { $geometry: { type: 'Point', coordinates: coords }, $maxDistance: Number(maxDistance) } },
       status: 'open',
@@ -83,13 +152,13 @@ router.get('/match', protect, async (req, res) => {
     populate('members', 'name avatar verified');
     const discoverable = groups.filter((g) => g.creatorId?.buddyMode !== false);
     const withScore = discoverable.map((g) => {
-      const groupTags = [...(g.interests || []), g.activity].filter(Boolean);
+      const groupTags = [...(g.interests || []), g.activity, g.description].filter(Boolean);
       let sim = jaccard(userTags, groupTags);
       if (sim < 0.4 && userTags.length) {
         const parentTags = userTags.map((t) => PARENT_CATEGORIES[t] || t);
         sim = Math.max(sim, jaccard(parentTags, groupTags));
       }
-      return { ...g.toObject(), similarity: sim };
+      return { ...g.toObject(), similarity: sim, matchPercent: Math.round(sim * 100) };
     });
     const matched = withScore.filter((g) => g.similarity >= 0.4).sort((a, b) => b.similarity - a.similarity);
     const result = matched.length ? matched : withScore.sort((a, b) => b.similarity - a.similarity).slice(0, 10);
@@ -107,13 +176,10 @@ router.get('/groups/suggested-peers', protect, async (req, res) => {
     const lngN = parseFloat(lng) || 0;
     const latN = parseFloat(lat) || 0;
     const coords = [lngN, latN];
+    const maxDistanceMeters = Number(maxDistance) || 8000;
     const me = await User.findById(req.user._id).select('interests location');
     const myTags = [...(me?.interests || [])].map((x) => String(x).toLowerCase());
-    const intentWords = String(intent || '').
-      toLowerCase().
-      split(/[^a-z0-9]+/).
-      filter((w) => w.length > 2 && w.length < 24).
-      slice(0, 12);
+    const intentWords = await expandBuddyIntentKeywords(intent || '');
 
     const others = await User.find({
       _id: { $ne: req.user._id },
@@ -121,7 +187,7 @@ router.get('/groups/suggested-peers', protect, async (req, res) => {
       location: {
         $nearSphere: {
           $geometry: { type: 'Point', coordinates: coords },
-          $maxDistance: Number(maxDistance) || 8000
+          $maxDistance: maxDistanceMeters
         }
       }
     }).
@@ -135,12 +201,30 @@ router.get('/groups/suggested-peers', protect, async (req, res) => {
         const hit = intentWords.filter((w) => their.some((t) => t.includes(w) || w.includes(t))).length;
         sim += Math.min(0.35, hit * 0.08);
       }
-      return { user: u, similarity: Math.min(1, sim) };
+      const c = u?.location?.coordinates || [];
+      const uLng = Number(c?.[0]);
+      const uLat = Number(c?.[1]);
+      const dMeters = (Number.isFinite(uLat) && Number.isFinite(uLng)) ?
+        distanceMeters(latN, lngN, uLat, uLng) :
+        maxDistanceMeters;
+      const proximityScore = Math.max(0, Math.min(1, 1 - (dMeters / maxDistanceMeters)));
+      const intentScore = Math.max(0, Math.min(1, sim));
+      const randomJitter = (Math.random() - 0.5) * 0.06;
+      const totalScore = Math.max(0, Math.min(1, intentScore * 0.65 + proximityScore * 0.35 + randomJitter));
+      return {
+        user: u,
+        totalScore,
+        intentPercent: Math.round(intentScore * 100),
+        proximityPercent: Math.round(proximityScore * 100)
+      };
     });
-    scored.sort((a, b) => b.similarity - a.similarity);
-    const out = scored.slice(0, 15).map(({ user: u, similarity }) => ({
+    scored.sort((a, b) => b.totalScore - a.totalScore);
+    const out = scored.slice(0, 15).map(({ user: u, totalScore, intentPercent, proximityPercent }) => ({
       ...buddyPublicPreview(u),
-      similarity: Math.round(similarity * 100) / 100,
+      similarity: Math.round(totalScore * 100) / 100,
+      matchPercent: Math.round(totalScore * 100),
+      intentPercent,
+      proximityPercent,
       distanceHint: 'within your discovery radius'
     }));
     res.json(out);
@@ -272,11 +356,24 @@ router.post('/groups', protect, async (req, res) => {
         return res.status(400).json({ error: 'That explorer has Buddy Mode off and cannot receive hangout invites.' });
       }
     }
-    const maxM = inviteTargetUserId ? 2 : (maxMembers || 6);
+    const parsedMaxMembers = Number.parseInt(maxMembers, 10);
+    const maxM = inviteTargetUserId ?
+      2 :
+      (Number.isFinite(parsedMaxMembers) ? Math.max(3, Math.min(20, parsedMaxMembers)) : 3);
+    
+    // Auto-generate description from activity if not provided
+    let finalDescription = description;
+    if (!finalDescription && activity) {
+      const aiDescription = await generateGroupDescription(activity, interests || [], meetingPlace || '');
+      if (aiDescription) {
+        finalDescription = aiDescription;
+      }
+    }
+    
     const group = await BuddyGroup.create({
       creatorId: req.user._id,
       activity,
-      description,
+      description: finalDescription,
       interests: interests || [],
       intentSnippet: String(intentSnippet || '').trim().slice(0, 500),
       location: { type: 'Point', coordinates: coords },
@@ -498,6 +595,50 @@ router.get('/groups/:id', protect, async (req, res) => {
     populate('pendingRequests', 'name avatar verified');
     if (!group) return res.status(404).json({ error: 'Group not found' });
     res.json(group);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Generate a unique description for a buddy group based on activity. */
+router.post('/generate-description', protect, async (req, res) => {
+  try {
+    const { activity, interests = [], meetingPlace = '' } = req.body;
+    const activity_trimmed = String(activity || '').trim();
+    
+    if (!activity_trimmed) {
+      return res.status(400).json({ error: 'Activity is required to generate a description' });
+    }
+    
+    const description = await generateGroupDescription(activity_trimmed, interests, meetingPlace);
+    
+    if (!description) {
+      return res.status(500).json({ error: 'Could not generate description. Please try again.' });
+    }
+    
+    res.json({ description });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Generate multiple description options for a buddy group (preview). */
+router.post('/generate-descriptions-preview', protect, async (req, res) => {
+  try {
+    const { activity, interests = [], meetingPlace = '' } = req.body;
+    const activity_trimmed = String(activity || '').trim();
+    
+    if (!activity_trimmed) {
+      return res.status(400).json({ error: 'Activity is required to generate descriptions' });
+    }
+    
+    const descriptions = await generateMultipleDescriptions(activity_trimmed, interests, meetingPlace, 3);
+    
+    if (!descriptions || descriptions.length === 0) {
+      return res.status(500).json({ error: 'Could not generate descriptions. Please try again.' });
+    }
+    
+    res.json({ descriptions });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

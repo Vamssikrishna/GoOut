@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -65,19 +65,21 @@ function verificationIssueRows(summary) {
       key: 'businessLicense',
       label: 'Business license / registration proof',
       ok: Boolean(checks?.businessLicense?.ok),
-      reason: checks?.businessLicense?.reason || (checks?.businessLicense?.nameOverlap === false ? 'Business name mismatch with listing.' : '')
+      reason: (checks?.businessLicense?.errors || []).join(' ') ||
+        checks?.businessLicense?.reason ||
+        (checks?.businessLicense?.nameOverlap === false ? 'Business name mismatch with listing.' : '')
     },
     {
       key: 'ownerIdentity',
       label: 'Owner government ID proof',
       ok: Boolean(checks?.ownerIdentity?.ok),
-      reason: checks?.ownerIdentity?.reason || ''
+      reason: (checks?.ownerIdentity?.errors || []).join(' ') || checks?.ownerIdentity?.reason || ''
     },
     {
       key: 'storefront',
       label: 'Storefront photo',
       ok: Boolean(checks?.storefront?.ok),
-      reason: checks?.storefront?.reason || ''
+      reason: (checks?.storefront?.errors || []).join(' ') || checks?.storefront?.reason || ''
     }
   ];
   return rows;
@@ -93,6 +95,8 @@ async function uploadMerchantAsset(file) {
 export default function Merchant() {
   const { user, updateUser } = useAuth();
   const { addToast } = useToast();
+  const [ownedBusinesses, setOwnedBusinesses] = useState([]);
+  const [activeBusinessId, setActiveBusinessId] = useState(null);
   const [business, setBusiness] = useState(null);
   const [analytics, setAnalytics] = useState(null);
   const [offers, setOffers] = useState([]);
@@ -149,24 +153,38 @@ export default function Merchant() {
   const [menuRows, setMenuRows] = useState([{ name: '', price: '', description: '' }]);
   const [menuPublishBusy, setMenuPublishBusy] = useState(false);
   const [verificationSummary, setVerificationSummary] = useState(null);
+  const [verificationTemplates, setVerificationTemplates] = useState(null);
   const [menuPreviewConfirmed, setMenuPreviewConfirmed] = useState(false);
 
   const merchantBusinessId = getMerchantBusinessId(user);
-  const showRegistrationForm = !merchantBusinessId || creatingNewBusiness;
+  const showRegistrationForm = !activeBusinessId || creatingNewBusiness;
 
-  useEffect(() => {
-    if (!merchantBusinessId || creatingNewBusiness) {
-      if (!merchantBusinessId) {
-        setBusiness(null);
-        setAnalytics(null);
-        setOffers([]);
-        setCreatingNewBusiness(false);
-      }
-      return;
+  const loadOwnedBusinesses = useCallback(async () => {
+    if (!user?.id || user?.role !== 'merchant') return [];
+    try {
+      const { data } = await api.get('/businesses/mine');
+      const rows = Array.isArray(data) ? data : [];
+      setOwnedBusinesses(rows);
+      return rows;
+    } catch {
+      setOwnedBusinesses([]);
+      return [];
     }
-    const bid = merchantBusinessId.toString();
-    api.get(`/businesses/${bid}`).then(({ data }) => {
+  }, [user?.id, user?.role]);
+
+  const loadBusinessBundle = useCallback(async (businessId) => {
+    if (!businessId) return;
+    try {
+      const bid = String(businessId);
+      const [bizRes, analyticsRes, offersRes] = await Promise.all([
+        api.get(`/businesses/${bid}`),
+        api.get(`/businesses/${bid}/analytics`),
+        api.get(`/offers/business/${bid}`)
+      ]);
+      const data = bizRes.data;
       setBusiness(data);
+      setAnalytics(analyticsRes.data);
+      setOffers(offersRes.data);
       setEditTags((data.tags || []).join(', '));
       if (Array.isArray(data.menuItems) && data.menuItems.length > 0) {
         setMenuRows(
@@ -179,10 +197,43 @@ export default function Merchant() {
       } else {
         setMenuRows([{ name: '', price: '', description: '' }]);
       }
-    }).catch(console.error);
-    api.get(`/businesses/${bid}/analytics`).then(({ data }) => setAnalytics(data)).catch(console.error);
-    api.get(`/offers/business/${bid}`).then(({ data }) => setOffers(data)).catch(console.error);
-  }, [merchantBusinessId, creatingNewBusiness]);
+    } catch (err) {
+      console.error(err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (merchantBusinessId) {
+      setActiveBusinessId(String(merchantBusinessId));
+    } else {
+      setActiveBusinessId(null);
+    }
+  }, [merchantBusinessId]);
+
+  useEffect(() => {
+    if (!activeBusinessId || creatingNewBusiness) {
+      if (!activeBusinessId) {
+        setBusiness(null);
+        setAnalytics(null);
+        setOffers([]);
+        setCreatingNewBusiness(false);
+      }
+      return;
+    }
+    loadBusinessBundle(activeBusinessId);
+  }, [activeBusinessId, creatingNewBusiness, loadBusinessBundle]);
+
+  useEffect(() => {
+    if (!user?.id || user?.role !== 'merchant') return;
+    loadOwnedBusinesses();
+  }, [user?.id, user?.role, loadOwnedBusinesses]);
+
+  useEffect(() => {
+    if (!showRegistrationForm || user?.role !== 'merchant') return;
+    api.get('/businesses/verification-templates')
+      .then(({ data }) => setVerificationTemplates(data || null))
+      .catch(() => setVerificationTemplates(null));
+  }, [showRegistrationForm, user?.role]);
 
   useEffect(() => {
     if (!showRegistrationForm) return;
@@ -226,6 +277,7 @@ export default function Merchant() {
     setNotifyBuddyMeetups(true);
     setNotifyFlashDeals(true);
     setVerificationSummary(null);
+    setVerificationTemplates(null);
     setMenuPreviewConfirmed(false);
   };
 
@@ -410,6 +462,8 @@ export default function Merchant() {
       setBusiness(data);
       setCreatingNewBusiness(false);
       updateUser({ businessId: data._id });
+      setActiveBusinessId(String(data._id));
+      await loadOwnedBusinesses();
       addToast({ type: 'success', title: 'Business registered', message: 'Your listing is live. You can request Red Pin verification from the dashboard.' });
     } catch (err) {
       console.error(err);
@@ -509,11 +563,19 @@ export default function Merchant() {
     setDeletingBusiness(true);
     try {
       await api.delete(`/businesses/${business._id}`);
-      setBusiness(null);
-      setAnalytics(null);
-      setOffers([]);
       setCreatingNewBusiness(false);
-      updateUser({ businessId: null });
+      const rows = await loadOwnedBusinesses();
+      if (rows.length > 0) {
+        const nextId = String(rows[0]._id);
+        setActiveBusinessId(nextId);
+        updateUser({ businessId: nextId });
+      } else {
+        setBusiness(null);
+        setAnalytics(null);
+        setOffers([]);
+        setActiveBusinessId(null);
+        updateUser({ businessId: null });
+      }
     } catch (err) {
       setDeleteError(err.response?.data?.error || 'Failed to delete business');
     } finally {
@@ -532,7 +594,7 @@ export default function Merchant() {
           </h1>
           <p className="text-sm text-slate-600 mt-1">Offers, crowd, verification, and storefront tools.</p>
         </div>
-        {merchantBusinessId && !creatingNewBusiness && (
+        {activeBusinessId && !creatingNewBusiness && (
           <button
             type="button"
             onClick={() => {
@@ -548,10 +610,38 @@ export default function Merchant() {
       {business && !creatingNewBusiness && (
         <div className="goout-soft-card rounded-2xl p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-slate-600">
-              <span className="font-medium text-slate-800">Current business:</span>{' '}
-              {business.name} · {business.category}
-            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="text-sm text-slate-600">
+                <span className="font-medium text-slate-800">Current business:</span>{' '}
+                {business.name} · {business.category}
+              </p>
+              {ownedBusinesses.length > 1 &&
+              <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500">Switch business</span>
+                  <select
+                  value={String(activeBusinessId || '')}
+                  onChange={async (e) => {
+                    const nextId = String(e.target.value || '');
+                    if (!nextId || nextId === String(activeBusinessId || '')) return;
+                    try {
+                      await api.post(`/businesses/switch/${nextId}`);
+                      setActiveBusinessId(nextId);
+                      updateUser({ businessId: nextId });
+                      addToast({ type: 'success', title: 'Business switched', message: 'Dashboard updated to selected business.' });
+                    } catch (err) {
+                      addToast({ type: 'error', title: 'Switch failed', message: err.response?.data?.error || 'Could not switch business.' });
+                    }
+                  }}
+                  className="px-2 py-1.5 rounded-lg border border-slate-200 text-xs bg-white">
+                    {ownedBusinesses.map((b) =>
+                  <option key={b._id} value={String(b._id)}>
+                        {(b.mapDisplayName || b.name || 'Business').slice(0, 60)}
+                      </option>
+                  )}
+                  </select>
+                </div>
+              }
+            </div>
             <div className="flex items-center gap-2">
               {business?.localVerification?.redPin ? (
                 <span className="px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">Red Pin Verified</span>
@@ -716,6 +806,37 @@ export default function Merchant() {
                 {ownerIdDoc?.url && <a href={ownerIdDoc.url} target="_blank" rel="noreferrer" className="text-xs text-goout-green underline">View owner ID</a>}
               </div>
             </div>
+            {verificationTemplates && (
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 space-y-2">
+                <p className="font-semibold text-slate-900">Verification templates that pass OCR checks</p>
+                <div>
+                  <p className="font-medium">{verificationTemplates?.businessCertificate?.title || 'Business certificate'}</p>
+                  <ul className="list-disc ml-4 mt-1 space-y-0.5">
+                    {(verificationTemplates?.businessCertificate?.requiredFields || []).map((x) => (
+                      <li key={`bc-${x}`}>{x}</li>
+                    ))}
+                  </ul>
+                  {(verificationTemplates?.businessCertificate?.sampleTemplateText || []).length > 0 && (
+                    <pre className="mt-2 whitespace-pre-wrap rounded border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-700">
+                      {(verificationTemplates?.businessCertificate?.sampleTemplateText || []).join('\n')}
+                    </pre>
+                  )}
+                </div>
+                <div>
+                  <p className="font-medium">{verificationTemplates?.aadhaar?.title || 'Aadhaar'}</p>
+                  <ul className="list-disc ml-4 mt-1 space-y-0.5">
+                    {(verificationTemplates?.aadhaar?.requiredFields || []).map((x) => (
+                      <li key={`ad-${x}`}>{x}</li>
+                    ))}
+                  </ul>
+                  {(verificationTemplates?.aadhaar?.sampleTemplateText || []).length > 0 && (
+                    <pre className="mt-2 whitespace-pre-wrap rounded border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-700">
+                      {(verificationTemplates?.aadhaar?.sampleTemplateText || []).join('\n')}
+                    </pre>
+                  )}
+                </div>
+              </div>
+            )}
             {verificationSummary && (
               <div className={`rounded-lg border px-3 py-2 text-xs ${
                 verificationSummary?.isVerified ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-red-200 bg-red-50 text-red-900'

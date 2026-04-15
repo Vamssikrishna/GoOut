@@ -27,10 +27,10 @@ export default function Landing() {
 
       <nav className="relative flex justify-between items-center px-6 md:px-12 py-6 max-w-7xl mx-auto z-10 animate-fade-in">
         <span className="goout-brand-link text-2xl font-extrabold tracking-tight md:text-3xl">GoOut</span>
-        <div className="flex gap-2 sm:gap-3">
+        <div className="flex gap-2 sm:gap-3 goout-neon-panel rounded-2xl p-1.5">
           <Link
             to="/login"
-            className="goout-link-landing border border-slate-200/90 bg-white/70 text-slate-700 backdrop-blur transition-shadow duration-300 hover:border-emerald-300/60 hover:bg-white hover:shadow-md hover:shadow-emerald-500/10">
+            className="goout-link-landing border border-cyan-200/80 bg-white/70 text-slate-700 backdrop-blur transition-shadow duration-300 hover:border-cyan-300/70 hover:bg-white hover:shadow-md hover:shadow-cyan-500/15">
             Login
           </Link>
           <Link
@@ -70,7 +70,7 @@ export default function Landing() {
             </div>
           </div>
           <div className="hidden lg:block flex-1 max-w-md mb-4 animate-slide-up opacity-0 [animation-delay:200ms]">
-            <div className="goout-glass-card rounded-3xl p-8 goout-hover-lift border border-white/60">
+            <div className="goout-glass-card goout-neon-panel rounded-3xl p-8 goout-hover-lift border border-white/60">
               <div className="h-2 w-24 rounded-full bg-gradient-to-r from-emerald-400 to-teal-400 mb-6" />
               <p className="text-slate-500 text-sm leading-relaxed mb-4">Live map · buddies · flash deals</p>
               <div className="space-y-3">

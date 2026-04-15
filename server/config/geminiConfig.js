@@ -1,4 +1,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import fs from 'fs';
+import path from 'path';
+import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
 
 /**
  * Default for new Google AI Studio keys (1.5 / 2.0 bare names often 404).
@@ -6,8 +10,65 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
  */
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 
-export function createGeminiClient() {
-  const apiKey = process.env.GEMINI_API_KEY;
+export const GEMINI_KEY_SCOPES = Object.freeze({
+  CHATBOT: 'chatbot',
+  COMPARE_GREEN: 'compare_green',
+  MERCHANT: 'merchant',
+  BUDDIES_MATCHING: 'buddies_matching'
+});
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const ENV_PATH = path.join(__dirname, '..', '.env');
+let lastEnvMtimeMs = 0;
+let cachedEnvOverrides = {};
+
+function refreshEnvOverridesFromFile() {
+  try {
+    if (!fs.existsSync(ENV_PATH)) {
+      cachedEnvOverrides = {};
+      lastEnvMtimeMs = 0;
+      return;
+    }
+    const stat = fs.statSync(ENV_PATH);
+    const mtimeMs = Number(stat?.mtimeMs || 0);
+    if (mtimeMs === lastEnvMtimeMs) return;
+    const raw = fs.readFileSync(ENV_PATH, 'utf8');
+    cachedEnvOverrides = dotenv.parse(raw || '');
+    lastEnvMtimeMs = mtimeMs;
+  } catch {
+    // Keep previous values if file read fails transiently.
+  }
+}
+
+function readEnvValue(key) {
+  refreshEnvOverridesFromFile();
+  const fromFile = cachedEnvOverrides?.[key];
+  if (typeof fromFile === 'string' && fromFile.trim()) return fromFile.trim();
+  const fromProcess = process.env?.[key];
+  if (typeof fromProcess === 'string' && fromProcess.trim()) return fromProcess.trim();
+  return '';
+}
+
+export function resolveGeminiApiKey(scope = '') {
+  const normalized = String(scope || '').trim().toLowerCase();
+  if (normalized === GEMINI_KEY_SCOPES.CHATBOT) {
+    return readEnvValue('GEMINI_API_KEY_CHATBOT') || readEnvValue('GEMINI_API_KEY') || '';
+  }
+  if (normalized === GEMINI_KEY_SCOPES.COMPARE_GREEN) {
+    return readEnvValue('GEMINI_API_KEY_COMPARE_GREEN') || readEnvValue('GEMINI_API_KEY') || '';
+  }
+  if (normalized === GEMINI_KEY_SCOPES.MERCHANT) {
+    return readEnvValue('GEMINI_API_KEY_MERCHANT') || readEnvValue('GEMINI_API_KEY') || '';
+  }
+  if (normalized === GEMINI_KEY_SCOPES.BUDDIES_MATCHING) {
+    return readEnvValue('GEMINI_API_KEY_BUDDIES_MATCHING') || readEnvValue('GEMINI_API_KEY') || '';
+  }
+  return readEnvValue('GEMINI_API_KEY') || '';
+}
+
+export function createGeminiClient(scope = '') {
+  const apiKey = resolveGeminiApiKey(scope);
   if (!apiKey) return null;
   return new GoogleGenerativeAI(apiKey);
 }
@@ -23,12 +84,12 @@ export function getGenerativeModelForModelId(genAI, modelId, options = {}) {
 export function getGenerativeModel(options = {}) {
   const genAI = createGeminiClient();
   if (!genAI) return null;
-  const modelName = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+  const modelName = readEnvValue('GEMINI_MODEL') || DEFAULT_GEMINI_MODEL;
   return getGenerativeModelForModelId(genAI, modelName, options);
 }
 
 export function buildGeminiCandidateModels(primaryModelId) {
-  const envFallbacks = String(process.env.GEMINI_FALLBACK_MODELS || '')
+  const envFallbacks = String(readEnvValue('GEMINI_FALLBACK_MODELS') || '')
     .split(',')
     .map((m) => m.trim())
     .filter(Boolean);
@@ -54,6 +115,26 @@ export function classifyGeminiError(err) {
     return 'model';
   }
   return 'other';
+}
+
+export function isLikelyGeminiError(err) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  return (
+    msg.includes('googlegenerativeai') ||
+    msg.includes('generativelanguage.googleapis.com') ||
+    msg.includes('gemini')
+  );
+}
+
+export function formatGeminiUserMessage(err, fallback = 'AI is busy right now. Please try again in a moment.') {
+  const kind = classifyGeminiError(err);
+  if (kind === 'quota' || kind === 'transient') {
+    return 'AI is busy right now. Please try again in a moment.';
+  }
+  if (kind === 'model') {
+    return 'AI service is temporarily unavailable. Please try again shortly.';
+  }
+  return fallback;
 }
 
 export async function sleepMs(ms) {

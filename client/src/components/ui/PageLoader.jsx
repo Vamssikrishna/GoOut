@@ -15,7 +15,7 @@ export default function PageLoader({ message = 'Establishing secure session', hi
           <div className="goout-orbit goout-orbit--inner" />
           <div className="goout-orbit-core" />
         </div>
-        <div className="max-w-sm space-y-3 text-center">
+        <div className="max-w-sm space-y-3 text-center goout-neon-panel rounded-2xl px-6 py-5">
           <p className="goout-load-title font-display text-lg font-bold tracking-wide text-slate-800">{message}</p>
           {hint ? <p className="text-sm text-slate-500">{hint}</p> : null}
           <div className="goout-load-bar mx-auto max-w-[220px]">

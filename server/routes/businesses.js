@@ -9,7 +9,7 @@ import AnalyticsHit from '../models/AnalyticsHit.js';
 import DailyStats from '../models/DailyStats.js';
 import { extractMerchantOnboardingFromSentence } from '../services/merchantOnboardingAi.js';
 import { generateAndSaveMenuPdf } from '../services/menuPdfService.js';
-import { verifyOnboardingDocuments } from '../services/merchantVerificationAi.js';
+import { verifyOnboardingDocuments, getMerchantVerificationTemplates } from '../services/merchantVerificationAi.js';
 
 const router = express.Router();
 const RED_PIN_PRIORITY_MULTIPLIER = 1.35;
@@ -164,54 +164,65 @@ router.get('/nearby', async (req, res) => {
   try {
     const { lng, lat, city, category, q } = req.query;
     const coords = [parseFloat(lng) || 0, parseFloat(lat) || 0];
-
-    // Build the query object
-    let query = {};
-    if (city && String(city).trim() !== '' && String(city).trim().toLowerCase() !== 'unknown city') {
-      const escapedCity = escapeRegexChars(String(city).trim());
-      query['addressStructured.city'] = new RegExp(escapedCity, 'i');
-    } else {
-      query.location = { $nearSphere: { $geometry: { type: 'Point', coordinates: coords } } };
-    }
-
     const SEARCHABLE_FIELDS = ['category', 'name', 'mapDisplayName', 'tags', 'vibe', 'description', 'greenInitiatives', 'localSourcingNote'];
-
-    if (category && String(category).trim()) {
-      const escaped = escapeRegexChars(String(category).trim());
-      try {
-        const c = new RegExp(escaped, 'i');
-        query.$or = SEARCHABLE_FIELDS.map((field) => ({ [field]: c }));
-      } catch {
-        /* ignore invalid pattern */
-      }
-    }
-    
-    if (q && String(q).trim()) {
-      const tokens = String(q).trim().split(/\s+/).map(t => escapeRegexChars(t)).filter(Boolean);
-      if (tokens.length > 0) {
-        const tokenClauses = tokens.map((t) => {
-          try {
-            const r = new RegExp(t, 'i');
-            return { $or: SEARCHABLE_FIELDS.map((field) => ({ [field]: r })) };
-          } catch {
-            return null;
-          }
-        }).filter(Boolean);
-        
-        if (tokenClauses.length > 0) {
-          if (query.$or) {
-            query.$and = [{ $or: query.$or }, { $or: tokenClauses.map((c) => c.$or).flat() }];
-            delete query.$or;
-          } else {
-            query.$or = tokenClauses.map((c) => c.$or).flat();
-          }
+    const MAX_DISTANCE_M = 30000;
+    const cityText = String(city || '').trim();
+    const hasUsableCity = cityText !== '' && cityText.toLowerCase() !== 'unknown city';
+    const textTerms = [];
+    if (category && String(category).trim()) textTerms.push(String(category).trim());
+    if (q && String(q).trim()) textTerms.push(...String(q).trim().split(/\s+/));
+    const regexes = textTerms
+      .map((t) => escapeRegexChars(t))
+      .filter(Boolean)
+      .map((safe) => {
+        try {
+          return new RegExp(safe, 'i');
+        } catch {
+          return null;
         }
-      } else {
-        return res.json([]);
-      }
-    }
+      })
+      .filter(Boolean);
 
-    const businesses = await Business.find(query).limit(100).populate('ownerId', 'name verified');
+    const baseNear = {
+      location: {
+        $nearSphere: {
+          $geometry: { type: 'Point', coordinates: coords },
+          $maxDistance: MAX_DISTANCE_M
+        }
+      }
+    };
+
+    const buildSearchFilter = () => {
+      if (!regexes.length) return {};
+      const byTerm = regexes.map((rx) => ({
+        $or: SEARCHABLE_FIELDS.map((field) => ({ [field]: rx }))
+      }));
+      return { $and: byTerm };
+    };
+
+    const runNearbyQuery = async (withCity) => {
+      const query = { ...baseNear };
+      if (withCity && hasUsableCity) {
+        query['addressStructured.city'] = new RegExp(escapeRegexChars(cityText), 'i');
+      }
+      const search = buildSearchFilter();
+      if (search.$and) query.$and = search.$and;
+      return Business.find(query).limit(120).populate('ownerId', 'name verified');
+    };
+
+    let businesses = [];
+    if (hasUsableCity) {
+      businesses = await runNearbyQuery(true);
+    }
+    if (!businesses.length) {
+      businesses = await runNearbyQuery(false);
+    }
+    if (!businesses.length) {
+      const globalQuery = {};
+      const search = buildSearchFilter();
+      if (search.$and) globalQuery.$and = search.$and;
+      businesses = await Business.find(globalQuery).limit(80).populate('ownerId', 'name verified');
+    }
     res.json(applyLocalPrioritySorting(businesses));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -304,6 +315,47 @@ router.post('/verify-onboarding-docs', protect, merchantOnly, async (req, res) =
     return res.json(result);
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Verification failed' });
+  }
+});
+
+router.get('/verification-templates', protect, merchantOnly, async (_req, res) => {
+  try {
+    res.json(getMerchantVerificationTemplates());
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Could not load verification templates' });
+  }
+});
+
+router.get('/mine', protect, merchantOnly, async (req, res) => {
+  try {
+    const businesses = await Business.find({ ownerId: req.user._id })
+      .sort({ createdAt: -1 })
+      .select('name mapDisplayName category localVerification createdAt');
+    res.json(businesses);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/switch/:id', protect, merchantOnly, async (req, res) => {
+  try {
+    const business = await Business.findById(req.params.id).select('_id ownerId name category');
+    if (!business) return res.status(404).json({ error: 'Business not found' });
+    if (String(business.ownerId) !== String(req.user._id)) {
+      return res.status(403).json({ error: 'Not authorized to switch to this business' });
+    }
+    await User.findByIdAndUpdate(req.user._id, { businessId: business._id });
+    res.json({
+      ok: true,
+      activeBusinessId: String(business._id),
+      business: {
+        _id: business._id,
+        name: business.name,
+        category: business.category
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

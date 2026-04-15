@@ -6,7 +6,8 @@ import {
   DEFAULT_GEMINI_MODEL,
   buildGeminiCandidateModels,
   classifyGeminiError,
-  sleepMs
+  sleepMs,
+  GEMINI_KEY_SCOPES
 } from '../config/geminiConfig.js';
 
 function cacheKey(sentence) {
@@ -143,7 +144,7 @@ export async function extractMerchantOnboardingFromSentence(sentence) {
     console.warn('[merchant onboarding ai] cache read skipped:', String(e?.message || e).slice(0, 160));
   }
 
-  const genAI = createGeminiClient();
+  const genAI = createGeminiClient(GEMINI_KEY_SCOPES.MERCHANT);
   if (!genAI) {
     const fallback = heuristicOnboardingExtract(trimmed);
     try {

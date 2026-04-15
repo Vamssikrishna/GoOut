@@ -3,6 +3,7 @@ import { optionalProtect } from '../middleware/auth.js';
 import User from '../models/User.js';
 import Visit from '../models/Visit.js';
 import { runConciergeChat } from '../services/conciergeEngine.js';
+import { isLikelyGeminiError, formatGeminiUserMessage } from '../config/geminiConfig.js';
 
 const router = express.Router();
 
@@ -75,6 +76,9 @@ router.post('/chat', optionalProtect, async (req, res) => {
     return res.json(result);
   } catch (e) {
     console.error('[concierge] route', e);
+    if (isLikelyGeminiError(e)) {
+      return res.status(503).json({ error: formatGeminiUserMessage(e) });
+    }
     return res.status(500).json({ error: e.message || 'Server error' });
   }
 });

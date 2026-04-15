@@ -10,6 +10,7 @@ const COOLDOWN_MS = 2 * 60 * 60 * 1000;
 const MAX_SPEED_KMH = 10;
 const CHECK_INTERVAL_SEC = 45;
 const MAX_VISIT_GPS_ACCURACY_M = 45;
+const BIKE_CO2_G_PER_KM = 72;
 
 function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371e3;
@@ -34,9 +35,48 @@ function businessEcoStrength(b) {
   return n;
 }
 
+function computeEcoImpact(distanceMeters, weight, { strongGreen = false, comparatorGuided = false } = {}) {
+  const dw = Math.max(0, Number(distanceMeters) || 0);
+  const km = dw / 1000;
+  const bonus = strongGreen ? 1.25 : 1;
+  const carCO2SavedGrams = Math.round(km * CAR_CO2_G_PER_KM * bonus);
+  const bikeCO2SavedGrams = Math.round(km * BIKE_CO2_G_PER_KM * bonus);
+  const caloriesBurned = Math.round(km * 0.75 * (Number(weight) || 65));
+  let carbonCreditsEarned = Math.round(km * 12) / 10;
+  if (strongGreen) carbonCreditsEarned += 2;
+  if (comparatorGuided) carbonCreditsEarned += 1;
+  return {
+    distanceWalked: Math.round(dw),
+    carCO2SavedGrams: Math.max(0, carCO2SavedGrams),
+    bikeCO2SavedGrams: Math.max(0, bikeCO2SavedGrams),
+    caloriesBurned: Math.max(0, caloriesBurned),
+    carbonCreditsEarned: Math.max(0, Math.round(carbonCreditsEarned * 10) / 10)
+  };
+}
+
+router.post('/impact-preview', protect, async (req, res) => {
+  try {
+    const { distanceWalked, businessId, fromComparator } = req.body || {};
+    const distance = Math.max(0, Number(distanceWalked) || 0);
+    let strongGreen = false;
+    if (businessId) {
+      const business = await Business.findById(businessId).select('greenInitiatives ecoOptions');
+      strongGreen = businessEcoStrength(business) >= 4;
+    }
+    const user = await User.findById(req.user._id).select('weight');
+    const impact = computeEcoImpact(distance, user?.weight || 65, {
+      strongGreen,
+      comparatorGuided: Boolean(fromComparator && businessId)
+    });
+    res.json(impact);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/record', protect, async (req, res) => {
   try {
-    const { lat, lng, businessId, publicPlace, accuracy, distanceWalked, timeSinceLastSec, fromComparator } = req.body;
+    const { lat, lng, businessId, publicPlace, accuracy, distanceWalked, timeSinceLastSec, fromComparator, ecoComparisonSaved } = req.body;
     if (!lat || !lng) return res.status(400).json({ error: 'lat and lng are required' });
     if (Number.isFinite(Number(accuracy)) && Number(accuracy) > MAX_VISIT_GPS_ACCURACY_M) {
       return res.status(400).json({ error: 'GPS accuracy too low for precise visit logging' });
@@ -101,34 +141,34 @@ router.post('/record', protect, async (req, res) => {
       comparatorGuided: Boolean(fromComparator && businessId)
     });
 
-    if (business) {
-      const u = await User.findById(req.user._id).select('weight');
-      const weight = u?.weight || 65;
-      const km = dw / 1000;
-      const strongGreen = businessEcoStrength(business) >= 4;
-      const bonus = strongGreen ? 1.25 : 1;
-      const gramsAvoided = Math.round(km * CAR_CO2_G_PER_KM * bonus);
-      const cal = Math.round(km * 0.75 * weight);
-      let carbonCredits = Math.round(km * 12) / 10;
-      if (strongGreen) carbonCredits += 2;
-      if (visit.comparatorGuided) carbonCredits += 1;
+    const u = await User.findById(req.user._id).select('weight');
+    const strongGreen = businessEcoStrength(business) >= 4;
+    const eco = computeEcoImpact(dw, u?.weight || 65, {
+      strongGreen,
+      comparatorGuided: Boolean(visit.comparatorGuided)
+    });
+    visit.carCO2SavedGrams = eco.carCO2SavedGrams;
+    visit.bikeCO2SavedGrams = eco.bikeCO2SavedGrams;
+    visit.caloriesBurned = eco.caloriesBurned;
+    visit.carbonCreditsEarned = eco.carbonCreditsEarned;
+    visit.ecoComparisonSaved = Boolean(ecoComparisonSaved);
 
+    if (visit.ecoComparisonSaved) {
       const inc = {
-        'greenStats.totalCO2Saved': gramsAvoided,
-        'greenStats.totalCaloriesBurned': cal,
+        'greenStats.totalCO2Saved': eco.carCO2SavedGrams,
+        'greenStats.totalCaloriesBurned': eco.caloriesBurned,
         'greenStats.totalWalks': 1,
-        carbonCredits: Math.max(0, carbonCredits)
+        carbonCredits: eco.carbonCreditsEarned
       };
       if (visit.comparatorGuided && business?.localVerification?.redPin) {
         inc.socialPoints = 2;
       }
-
       await User.findByIdAndUpdate(req.user._id, { $inc: inc });
       if (visit.comparatorGuided) {
         visit.comparatorCreditsAwarded = true;
-        await visit.save();
       }
     }
+    await visit.save();
 
     const populated = await Visit.findById(visit._id).populate('businessId', 'name category avgPrice address');
     res.status(201).json(populated);
@@ -178,24 +218,37 @@ router.get('/stats', protect, async (req, res) => {
     const visits = await Visit.find({ userId: req.user._id }).populate('businessId', 'avgPrice');
     const localVisits = visits.filter((v) => v.placeType !== 'public' && v.businessId);
     const publicVisits = visits.filter((v) => v.placeType === 'public');
-    const totalSaved = localVisits.reduce((s, v) => {
-      const price = v.businessId?.avgPrice || 0;
+    const totalSavedDelivery = localVisits.reduce((s, v) => {
+      const explicit = Number(v.savedVsDeliveryInr);
+      if (Number.isFinite(explicit) && explicit > 0) return s + explicit;
+      const price = Number(v.businessId?.avgPrice || 0);
       const delivery = price + 40 + 25 + Math.round(price * 0.1);
-      return s + (delivery - price);
+      return s + Math.max(0, delivery - price);
     }, 0);
+    const totalSavedBasicRestaurant = localVisits.reduce((s, v) => s + Math.max(0, Number(v.savedVsBasicRestaurantInr || 0)), 0);
+    const totalSavedHighClassRestaurant = localVisits.reduce((s, v) => s + Math.max(0, Number(v.savedVsHighClassRestaurantInr || 0)), 0);
     const user = await User.findById(req.user._id).select('weight');
     const weight = user?.weight || 65;
-    const totalDistance = visits.reduce((s, v) => s + (v.distanceWalked || 0), 0);
-    const caloriesBurned = Math.round(totalDistance / 1000 * 0.75 * weight);
-    const co2Saved = Math.round(totalDistance / 1000 * 0.1 * 100) / 100;
+    const savedOnly = visits.filter((v) => v.ecoComparisonSaved);
+    const totalDistance = savedOnly.reduce((s, v) => s + (v.distanceWalked || 0), 0);
+    const caloriesBurned = savedOnly.reduce((s, v) => s + Math.max(0, Number(v.caloriesBurned || 0)), 0) || Math.round(totalDistance / 1000 * 0.75 * weight);
+    const co2Saved = Math.round((savedOnly.reduce((s, v) => s + Math.max(0, Number(v.carCO2SavedGrams || 0)), 0) / 1000) * 100) / 100;
+    const bikeCo2Saved = Math.round((savedOnly.reduce((s, v) => s + Math.max(0, Number(v.bikeCO2SavedGrams || 0)), 0) / 1000) * 100) / 100;
+    const totalCarbonCreditsEarned = Math.round(savedOnly.reduce((s, v) => s + Math.max(0, Number(v.carbonCreditsEarned || 0)), 0) * 10) / 10;
     res.json({
       totalVisits: visits.length,
       localVisits: localVisits.length,
       publicVisits: publicVisits.length,
-      totalSaved,
+      savedEcoComparisons: savedOnly.length,
+      totalSaved: Math.round(totalSavedDelivery),
+      totalSavedDelivery: Math.round(totalSavedDelivery),
+      totalSavedBasicRestaurant: Math.round(totalSavedBasicRestaurant),
+      totalSavedHighClassRestaurant: Math.round(totalSavedHighClassRestaurant),
       totalDistance,
       caloriesBurned,
-      co2Saved
+      co2Saved,
+      bikeCo2Saved,
+      totalCarbonCreditsEarned
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

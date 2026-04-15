@@ -24,7 +24,7 @@ const buddyGroupSchema = new mongoose.Schema({
   inviteTargetUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   scheduledAt: { type: Date, required: true },
   chatExpiresAt: { type: Date, default: null },
-  maxMembers: { type: Number, default: 6 },
+  maxMembers: { type: Number, default: 3 },
   members: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   pendingRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   status: { type: String, enum: ['open', 'full', 'ongoing', 'completed'], default: 'open' },
