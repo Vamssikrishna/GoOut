@@ -11,8 +11,9 @@ function groupMemberIds(group) {
   return [...ids];
 }
 
-function callRoomUrl(groupId, callType) {
-  return `https://meet.jit.si/goout-${String(groupId)}-${String(callType || 'voice')}`;
+function buildGoogleMeetLink() {
+  // Google provides this endpoint to create a new Meet room.
+  return 'https://meet.google.com/new';
 }
 
 export function setupSocketHandlers(io) {
@@ -90,32 +91,29 @@ export function setupSocketHandlers(io) {
         if (emergencyEmails.length < 1) {
           return socket.emit('chat-error', { message: 'Add at least one emergency family email in Profile before using SOS.' });
         }
-        const msg = await ChatMessage.create({
-          groupId,
-          userId: socket.userId,
-          userName: user.name,
-          message: '🚨 EMERGENCY SOS - Location shared',
-          isSOS: true,
-          sosLocation: lat != null && lng != null ? { type: 'Point', coordinates: [lng, lat] } : undefined
-        });
         const mapsUrl = lat != null && lng != null ? `https://www.google.com/maps?q=${lat},${lng}` : '';
-        try {
-          await Promise.all(
-            emergencyEmails.map((to) =>
-              sendEmergencySosEmail({
-                to,
-                senderName: user.name,
-                groupActivity: group?.activity || 'Buddy meetup',
-                lat,
-                lng,
-                mapsUrl
-              })
-            )
-          );
-        } catch (mailErr) {
-          console.warn('[socket:sos] emergency email failed:', mailErr?.message || mailErr);
-        }
-        io.to(`group-${groupId}`).emit('sos', { message: msg, userId: socket.userId });
+        socket.emit('sos-triggered', {
+          message: 'SOS sent. Emergency contacts were notified.'
+        });
+        // Keep SOS UX instant; deliver emails in the background.
+        setImmediate(async () => {
+          try {
+            await Promise.allSettled(
+              emergencyEmails.map((to) =>
+                sendEmergencySosEmail({
+                  to,
+                  senderName: user.name,
+                  groupActivity: group?.activity || 'Buddy meetup',
+                  lat,
+                  lng,
+                  mapsUrl
+                })
+              )
+            );
+          } catch (mailErr) {
+            console.warn('[socket:sos] emergency email failed:', mailErr?.message || mailErr);
+          }
+        });
       } catch (err) {
         socket.emit('chat-error', { message: err.message });
       }
@@ -138,9 +136,17 @@ export function setupSocketHandlers(io) {
         const settings = group.callSettings || { voiceApprovedForAll: false, videoApprovedForAll: false };
         const alreadyApproved = safeType === 'video' ? settings.videoApprovedForAll : settings.voiceApprovedForAll;
         if (alreadyApproved) {
+          const meetUrl = buildGoogleMeetLink();
+          const systemMsg = await ChatMessage.create({
+            groupId,
+            userId: socket.userId,
+            userName: 'GoOut',
+            message: meetUrl
+          });
+          io.to(`group-${groupId}`).emit('new-message', systemMsg.toObject());
           return io.to(`group-${groupId}`).emit('call-consent-approved', {
             callType: safeType,
-            roomUrl: callRoomUrl(groupId, safeType),
+            roomUrl: meetUrl,
             approvedForAll: true
           });
         }
@@ -201,14 +207,23 @@ export function setupSocketHandlers(io) {
         const yesVoters = new Set(votes.filter((v) => v.response === 'yes').map((v) => String(v.userId)));
         const allAccepted = memberIds.every((id) => yesVoters.has(id));
         if (allAccepted) {
+          const approvedType = pending.callType;
           if (!group.callSettings) group.callSettings = { voiceApprovedForAll: false, videoApprovedForAll: false };
-          if (pending.callType === 'video') group.callSettings.videoApprovedForAll = true;
-          if (pending.callType === 'voice') group.callSettings.voiceApprovedForAll = true;
+          if (approvedType === 'video') group.callSettings.videoApprovedForAll = true;
+          if (approvedType === 'voice') group.callSettings.voiceApprovedForAll = true;
           group.pendingCallRequest = undefined;
           await group.save();
+          const meetUrl = buildGoogleMeetLink();
+          const systemMsg = await ChatMessage.create({
+            groupId,
+            userId: socket.userId,
+            userName: 'GoOut',
+            message: meetUrl
+          });
+          io.to(`group-${groupId}`).emit('new-message', systemMsg.toObject());
           return io.to(`group-${groupId}`).emit('call-consent-approved', {
-            callType: pending.callType,
-            roomUrl: callRoomUrl(groupId, pending.callType),
+            callType: approvedType,
+            roomUrl: meetUrl,
             approvedForAll: true
           });
         }

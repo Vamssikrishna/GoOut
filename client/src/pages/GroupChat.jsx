@@ -46,6 +46,7 @@ export default function GroupChat() {
   }, [group?.scheduledAt]);
 
   const myId = String(user?.id || user?._id || '');
+  const myAvatar = String(user?.avatar || '').trim();
   const isAdmin = String(group?.creatorId?._id || group?.creatorId || '') === myId;
   const pinnedMessages = useMemo(
     () =>
@@ -73,7 +74,7 @@ export default function GroupChat() {
       s.emit('join-group', groupId);
     });
     s.on('new-message', (msg) => setMessages((m) => [...m, msg]));
-    s.on('sos', ({ message }) => setMessages((m) => [...m, { ...message, isSOS: true }]));
+    s.on('sos-triggered', ({ message }) => setSockMsg(message || 'SOS sent. Emergency contacts were notified.'));
     s.on('message-pinned', ({ message }) =>
       setMessages((prev) => prev.map((m) => (String(m._id) === String(message._id) ? { ...m, ...message } : m)))
     );
@@ -86,13 +87,13 @@ export default function GroupChat() {
     s.on('call-consent-requested', (payload) => {
       setCallRoom(null);
       setCallRequest(payload);
-      setSockMsg(`${payload.callType === 'video' ? 'Video' : 'Voice'} call request started. Please vote.`);
+      setSockMsg('Group meeting request started. Please vote.');
     });
     s.on('call-consent-updated', (payload) => setCallRequest((prev) => ({ ...(prev || {}), ...payload })));
-    s.on('call-consent-rejected', (payload) => {
+    s.on('call-consent-rejected', () => {
       setCallRequest(null);
       setCallRoom(null);
-      setSockMsg(`${payload.callType === 'video' ? 'Video' : 'Voice'} call was declined by a member.`);
+      setSockMsg('Group meeting was declined by a member.');
     });
     s.on('call-consent-approved', (payload) => {
       setCallRequest(null);
@@ -108,7 +109,7 @@ export default function GroupChat() {
           } :
           g
       );
-      setSockMsg(`All members accepted ${payload.callType} call. You can join now.`);
+      setSockMsg('All members accepted. You can join Google Meet now.');
     });
     s.on('chat-error', ({ message }) => setSockMsg(message || 'Could not send'));
     setSocket(s);
@@ -360,7 +361,7 @@ export default function GroupChat() {
       return;
     }
     setSockMsg('');
-    socket.emit('call-request', { groupId, callType });
+    socket.emit('call-request', { groupId, callType: 'video' });
   };
 
   const voteOnCall = (response) => {
@@ -412,9 +413,10 @@ export default function GroupChat() {
     setSockMsg('');
     navigator.geolocation.getCurrentPosition(
       (p) => {
+        const goOutLink = `${window.location.origin}/app/explorer?focusLat=${encodeURIComponent(p.coords.latitude)}&focusLng=${encodeURIComponent(p.coords.longitude)}`;
         socket?.emit('chat-message', { 
           groupId, 
-          message: '📍 Shared location',
+          message: `📍 My GoOut location: ${goOutLink}`,
           hasLocation: true,
           lat: p.coords.latitude,
           lng: p.coords.longitude
@@ -443,12 +445,34 @@ export default function GroupChat() {
     }
   };
 
-  const openInExplorerMap = (lat, lng) => {
-    const q = new URLSearchParams({
-      focusLat: String(lat),
-      focusLng: String(lng)
-    }).toString();
-    window.location.href = `/app/explorer?${q}`;
+  const toInitials = (fullName) => {
+    const words = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return '?';
+    return `${words[0]?.[0] || ''}${words[1]?.[0] || ''}`.toUpperCase() || '?';
+  };
+
+  const renderMessageContent = (text) => {
+    const messageText = String(text || '');
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const isUrl = (value) => /^https?:\/\/[^\s]+$/.test(value);
+    const parts = messageText.split(urlRegex);
+    return parts.map((part, idx) => {
+      if (!part) return null;
+      if (isUrl(part)) {
+        return (
+          <a
+            key={`${part}-${idx}`}
+            href={part}
+            target="_blank"
+            rel="noreferrer"
+            className="text-blue-700 underline break-all"
+          >
+            {part}
+          </a>
+        );
+      }
+      return <span key={`txt-${idx}`}>{part}</span>;
+    });
   };
 
   if (!group) {
@@ -536,20 +560,10 @@ export default function GroupChat() {
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => requestCall('voice')}
+              onClick={() => requestCall()}
               disabled={chatExpired}
-              aria-label="Voice call"
-              title="Voice call"
-              className="h-10 w-10 flex items-center justify-center bg-indigo-500 text-white rounded-lg font-medium hover:bg-indigo-600 text-base disabled:opacity-50"
-            >
-              📞
-            </button>
-            <button
-              type="button"
-              onClick={() => requestCall('video')}
-              disabled={chatExpired}
-              aria-label="Video call"
-              title="Video call"
+              aria-label="Start group meeting"
+              title="Start group meeting"
               className="h-10 w-10 flex items-center justify-center bg-purple-500 text-white rounded-lg font-medium hover:bg-purple-600 text-base disabled:opacity-50"
             >
               🎥
@@ -599,9 +613,7 @@ export default function GroupChat() {
 
         {callRequest && (
           <div className="px-4 py-3 border-b bg-indigo-50 text-sm">
-            <p className="font-medium text-indigo-900">
-              {callRequest.callType === 'video' ? 'Video' : 'Voice'} call request from group admin
-            </p>
+            <p className="font-medium text-indigo-900">Group meeting request from group admin</p>
             <p className="text-indigo-700 mt-1">Join only if you are comfortable. All members must accept.</p>
             <div className="mt-2 flex gap-2">
               <button
@@ -626,11 +638,9 @@ export default function GroupChat() {
 
         {callRoom?.roomUrl && (
           <div className="px-4 py-3 border-b bg-emerald-50 text-sm">
-            <p className="font-medium text-emerald-900">
-              {callRoom.callType === 'video' ? 'Video' : 'Voice'} call approved by everyone.
-            </p>
+            <p className="font-medium text-emerald-900">Group meeting approved by everyone.</p>
             <a href={callRoom.roomUrl} target="_blank" rel="noreferrer" className="inline-block mt-1 text-emerald-800 underline font-medium">
-              Join call room
+              Join Google Meet
             </a>
           </div>
         )}
@@ -674,15 +684,40 @@ export default function GroupChat() {
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {messages.map((m, i) => {
             const isMine = String(m.userId?._id || m.userId) === myId;
+            const senderName = String(m.userId?.name || m.userName || 'Member');
+            const senderAvatar = String(
+              (isMine ? myAvatar : '') ||
+              m.userId?.avatar ||
+              ''
+            ).trim();
             return (
           <div
             key={i}
             onDoubleClick={() => !m.isSOS && setMessageActionId((prev) => (prev === String(m._id) ? '' : String(m._id)))}
             className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}
           >
-              <div className={`max-w-[82%] ${m.isSOS ? 'bg-red-50 border border-red-200' : isMine ? 'bg-emerald-50 border border-emerald-200' : 'bg-slate-50 border border-slate-200'} rounded-lg p-3 hover:bg-opacity-90 cursor-pointer`}>
-              <p className={`text-xs mb-0.5 ${isMine ? 'text-emerald-700' : 'text-slate-500'}`}>{m.userName}</p>
-              <p className={m.isSOS ? 'font-semibold text-red-700' : 'text-slate-800'}>{m.message}</p>
+              <div className={`flex items-end gap-2 max-w-[88%] ${isMine ? 'flex-row-reverse' : 'flex-row'}`}>
+                {senderAvatar ? (
+                  <img
+                    src={senderAvatar}
+                    alt={senderName}
+                    title={senderName}
+                    className="h-8 w-8 rounded-full object-cover border border-slate-200 shrink-0"
+                  />
+                ) : (
+                  <div
+                    title={senderName}
+                    className={`h-8 w-8 rounded-full shrink-0 flex items-center justify-center text-[11px] font-semibold text-white ${
+                      isMine ? 'bg-emerald-500' : 'bg-slate-500'
+                    }`}
+                  >
+                    {toInitials(senderName)}
+                  </div>
+                )}
+                <div className={`max-w-full ${m.isSOS ? 'bg-red-50 border border-red-200' : isMine ? 'bg-emerald-50 border border-emerald-200' : 'bg-slate-50 border border-slate-200'} rounded-lg p-3 hover:bg-opacity-90 cursor-pointer`}>
+                  <p className={m.isSOS ? 'font-semibold text-red-700' : 'text-slate-800'}>
+                    {renderMessageContent(m.message)}
+                  </p>
               
               {/* Attachments */}
               {Array.isArray(m.attachments) && m.attachments.length > 0 && (
@@ -727,16 +762,6 @@ export default function GroupChat() {
                 </div>
               )}
 
-              {m.sharedLocation?.coordinates && (
-                <button
-                  type="button"
-                  onClick={() => openInExplorerMap(m.sharedLocation.coordinates[1], m.sharedLocation.coordinates[0])}
-                  className="mt-2 px-2.5 py-1.5 rounded-md text-xs font-medium bg-blue-100 text-blue-700 hover:bg-blue-200"
-                >
-                  Open in Explorer map
-                </button>
-              )}
-              
             {!m.isSOS && messageActionId === String(m._id) && (
               <div className="mt-2 flex flex-wrap gap-2 text-xs">
                 {isAdmin && (
@@ -774,7 +799,8 @@ export default function GroupChat() {
                 )}
               </div>
             )}
-            </div>
+                </div>
+              </div>
             </div>
           );})}
           <div ref={scrollRef} />

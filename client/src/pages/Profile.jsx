@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -73,6 +73,9 @@ export default function Profile() {
   const [bizFacebook, setBizFacebook] = useState('');
   const [groupsJoined, setGroupsJoined] = useState(0);
   const [friendsCount, setFriendsCount] = useState(0);
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const avatarInputRef = useRef(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -84,6 +87,7 @@ export default function Profile() {
       }
       const roleMerchant = u.role === 'merchant';
       setName(u.name || '');
+      setAvatarUrl(String(u.avatar || '').trim());
       setInterestsLine(Array.isArray(u.interests) ? u.interests.join(', ') : '');
       setWeight(u.weight != null ? String(u.weight) : '');
       const emergencyEmails = Array.isArray(u.emergencyEmails) ? u.emergencyEmails : [];
@@ -143,7 +147,7 @@ export default function Profile() {
     e.preventDefault();
     setSavingAccount(true);
     try {
-      const body = { name: name.trim() };
+      const body = { name: name.trim(), avatar: avatarUrl };
       if (!isMerchant) {
         const emergencyEmails = parseTags(emergencyEmailsLine).map((s) => s.toLowerCase());
         if (emergencyEmails.length < 1 || emergencyEmails.length > 3) {
@@ -172,6 +176,33 @@ export default function Profile() {
       });
     } finally {
       setSavingAccount(false);
+    }
+  };
+
+  const uploadAvatar = async (file) => {
+    if (!file) return;
+    setAvatarUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const { data } = await api.post('/uploads/profile-avatar', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      const nextAvatar = String(data?.url || '').trim();
+      if (!nextAvatar) throw new Error('Upload failed');
+      setAvatarUrl(nextAvatar);
+      await api.put('/users/profile', { avatar: nextAvatar });
+      await refreshUser();
+      addToast({ type: 'success', title: 'Photo updated', message: 'Your profile photo is now visible in chat.' });
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Upload failed',
+        message: err?.response?.data?.error || err?.message || 'Could not upload profile photo.'
+      });
+    } finally {
+      if (avatarInputRef.current) avatarInputRef.current.value = '';
+      setAvatarUploading(false);
     }
   };
 
@@ -227,14 +258,12 @@ export default function Profile() {
     }
   };
 
-  function getInitials(name) {
-    if (!name) return '?';
-    return name.
-    split(' ').
-    filter(Boolean).
-    slice(0, 2).
-    map((n) => n[0]?.toUpperCase()).
-    join('');
+  function getInitials(fullName) {
+    const words = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return '?';
+    const first = words[0]?.[0] || '';
+    const second = words[1]?.[0] || '';
+    return `${first}${second}`.toUpperCase() || '?';
   }
 
   const handleLogout = () => {
@@ -330,8 +359,25 @@ export default function Profile() {
 
       <section className="goout-glass-card rounded-3xl p-6 md:p-8 goout-hover-lift border border-slate-200">
         <div className="flex flex-wrap items-start gap-5">
-          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-xl font-bold text-white shadow-lg shadow-emerald-500/25">
-            {getInitials(user?.name)}
+          <div className="relative shrink-0">
+            {avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt="Profile avatar"
+                className="h-16 w-16 rounded-2xl object-cover shadow-lg shadow-emerald-500/20 border border-white"
+              />
+            ) : (
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-xl font-bold text-white shadow-lg shadow-emerald-500/25">
+                {getInitials(name || user?.name)}
+              </div>
+            )}
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={(e) => uploadAvatar(e.target.files?.[0])}
+            />
           </div>
           <div className="min-w-0 flex-1 space-y-3">
             <div className="flex flex-wrap items-center gap-2 gap-y-2">
@@ -347,6 +393,39 @@ export default function Profile() {
               <span className="goout-label !inline mr-2">Email</span>
               {user?.email || '—'}
             </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => avatarInputRef.current?.click()}
+                disabled={avatarUploading}
+                className="goout-btn-ghost text-xs px-3 py-1.5"
+              >
+                {avatarUploading ? 'Uploading photo…' : avatarUrl ? 'Change photo' : 'Upload photo'}
+              </button>
+              {avatarUrl && (
+                <button
+                  type="button"
+                  disabled={avatarUploading}
+                  onClick={async () => {
+                    setAvatarUrl('');
+                    try {
+                      await api.put('/users/profile', { avatar: '' });
+                      await refreshUser();
+                      addToast({ type: 'success', title: 'Photo removed', message: 'Initials avatar is active now.' });
+                    } catch (err) {
+                      addToast({
+                        type: 'error',
+                        title: 'Could not remove photo',
+                        message: err?.response?.data?.error || 'Please try again.'
+                      });
+                    }
+                  }}
+                  className="goout-btn-ghost text-xs px-3 py-1.5 border-red-200 text-red-700 hover:bg-red-50"
+                >
+                  Remove photo
+                </button>
+              )}
+            </div>
             {!isMerchant && user?.greenStats && (
               <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/50 px-4 py-3 text-sm text-slate-700">
                 <p className="font-semibold text-emerald-900 mb-2 text-xs uppercase tracking-wide">Green mode (activity)</p>

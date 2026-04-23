@@ -195,34 +195,27 @@ router.post('/:groupId/sos', protect, async (req, res) => {
     if (emergencyEmails.length < 1) {
       return res.status(400).json({ error: 'Add at least one emergency family email in Profile before using SOS.' });
     }
-    const msg = await ChatMessage.create({
-      groupId: req.params.groupId,
-      userId: req.user._id,
-      userName: req.user.name,
-      message: '🚨 EMERGENCY SOS - Location shared',
-      isSOS: true,
-      sosLocation: lat != null && lng != null ? { type: 'Point', coordinates: [lng, lat] } : undefined
-    });
     const mapsUrl = lat != null && lng != null ? `https://www.google.com/maps?q=${lat},${lng}` : '';
-    try {
-      await Promise.all(
-        emergencyEmails.map((to) =>
-          sendEmergencySosEmail({
-            to,
-            senderName: req.user?.name,
-            groupActivity: group?.activity || 'Buddy meetup',
-            lat,
-            lng,
-            mapsUrl
-          })
-        )
-      );
-    } catch (mailErr) {
-      console.warn('[chat:sos] emergency email failed:', mailErr?.message || mailErr);
-    }
-    const io = req.app.get('io');
-    if (io) io.to(`group-${req.params.groupId}`).emit('sos', { message: msg, userId: req.user._id });
-    res.status(201).json(msg);
+    res.status(200).json({ ok: true, message: 'SOS sent. Emergency contacts were notified.' });
+    // Keep API response fast; send emails after responding.
+    setImmediate(async () => {
+      try {
+        await Promise.allSettled(
+          emergencyEmails.map((to) =>
+            sendEmergencySosEmail({
+              to,
+              senderName: req.user?.name,
+              groupActivity: group?.activity || 'Buddy meetup',
+              lat,
+              lng,
+              mapsUrl
+            })
+          )
+        );
+      } catch (mailErr) {
+        console.warn('[chat:sos] emergency email failed:', mailErr?.message || mailErr);
+      }
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -496,19 +496,6 @@ export default function Buddies() {
     }
   };
 
-  const leaveGroup = async (groupId) => {
-    setActionGroupId(groupId);
-    setError('');
-    try {
-      await api.post(`/buddies/groups/${groupId}/leave`);
-      await refreshData();
-    } catch (err) {
-      setError(err?.response?.data?.error || 'Unable to leave group right now.');
-    } finally {
-      setActionGroupId('');
-    }
-  };
-
   const myId = userId;
   const calendarPlans = useMemo(
     () => normalizeBuddyPlans(mergeUniqueGroups(groups, pendingInvites), myId),
@@ -971,16 +958,10 @@ export default function Buddies() {
                       {g.status || 'open'}
                     </span>
                   </div>
-                  <div className="mt-3 flex flex-col sm:flex-row gap-2">
-                    <Link to={`/app/group/${g._id}`} className="w-full sm:w-auto px-3 py-1.5 text-sm rounded-lg bg-goout-green text-white font-medium hover:bg-goout-accent text-center">
+                  <div className="mt-3">
+                    <Link to={`/app/group/${g._id}`} className="inline-flex px-3 py-1.5 text-sm rounded-lg bg-goout-green text-white font-medium hover:bg-goout-accent text-center">
                       Open Chat
                     </Link>
-                    <button
-                  disabled={actionGroupId === g._id}
-                  onClick={() => leaveGroup(g._id)}
-                  className="w-full sm:w-auto px-3 py-1.5 text-sm rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-60">
-                      {actionGroupId === g._id ? 'Please wait...' : 'Leave'}
-                    </button>
                   </div>
                   {String(g.creatorId?._id) === String(user?.id || user?._id) && (g.pendingRequests?.length || 0) > 0 &&
               <div className="mt-3 space-y-2">

@@ -20,7 +20,7 @@ function normalizeEmergencyEmails(input) {
 
 router.put('/profile', protect, async (req, res) => {
   try {
-    const { name, interests, location, weight, emergencyContact, emergencyEmails, buddyMode } = req.body;
+    const { name, interests, location, weight, emergencyContact, emergencyEmails, buddyMode, avatar } = req.body;
     const update = { lastActive: new Date() };
     if (name !== undefined) update.name = name;
     if (interests !== undefined) update.interests = interests;
@@ -28,6 +28,7 @@ router.put('/profile', protect, async (req, res) => {
     if (location !== undefined) update.location = location;
     if (weight !== undefined) update.weight = weight;
     if (emergencyContact !== undefined) update.emergencyContact = emergencyContact;
+    if (avatar !== undefined) update.avatar = String(avatar || '').trim().slice(0, 280);
     if (emergencyEmails !== undefined) {
       const normalized = normalizeEmergencyEmails(emergencyEmails);
       if (normalized.length < 1 || normalized.length > 3) {
