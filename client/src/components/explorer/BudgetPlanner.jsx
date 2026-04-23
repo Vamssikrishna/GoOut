@@ -208,7 +208,7 @@ export default function BudgetPlanner({ userLocation, businesses: _businesses, o
         </div>
         <p className="text-slate-600 text-sm mb-4">
           {localMode ?
-          'Local mode: works like Explorer search for GoOut local places. We show both in-budget and over-budget places with clear budget status.' :
+          'Local mode: Only local places will be shown here' :
           'Public mode: shows public places around you. Use Go to open route to any place.'}
         </p>
         <div className="space-y-4">
@@ -220,7 +220,7 @@ export default function BudgetPlanner({ userLocation, businesses: _businesses, o
               onChange={(e) => setPlaceQuery(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && runSuggest()}
               placeholder={localMode ? 'e.g. quiet cafe to work, $20 for the day, vegan bakery' : 'e.g. hospital, park, mall, restaurant name'}
-              className="w-full px-4 py-2 border border-cyan-200/60 rounded-lg focus:ring-2 focus:ring-goout-green" />
+              className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-goout-green" />
             
           </div>
           {localMode &&
@@ -243,8 +243,8 @@ export default function BudgetPlanner({ userLocation, businesses: _businesses, o
               max={100000}
               step={50}
               placeholder="e.g. 500 or 0"
-              className="px-4 py-2 border border-cyan-200/60 rounded-lg w-40 focus:ring-2 focus:ring-goout-green" />
-              <p className="text-xs text-slate-500 mt-1">Required in local mode. Places above this budget are still shown with a warning.</p>
+              className="px-4 py-2 border border-slate-200 rounded-lg w-40 focus:ring-2 focus:ring-goout-green" />
+              <p className="text-xs text-slate-500 mt-1">Must enter the budget</p>
             
             </div>
           }
@@ -282,7 +282,7 @@ export default function BudgetPlanner({ userLocation, businesses: _businesses, o
               {!userLocation ?
           <p className="text-slate-600 text-sm">Enable location to see local suggestions.</p> :
           !placeQuery.trim() ?
-          <p className="text-slate-600 text-sm">Enter what you are looking for (e.g. cafe, bakery), your budget in ₹, then click Suggest local places.</p> :
+          <p className="text-slate-600 text-sm">Enter the details fast so that i can show the places for you ...</p> :
           Number(inputBudget) < 0 ?
           <p className="text-slate-600 text-sm">Budget cannot be negative.</p> :
           <p className="text-slate-600 text-sm">No GoOut local places match. Try another keyword or remove/tune budget cap.</p>

@@ -5,19 +5,26 @@ export default {
     extend: {
       colors: {
         goout: {
-          green: '#10B981',
-          dark: '#0F172A',
-          accent: '#34D399',
-          mint: '#D1FAE5',
-          violet: '#8B5CF6',
-          sky: '#38BDF8',
-          neon: '#22D3EE',
-          fuchsia: '#D946EF'
+          green: '#EF4F5F',
+          dark: '#1C1C1C',
+          accent: '#FC8019',
+          mint: '#FEE2E2',
+          violet: '#FB7185',
+          sky: '#FDBA74',
+          neon: '#F43F5E',
+          fuchsia: '#EA580C'
         }
       },
       fontFamily: {
-        sans: ['DM Sans', 'system-ui', 'sans-serif'],
-        display: ['Outfit', 'system-ui', 'sans-serif']
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+        display: ['Plus Jakarta Sans', 'Inter', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace']
+      },
+      boxShadow: {
+        'dock': '0 18px 50px -12px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.45) inset',
+        'dock-dark': '0 22px 56px -14px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(148, 163, 184, 0.1) inset',
+        'glow-sm': '0 0 36px rgba(239, 79, 95, 0.16), 0 0 72px rgba(252, 128, 25, 0.12)',
+        'card-deep': '0 24px 64px -16px rgba(2, 6, 23, 0.2), 0 0 0 1px rgba(239, 79, 95, 0.1)'
       },
       animation: {
         'fade-in': 'fadeIn 0.45s ease-out forwards',
@@ -60,15 +67,15 @@ export default {
         },
         glowPulse: {
           '0%, 100%': {
-            boxShadow: '0 0 20px rgba(16, 185, 129, 0.2), 0 0 40px rgba(56, 189, 248, 0.08)'
+            boxShadow: '0 0 20px rgba(239, 79, 95, 0.22), 0 0 40px rgba(252, 128, 25, 0.12)'
           },
           '50%': {
-            boxShadow: '0 0 28px rgba(16, 185, 129, 0.35), 0 0 56px rgba(56, 189, 248, 0.14)'
+            boxShadow: '0 0 28px rgba(239, 79, 95, 0.34), 0 0 56px rgba(252, 128, 25, 0.18)'
           }
         },
         borderGlow: {
-          '0%, 100%': { borderColor: 'rgba(16, 185, 129, 0.25)' },
-          '50%': { borderColor: 'rgba(56, 189, 248, 0.45)' }
+          '0%, 100%': { borderColor: 'rgba(239, 79, 95, 0.3)' },
+          '50%': { borderColor: 'rgba(252, 128, 25, 0.5)' }
         },
         scaleIn: {
           '0%': { opacity: '0', transform: 'scale(0.96)' },

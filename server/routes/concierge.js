@@ -12,16 +12,18 @@ router.post('/chat', optionalProtect, async (req, res) => {
     const { message, lat, lng, greenMode, mapContext, explorationRadiusM } = req.body || {};
     const history = Array.isArray(req.body?.history) ? req.body.history : [];
     let discoveryPreferences = null;
+    let userInterests = [];
     let userDisplayName = null;
     let userActivitySnapshot = null;
     if (req.user?._id) {
       const [u, visits] = await Promise.all([
         User.findById(req.user._id).
-          select('discoveryPreferences name greenStats carbonCredits weight socialPoints verified').
+          select('discoveryPreferences interests name greenStats carbonCredits weight socialPoints verified').
           lean(),
         Visit.find({ userId: req.user._id }).select('distanceWalked').lean()
       ]);
       discoveryPreferences = u?.discoveryPreferences || null;
+      userInterests = Array.isArray(u?.interests) ? u.interests.map((s) => String(s || '').trim()).filter(Boolean).slice(0, 32) : [];
       const rawName = typeof u?.name === 'string' ? u.name.trim() : '';
       userDisplayName = rawName ? rawName.slice(0, 120) : null;
       const totalWalkM = (visits || []).reduce((s, v) => s + (Number(v?.distanceWalked) || 0), 0);
@@ -46,6 +48,7 @@ router.post('/chat', optionalProtect, async (req, res) => {
       mapContext: mapContext && typeof mapContext === 'object' ? mapContext : null,
       userId: req.user?._id ? String(req.user._id) : null,
       discoveryPreferences,
+      userInterests,
       userDisplayName,
       explorationRadiusM: Number(explorationRadiusM),
       userActivitySnapshot

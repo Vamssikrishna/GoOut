@@ -586,29 +586,42 @@ export default function Merchant() {
   if (!user) return null;
 
   return (
-    <div className="space-y-8 goout-animate-in">
-      <div className="goout-glass-card rounded-2xl p-6 md:p-7 goout-hover-lift border border-white/50 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="font-display font-bold text-2xl md:text-3xl bg-gradient-to-r from-slate-900 via-amber-900/80 to-slate-700 bg-clip-text text-transparent">
-            Merchant dashboard
-          </h1>
-          <p className="text-sm text-slate-600 mt-1">Offers, crowd, verification, and storefront tools.</p>
+    <div className="space-y-8 goout-animate-in relative">
+      <div className="pointer-events-none absolute inset-x-0 -top-8 h-44 bg-gradient-to-r from-emerald-400/10 via-slate-300/10 to-slate-500/10 blur-3xl" />
+      <div className="relative overflow-hidden rounded-3xl border border-emerald-300/30 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 p-6 md:p-8 shadow-2xl shadow-emerald-900/25">
+        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(16,185,129,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(16,185,129,0.08)_1px,transparent_1px)] bg-[size:26px_26px]" />
+        <div className="relative flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.35em] text-emerald-300/90">Merchant Console</p>
+            <h1 className="mt-2 font-display font-bold text-2xl md:text-4xl bg-gradient-to-r from-white to-emerald-100 bg-clip-text text-transparent">
+              Merchant dashboard
+            </h1>
+            <p className="text-sm text-slate-300 mt-2 max-w-xl">Offers, crowd signals, verification, and storefront controls in one command center.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full border border-emerald-300/40 bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-200">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block h-2 w-2 rounded-full bg-red-400 animate-pulse shadow-[0_0_10px_rgba(248,113,113,0.9)]" />
+                Live
+              </span>
+            </span>
+            {activeBusinessId && !creatingNewBusiness && (
+              <button
+                type="button"
+                onClick={() => {
+                  setCreatingNewBusiness(true);
+                  resetNewBusinessForm();
+                }}
+                className="px-4 py-2 rounded-xl text-sm font-semibold border border-emerald-200/40 bg-white/10 text-white hover:bg-white/15 transition">
+                + Create new business
+              </button>
+            )}
+          </div>
         </div>
-        {activeBusinessId && !creatingNewBusiness && (
-          <button
-            type="button"
-            onClick={() => {
-              setCreatingNewBusiness(true);
-              resetNewBusinessForm();
-            }}
-            className="goout-btn-ghost text-sm py-2 px-4 border-emerald-300/60 text-emerald-800 hover:bg-emerald-50/90">
-            + Create new business
-          </button>
-        )}
       </div>
 
       {business && !creatingNewBusiness && (
-        <div className="goout-soft-card rounded-2xl p-4">
+        <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-3">
               <p className="text-sm text-slate-600">
@@ -632,7 +645,7 @@ export default function Merchant() {
                       addToast({ type: 'error', title: 'Switch failed', message: err.response?.data?.error || 'Could not switch business.' });
                     }
                   }}
-                  className="px-2 py-1.5 rounded-lg border border-slate-200 text-xs bg-white">
+                  className="px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs bg-white shadow-sm">
                     {ownedBusinesses.map((b) =>
                   <option key={b._id} value={String(b._id)}>
                         {(b.mapDisplayName || b.name || 'Business').slice(0, 60)}
@@ -644,7 +657,7 @@ export default function Merchant() {
             </div>
             <div className="flex items-center gap-2">
               {business?.localVerification?.redPin ? (
-                <span className="px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">Red Pin Verified</span>
+                <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700 border border-red-200">Red Pin Verified</span>
               ) : (
                 <button
                   type="button"
@@ -657,7 +670,7 @@ export default function Merchant() {
                       addToast({ type: 'error', title: 'Verification failed', message: e.response?.data?.error || 'Could not verify local status.' });
                     }
                   }}
-                  className="px-3 py-1.5 rounded-lg text-sm border border-red-200 text-red-700 hover:bg-red-50"
+                  className="px-3 py-1.5 rounded-xl text-sm border border-red-200 text-red-700 hover:bg-red-50"
                 >
                   Request Red Pin
                 </button>
@@ -666,7 +679,7 @@ export default function Merchant() {
                 type="button"
                 onClick={deleteCurrentBusiness}
                 disabled={deletingBusiness}
-                className="px-3 py-1.5 rounded-lg text-sm text-red-700 border border-red-200 hover:bg-red-50 disabled:opacity-60"
+                className="px-3 py-1.5 rounded-xl text-sm text-red-700 border border-red-200 hover:bg-red-50 disabled:opacity-60"
               >
                 {deletingBusiness ? 'Deleting...' : 'Delete business'}
               </button>
@@ -675,9 +688,27 @@ export default function Merchant() {
           {deleteError && <p className="text-xs text-red-600 mt-2">{deleteError}</p>}
         </div>
       )}
+      {business && !creatingNewBusiness && (
+        <div className="grid gap-4 sm:grid-cols-6 goout-bento-grid">
+          <div className="sm:col-span-2 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-emerald-50 p-4 shadow-sm">
+            <p className="text-[11px] uppercase tracking-wider font-semibold text-slate-500">Live flash deals</p>
+            <p className="mt-1 text-2xl font-bold text-slate-900">{offers.length}</p>
+          </div>
+          <div className="sm:col-span-2 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-4 shadow-sm">
+            <p className="text-[11px] uppercase tracking-wider font-semibold text-slate-500">Profile views</p>
+            <p className="mt-1 text-2xl font-bold text-slate-900">{analytics?.profileViews || 0}</p>
+          </div>
+          <div className="sm:col-span-2 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-4 shadow-sm">
+            <p className="text-[11px] uppercase tracking-wider font-semibold text-slate-500">Verification</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">
+              {business?.localVerification?.redPin ? 'Red Pin active' : 'Standard listing'}
+            </p>
+          </div>
+        </div>
+      )}
 
       {showRegistrationForm && (
-        <div className="goout-surface rounded-2xl p-6">
+        <div className="mx-auto w-full max-w-6xl rounded-3xl border border-emerald-400/35 bg-gradient-to-b from-[#123b2c] to-[#0f2f24] p-6 shadow-lg md:p-7">
           <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
             <h2 className="font-display font-semibold text-lg">
               {creatingNewBusiness ? 'Register another business' : 'Register your business'}
@@ -689,25 +720,25 @@ export default function Merchant() {
                   setCreatingNewBusiness(false);
                   resetNewBusinessForm();
                 }}
-                className="text-sm text-slate-600 hover:text-slate-900 underline"
+                className="text-sm text-emerald-100 hover:text-emerald-50 underline"
               >
                 Cancel
               </button>
             )}
           </div>
-          <p className="text-slate-600 text-sm mb-6">
-            Complete each section. Pin your exact shop location on map; no manual street/city entry needed.
+          <p className="text-emerald-100/90 text-sm mb-6">
+            Complete only the essentials to go live quickly. You can edit advanced profile details later from Profile.
           </p>
 
-          <div className="mb-6 p-4 rounded-xl border border-emerald-200 bg-emerald-50/60 space-y-3">
-            <h3 className="text-sm font-semibold text-slate-900">1 · AI-driven smart onboarding</h3>
-            <label className="text-xs text-slate-600 block">Business narrative (natural language)</label>
+          <div className="mb-6 p-5 rounded-2xl border border-emerald-400/35 bg-gradient-to-br from-[#1a4a36] to-[#123627] space-y-3 shadow-sm">
+            <h3 className="text-sm font-semibold text-emerald-50">1 · AI-driven smart onboarding</h3>
+            <label className="text-xs text-emerald-100/85 block">Business narrative (natural language)</label>
             <textarea
               value={aiBlurb}
               onChange={(e) => setAiBlurb(e.target.value)}
               rows={5}
               placeholder='e.g. "We are a small vegan bakery on 5th street, open 9–5, sourdough and cinnamon rolls, bright casual vibe."'
-              className="w-full px-3 py-2 border border-emerald-200 rounded-lg text-sm bg-white min-h-[120px]"
+              className="goout-input min-h-[120px] text-sm"
             />
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -721,42 +752,42 @@ export default function Merchant() {
             </div>
             {aiError && <p className="text-xs text-red-600">{aiError}</p>}
             {aiPreview && (
-              <div className="rounded-lg border border-emerald-300/60 bg-white/90 p-3 space-y-2">
-                <p className="text-xs font-medium text-slate-700">AI metadata preview (read-only — confirm below before submitting)</p>
+              <div className="rounded-lg border border-emerald-400/40 bg-[#14382a]/90 p-3 space-y-2">
+                <p className="text-xs font-medium text-emerald-100">AI metadata preview (read-only — confirm below before submitting)</p>
                 <dl className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
                   <div>
-                    <dt className="text-xs text-slate-500">Name</dt>
-                    <dd className="font-medium text-slate-900">{aiPreview.name || '—'}</dd>
+                    <dt className="text-xs text-emerald-200/75">Name</dt>
+                    <dd className="font-medium text-emerald-50">{aiPreview.name || '—'}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs text-slate-500">Category</dt>
-                    <dd className="font-medium text-slate-900">{aiPreview.category || '—'}</dd>
+                    <dt className="text-xs text-emerald-200/75">Category</dt>
+                    <dd className="font-medium text-emerald-50">{aiPreview.category || '—'}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs text-slate-500">Vibe</dt>
-                    <dd className="font-medium text-slate-900">{aiPreview.vibe || '—'}</dd>
+                    <dt className="text-xs text-emerald-200/75">Vibe</dt>
+                    <dd className="font-medium text-emerald-50">{aiPreview.vibe || '—'}</dd>
                   </div>
                 </dl>
               </div>
             )}
           </div>
 
-          <div className="mb-6 p-4 rounded-xl border border-red-100 bg-red-50/40 space-y-3">
-            <h3 className="text-sm font-semibold text-slate-900">2 · Identity and verification (Red Pin layer)</h3>
+          <div className="mb-6 p-5 rounded-2xl border border-emerald-400/35 bg-gradient-to-br from-[#194533] to-[#102f23] space-y-3 shadow-sm">
+            <h3 className="text-sm font-semibold text-emerald-50">2 · Identity and verification (Red Pin layer)</h3>
             <div>
-              <label className="text-xs text-slate-500 block mb-1">Official business name (map markers)</label>
+              <label className="text-xs text-emerald-200/80 block mb-1">Official business name (map markers)</label>
               <input
                 type="text"
                 value={mapDisplayName}
                 onChange={(e) => setMapDisplayName(e.target.value)}
                 placeholder="Shown on the map (e.g. storefront sign)"
-                className="w-full px-4 py-2 border border-slate-200 rounded-lg text-sm"
+                className="goout-input text-sm"
               />
-              <p className="text-[11px] text-slate-500 mt-1">Legal / listing name is below; this label is what explorers see on the pin.</p>
+              <p className="text-[11px] text-emerald-100/80 mt-1">Legal / listing name is below; this label is what explorers see on the pin.</p>
             </div>
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-slate-500 block mb-1">Business license / GST / registration proof (photo or PDF)</label>
+                <label className="text-xs text-emerald-200/80 block mb-1">Business license / GST / registration proof (photo or PDF)</label>
                 <input
                   type="file"
                   accept="image/jpeg,image/png,image/webp,application/pdf"
@@ -776,12 +807,12 @@ export default function Merchant() {
                       setUploadBusy(false);
                     }
                   }}
-                  className="block w-full text-sm text-slate-600"
+                  className="block w-full text-sm text-emerald-100"
                 />
                 {licenseDoc?.url && <a href={licenseDoc.url} target="_blank" rel="noreferrer" className="text-xs text-goout-green underline">View license proof</a>}
               </div>
               <div>
-                <label className="text-xs text-slate-500 block mb-1">Owner government ID (PAN/Aadhaar)</label>
+                <label className="text-xs text-emerald-200/80 block mb-1">Owner government ID (PAN/Aadhaar)</label>
                 <input
                   type="file"
                   accept="image/jpeg,image/png,image/webp,application/pdf"
@@ -801,14 +832,14 @@ export default function Merchant() {
                       setUploadBusy(false);
                     }
                   }}
-                  className="block w-full text-sm text-slate-600"
+                  className="block w-full text-sm text-emerald-100"
                 />
                 {ownerIdDoc?.url && <a href={ownerIdDoc.url} target="_blank" rel="noreferrer" className="text-xs text-goout-green underline">View owner ID</a>}
               </div>
             </div>
             {verificationTemplates && (
-              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 space-y-2">
-                <p className="font-semibold text-slate-900">Verification templates that pass OCR checks</p>
+              <div className="rounded-lg border border-emerald-400/35 bg-[#14382a] px-3 py-2 text-xs text-emerald-100 space-y-2">
+                <p className="font-semibold text-emerald-50">Verification templates that pass OCR checks</p>
                 <div>
                   <p className="font-medium">{verificationTemplates?.businessCertificate?.title || 'Business certificate'}</p>
                   <ul className="list-disc ml-4 mt-1 space-y-0.5">
@@ -817,7 +848,7 @@ export default function Merchant() {
                     ))}
                   </ul>
                   {(verificationTemplates?.businessCertificate?.sampleTemplateText || []).length > 0 && (
-                    <pre className="mt-2 whitespace-pre-wrap rounded border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-700">
+                    <pre className="mt-2 whitespace-pre-wrap rounded border border-emerald-500/30 bg-[#0f2f24] p-2 text-[11px] text-emerald-100">
                       {(verificationTemplates?.businessCertificate?.sampleTemplateText || []).join('\n')}
                     </pre>
                   )}
@@ -830,7 +861,7 @@ export default function Merchant() {
                     ))}
                   </ul>
                   {(verificationTemplates?.aadhaar?.sampleTemplateText || []).length > 0 && (
-                    <pre className="mt-2 whitespace-pre-wrap rounded border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-700">
+                    <pre className="mt-2 whitespace-pre-wrap rounded border border-emerald-500/30 bg-[#0f2f24] p-2 text-[11px] text-emerald-100">
                       {(verificationTemplates?.aadhaar?.sampleTemplateText || []).join('\n')}
                     </pre>
                   )}
@@ -854,33 +885,33 @@ export default function Merchant() {
             )}
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-slate-500 block mb-1">Primary mobile (OTP / alerts)</label>
+                <label className="text-xs text-emerald-200/80 block mb-1">Primary mobile (OTP / alerts)</label>
                 <input
                   type="tel"
                   value={form.phone}
                   onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg text-sm"
+                  className="goout-input text-sm"
                   required
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-500 block mb-1">Owner contact email</label>
+                <label className="text-xs text-emerald-200/80 block mb-1">Owner contact email</label>
                 <input
                   type="email"
                   value={contactEmail}
                   onChange={(e) => setContactEmail(e.target.value)}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg text-sm"
+                  className="goout-input text-sm"
                   required
                 />
               </div>
             </div>
           </div>
 
-          <div className="mb-6 p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
-            <h3 className="text-sm font-semibold text-slate-900">3 · Geospatial and map</h3>
-            <p className="text-xs text-slate-600">Pin your exact shop entrance (interactive map). You can change it anytime before submit.</p>
+          <div className="mb-6 p-5 rounded-2xl border border-emerald-400/35 bg-gradient-to-br from-[#1a4332] to-[#123326] space-y-3 shadow-sm">
+            <h3 className="text-sm font-semibold text-emerald-50">3 · Geospatial and map</h3>
+            <p className="text-xs text-emerald-100/85">Pin your exact shop entrance (interactive map). You can change it anytime before submit.</p>
             <div className="flex items-center gap-2 flex-wrap">
-              <button type="button" onClick={takeCurrentLocation} className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-sm">
+              <button type="button" onClick={takeCurrentLocation} className="px-3 py-1.5 rounded-lg bg-[#14382a] border border-emerald-400/35 text-sm text-emerald-50 hover:bg-[#184230]">
                 Refresh GPS
               </button>
             </div>
@@ -893,14 +924,14 @@ export default function Merchant() {
               }}
               height={260}
             />
-            {locationStatus && <p className="text-xs text-slate-600">{locationStatus}</p>}
+            {locationStatus && <p className="text-xs text-emerald-100/85">{locationStatus}</p>}
             {suggestedLocation && (
               <p className="text-xs text-goout-green">
                 Coordinates: {suggestedLocation.lat.toFixed(5)}, {suggestedLocation.lng.toFixed(5)}
               </p>
             )}
             <div>
-              <label className="text-xs text-slate-500 block mb-1">Storefront photo (helps people find you)</label>
+              <label className="text-xs text-emerald-200/80 block mb-1">Storefront photo (helps people find you)</label>
               <input
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
@@ -920,202 +951,125 @@ export default function Merchant() {
                     setUploadBusy(false);
                   }
                 }}
-                className="block w-full text-sm text-slate-600"
+                className="block w-full text-sm text-emerald-100"
               />
               {storefrontUrl && (
-                <img src={storefrontUrl} alt="Storefront" className="mt-2 max-h-36 rounded-lg border border-slate-200 object-cover" />
+                <img src={storefrontUrl} alt="Storefront" className="mt-2 max-h-36 rounded-lg border border-emerald-500/30 object-cover" />
               )}
             </div>
           </div>
 
           <form onSubmit={registerBusiness} className="space-y-6">
-            <div className="p-4 rounded-xl border border-slate-200 space-y-3">
-              <h3 className="text-sm font-semibold text-slate-900">4 · Operations and budget metadata</h3>
-              <div>
-                <label className="text-xs text-slate-500 block mb-2">Operating hours (7-day)</label>
-                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                  {DAY_ORDER.map((day) => (
-                    <div key={day} className="flex flex-wrap items-center gap-2 text-sm bg-slate-50 rounded-lg px-2 py-1.5">
-                      <span className="w-10 font-medium text-slate-700">{DAY_LABELS[day]}</span>
-                      <label className="flex items-center gap-1 text-xs text-slate-600">
-                        <input
-                          type="checkbox"
-                          checked={weeklySchedule[day]?.closed}
-                          onChange={(e) => setWeeklySchedule((w) => ({
-                            ...w,
-                            [day]: { ...w[day], closed: e.target.checked }
-                          }))}
-                        />
-                        Closed
-                      </label>
-                      {!weeklySchedule[day]?.closed && (
-                        <>
-                          <input
-                            type="time"
-                            value={weeklySchedule[day]?.open || '09:00'}
-                            onChange={(e) => setWeeklySchedule((w) => ({
-                              ...w,
-                              [day]: { ...w[day], open: e.target.value }
-                            }))}
-                            className="border border-slate-200 rounded px-1 py-0.5 text-xs"
-                          />
-                          <span className="text-slate-400">–</span>
-                          <input
-                            type="time"
-                            value={weeklySchedule[day]?.close || '17:00'}
-                            onChange={(e) => setWeeklySchedule((w) => ({
-                              ...w,
-                              [day]: { ...w[day], close: e.target.value }
-                            }))}
-                            className="border border-slate-200 rounded px-1 py-0.5 text-xs"
-                          />
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <p className="text-[11px] text-slate-500 mt-2">Optional one-line note for AI (legacy field):</p>
-                <input
-                  type="text"
-                  value={form.openingHours}
-                  onChange={(e) => setForm((f) => ({ ...f, openingHours: e.target.value }))}
-                  placeholder="e.g. Open later on Fridays"
-                  className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-lg text-sm"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Price tier (Budget Planner)</label>
-                <div className="flex flex-wrap gap-2">
-                  {[1, 2, 3, 4].map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => setPriceTier(t)}
-                      className={`px-3 py-1.5 rounded-lg text-sm border ${
-                        priceTier === t ? 'border-goout-green bg-goout-mint text-goout-green font-semibold' : 'border-slate-200 bg-white text-slate-600'
-                      }`}
-                    >
-                      {'₹'.repeat(t)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Primary category</label>
-                <select
-                  value={primaryCategory}
-                  onChange={(e) => setPrimaryCategory(e.target.value)}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg text-sm"
-                >
-                  {PRIMARY_CATEGORIES.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-                {primaryCategory === 'Other' && (
+            <div className="p-5 rounded-2xl border border-emerald-400/35 bg-[#133829] shadow-sm space-y-3">
+              <h3 className="text-sm font-semibold text-emerald-50">4 · Business essentials</h3>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="text-xs text-emerald-200/80 block mb-1">Legal / listing business name</label>
                   <input
                     type="text"
-                    value={form.category}
-                    onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
-                    placeholder="Describe your category"
-                    className="w-full mt-2 px-4 py-2 border border-slate-200 rounded-lg text-sm"
+                    value={form.name}
+                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                     required
+                    className="goout-input"
                   />
-                )}
+                </div>
+                <div>
+                  <label className="text-xs text-emerald-200/80 block mb-1">Primary category</label>
+                  <select
+                    value={primaryCategory}
+                    onChange={(e) => setPrimaryCategory(e.target.value)}
+                    className="goout-input text-sm"
+                  >
+                    {PRIMARY_CATEGORIES.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-emerald-200/80 block mb-1">Price tier</label>
+                  <div className="flex flex-wrap gap-2">
+                    {[1, 2, 3, 4].map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setPriceTier(t)}
+                        className={`px-3 py-1.5 rounded-lg text-sm border ${
+                          priceTier === t ? 'border-emerald-300 bg-emerald-200/20 text-emerald-100 font-semibold' : 'border-emerald-500/30 bg-[#103224] text-emerald-200/90'
+                        }`}
+                      >
+                        {'₹'.repeat(t)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
-            </div>
-
-            <div className="p-4 rounded-xl border border-green-100 bg-green-50/30 space-y-3">
-              <h3 className="text-sm font-semibold text-slate-900">5 · Sustainability and green indicators</h3>
-              <div className="flex flex-wrap gap-4 text-sm text-slate-700">
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={ecoOptions.plasticFree}
-                    onChange={(e) => setEcoOptions((o) => ({ ...o, plasticFree: e.target.checked }))}
-                  />
-                  Plastic-free
-                </label>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={ecoOptions.solarPowered}
-                    onChange={(e) => setEcoOptions((o) => ({ ...o, solarPowered: e.target.checked }))}
-                  />
-                  Solar powered
-                </label>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={ecoOptions.zeroWaste}
-                    onChange={(e) => setEcoOptions((o) => ({ ...o, zeroWaste: e.target.checked }))}
-                  />
-                  Zero-waste
-                </label>
+              {primaryCategory === 'Other' && (
+                <input
+                  type="text"
+                  value={form.category}
+                  onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+                  placeholder="Describe your category"
+                  className="goout-input text-sm"
+                  required
+                />
+              )}
+              <div>
+                <label className="text-xs text-emerald-200/80 block mb-1">Customer-facing vibe</label>
+                <input
+                  type="text"
+                  value={vibe}
+                  onChange={(e) => setVibe(e.target.value)}
+                  placeholder="Short atmosphere line"
+                  className="goout-input text-sm"
+                />
               </div>
               <div>
-                <label className="text-xs text-slate-500 block mb-1">Local sourcing / handmade note</label>
+                <label className="text-xs text-emerald-200/80 block mb-1">Description</label>
                 <textarea
-                  value={localSourcingNote}
-                  onChange={(e) => setLocalSourcingNote(e.target.value)}
-                  rows={2}
-                  placeholder="Local farms, in-house baking, handmade textiles…"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                  value={form.description}
+                  onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                  className="goout-input"
+                  rows={3}
                 />
               </div>
-              <label className="flex items-center gap-2 text-sm text-slate-700">
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-emerald-200/80 block mb-1">Primary mobile</label>
+                  <input
+                    type="tel"
+                    value={form.phone}
+                    onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                    className="goout-input text-sm"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-emerald-200/80 block mb-1">Owner contact email</label>
+                  <input
+                    type="email"
+                    value={contactEmail}
+                    onChange={(e) => setContactEmail(e.target.value)}
+                    className="goout-input text-sm"
+                    required
+                  />
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-emerald-100">
                 <input
                   type="checkbox"
-                  checked={carbonWalkIncentive}
-                  onChange={(e) => setCarbonWalkIncentive(e.target.checked)}
+                  checked={Boolean(form.isFree)}
+                  onChange={(e) => setForm((f) => ({ ...f, isFree: e.target.checked }))}
                 />
-                We offer incentives for walkers / cyclists
+                Free entry / no typical paid visit
               </label>
             </div>
 
-            <div className="p-4 rounded-xl border border-slate-200 space-y-3">
-              <h3 className="text-sm font-semibold text-slate-900">6 · Digital presence and notifications</h3>
-              <div className="grid sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="text-xs text-slate-500 block mb-1">Website</label>
-                  <input
-                    type="url"
-                    value={socialLinks.website}
-                    onChange={(e) => setSocialLinks((s) => ({ ...s, website: e.target.value }))}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
-                    placeholder="https://"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-slate-500 block mb-1">Instagram</label>
-                  <input
-                    type="text"
-                    value={socialLinks.instagram}
-                    onChange={(e) => setSocialLinks((s) => ({ ...s, instagram: e.target.value }))}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-slate-500 block mb-1">Facebook</label>
-                  <input
-                    type="text"
-                    value={socialLinks.facebook}
-                    onChange={(e) => setSocialLinks((s) => ({ ...s, facebook: e.target.value }))}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Menu / catalog (text)</label>
-                <textarea
-                  value={menuCatalogText}
-                  onChange={(e) => setMenuCatalogText(e.target.value)}
-                  rows={3}
-                  placeholder="Top items so AI can answer “who sells sourdough?”"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
-                />
-              </div>
-              <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
-                <p className="text-xs font-semibold text-slate-700">Menu items and INR prices (AI PDF will be generated)</p>
+            <div className="p-5 rounded-2xl border border-emerald-400/35 bg-[#133829] shadow-sm space-y-3">
+              <h3 className="text-sm font-semibold text-emerald-50">5 · Menu essentials (required)</h3>
+              <p className="text-xs text-emerald-100/85">
+                Add at least one menu item with INR price. Average price is auto-derived and menu PDF is generated after registration.
+              </p>
+              <div className="space-y-2 rounded-lg border border-emerald-500/30 bg-[#103224] p-3">
                 {menuRows.map((row, idx) => (
                   <div key={`onboard-${idx}`} className="grid grid-cols-12 gap-2">
                     <input
@@ -1123,7 +1077,7 @@ export default function Merchant() {
                       value={row.name}
                       onChange={(e) => setMenuRows((rows) => rows.map((r, i) => (i === idx ? { ...r, name: e.target.value } : r)))}
                       placeholder="Item"
-                      className="col-span-6 px-2 py-1.5 border border-slate-200 rounded text-sm"
+                      className="col-span-6 px-2 py-1.5 border border-emerald-500/35 rounded text-sm bg-[#123a2b] text-emerald-50"
                     />
                     <input
                       type="number"
@@ -1132,112 +1086,32 @@ export default function Merchant() {
                       value={row.price}
                       onChange={(e) => setMenuRows((rows) => rows.map((r, i) => (i === idx ? { ...r, price: e.target.value } : r)))}
                       placeholder="₹ Price"
-                      className="col-span-3 px-2 py-1.5 border border-slate-200 rounded text-sm"
+                      className="col-span-3 px-2 py-1.5 border border-emerald-500/35 rounded text-sm bg-[#123a2b] text-emerald-50"
                     />
                     <input
                       type="text"
                       value={row.description}
                       onChange={(e) => setMenuRows((rows) => rows.map((r, i) => (i === idx ? { ...r, description: e.target.value } : r)))}
                       placeholder="Note"
-                      className="col-span-3 px-2 py-1.5 border border-slate-200 rounded text-sm"
+                      className="col-span-3 px-2 py-1.5 border border-emerald-500/35 rounded text-sm bg-[#123a2b] text-emerald-50"
                     />
                   </div>
                 ))}
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => setMenuRows((rows) => [...rows, { name: '', price: '', description: '' }])} className="px-3 py-1.5 text-xs rounded border border-slate-200">
+                  <button type="button" onClick={() => setMenuRows((rows) => [...rows, { name: '', price: '', description: '' }])} className="px-3 py-1.5 text-xs rounded border border-emerald-500/35 text-emerald-100 hover:bg-emerald-200/10">
                     + Add item
                   </button>
-                  <button type="button" onClick={() => setMenuRows([{ name: '', price: '', description: '' }])} className="px-3 py-1.5 text-xs rounded border border-slate-200">
+                  <button type="button" onClick={() => setMenuRows([{ name: '', price: '', description: '' }])} className="px-3 py-1.5 text-xs rounded border border-emerald-500/35 text-emerald-100 hover:bg-emerald-200/10">
                     Reset
                   </button>
                 </div>
-                <div className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                <div className="rounded-md bg-[#0f2f24] px-3 py-2 text-xs text-emerald-100">
                   Preview avg price (derived): ₹{averagePriceFromItems(normalizeMenuRows(menuRows))}
                 </div>
-                <label className="flex items-center gap-2 text-xs text-slate-700">
+                <label className="flex items-center gap-2 text-xs text-emerald-100">
                   <input type="checkbox" checked={menuPreviewConfirmed} onChange={(e) => setMenuPreviewConfirmed(e.target.checked)} />
-                  I reviewed the menu preview. Generate PDF and continue on submit.
+                  I reviewed the menu preview.
                 </label>
-              </div>
-              <p className="text-xs font-medium text-slate-700">Socket.io alert preferences</p>
-              <label className="flex items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox" checked={notifyBuddyMeetups} onChange={(e) => setNotifyBuddyMeetups(e.target.checked)} />
-                GoOut Buddy meetup alerts
-              </label>
-              <label className="flex items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox" checked={notifyFlashDeals} onChange={(e) => setNotifyFlashDeals(e.target.checked)} />
-                Flash deal reminders
-              </label>
-            </div>
-
-            <div className="p-4 rounded-xl border border-slate-200 space-y-3">
-              <h3 className="text-sm font-semibold text-slate-900">Listing details</h3>
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Legal / listing business name</label>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  required
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Customer-facing vibe (editable)</label>
-                <input
-                  type="text"
-                  value={vibe}
-                  onChange={(e) => setVibe(e.target.value)}
-                  placeholder="Short atmosphere line"
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg text-sm"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Description</label>
-                <textarea
-                  value={form.description}
-                  onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg"
-                  rows={3}
-                />
-              </div>
-              <div className="text-xs text-slate-600 rounded-md bg-slate-50 px-3 py-2">
-                Avg price is auto-derived from your menu items.
-              </div>
-              <label className="flex items-center gap-2 text-sm text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={Boolean(form.isFree)}
-                  onChange={(e) => setForm((f) => ({ ...f, isFree: e.target.checked }))}
-                />
-                Free entry / no typical paid visit
-              </label>
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Tags (comma-separated)</label>
-                <input
-                  type="text"
-                  value={form.tags}
-                  onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Signature menu lines (comma-separated)</label>
-                <input
-                  type="text"
-                  value={form.menu}
-                  onChange={(e) => setForm((f) => ({ ...f, menu: e.target.value }))}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Other green initiatives (comma-separated)</label>
-                <input
-                  type="text"
-                  value={form.greenInitiatives}
-                  onChange={(e) => setForm((f) => ({ ...f, greenInitiatives: e.target.value }))}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg"
-                />
               </div>
             </div>
 
@@ -1250,12 +1124,26 @@ export default function Merchant() {
 
       {business && !creatingNewBusiness && (
         <>
-          <div className="goout-surface rounded-2xl p-6">
+          <div className="rounded-3xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-emerald-50/40 p-6 shadow-lg">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="font-display font-semibold text-lg">Profile & semantic tags</h2>
-              <button type="button" onClick={() => { setEditProfile(!editProfile); if (!editProfile) setEditTags((business.tags || []).join(', ')); }} className="px-4 py-2 bg-slate-100 rounded-lg text-sm font-medium">
+              <div>
+                <h2 className="font-display font-semibold text-lg text-slate-900">Merchant profile studio</h2>
+                <p className="text-xs text-slate-600 mt-0.5">Control how explorers discover your storefront on the map.</p>
+              </div>
+              <button type="button" onClick={() => { setEditProfile(!editProfile); if (!editProfile) setEditTags((business.tags || []).join(', ')); }} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-sm font-medium transition">
                 {editProfile ? 'Cancel' : 'Edit tags'}
               </button>
+            </div>
+            <div className="mb-3 flex flex-wrap gap-2">
+              <span className="rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+                Category: {business?.category || 'N/A'}
+              </span>
+              <span className="rounded-full border border-sky-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-sky-700">
+                Rating: {Number.isFinite(Number(business?.rating)) ? Number(business.rating).toFixed(1) : 'N/A'}
+              </span>
+              <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+                Tags: {(business?.tags || []).length}
+              </span>
             </div>
             {editProfile ? (
               <div className="space-y-2">
@@ -1268,13 +1156,21 @@ export default function Merchant() {
             )}
           </div>
 
-          <div className="goout-surface rounded-2xl p-6 md:p-7 space-y-4">
+          <div className="rounded-3xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-emerald-50/30 p-6 md:p-7 space-y-4 shadow-lg">
             <div>
               <h2 className="font-display font-semibold text-lg text-slate-900">Customer menu (PDF)</h2>
               <p className="text-sm text-slate-600 mt-1 max-w-2xl">
                 List items with prices in INR. When you save, we ask our AI for a short welcome line on the PDF, then build a printable menu with your business name.
                 Explorers see <strong className="text-slate-800">View menu</strong> on your map pin and open the PDF in a new tab.
               </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+                  Auto PDF generation
+                </span>
+                <span className="rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+                  Explorer map integration
+                </span>
+              </div>
             </div>
             <div className="space-y-3">
               {menuRows.map((row, idx) => (
@@ -1327,7 +1223,7 @@ export default function Merchant() {
               <button
                 type="button"
                 onClick={() => setMenuRows((rows) => [...rows, { name: '', price: '', description: '' }])}
-                className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                className="px-4 py-2 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50">
                 + Add row
               </button>
               <button
@@ -1356,15 +1252,15 @@ export default function Merchant() {
 
           <MerchantAnalyticsPanel analytics={analytics} business={business} onCrowdChange={updateCrowd} />
 
-          <div className="goout-surface rounded-2xl p-6">
+          <div className="rounded-3xl border border-slate-200 bg-gradient-to-b from-white to-slate-50 p-6 shadow-lg">
             <div className="flex justify-between items-center mb-4">
               <h2 className="font-display font-semibold text-lg">Live Offer Feed (Flash Deals)</h2>
-              <button onClick={() => setShowOffer(true)} className="px-4 py-2 bg-goout-green text-white rounded-lg font-medium text-sm">
+              <button onClick={() => setShowOffer(true)} className="px-4 py-2 bg-goout-green text-white rounded-xl font-medium text-sm hover:bg-goout-accent transition">
                 + New Flash Deal
               </button>
             </div>
             {showOffer && (
-              <form onSubmit={createOffer} className="mb-6 p-4 bg-slate-50 rounded-xl space-y-2">
+              <form onSubmit={createOffer} className="mb-6 p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
                 {offerError && <p className="text-red-600 text-sm">{offerError}</p>}
                 <input type="text" placeholder="Title (e.g. 50% off for next 30 min)" value={offerForm.title} onChange={(e) => setOfferForm((f) => ({ ...f, title: e.target.value }))} required
                   className="w-full px-4 py-2 border rounded-lg" />
@@ -1387,8 +1283,8 @@ export default function Merchant() {
                 </div>
                 <p className="text-xs text-slate-500">Or set exact end time: <input type="datetime-local" value={offerForm.validUntil} onChange={(e) => setOfferForm((f) => ({ ...f, validUntil: e.target.value }))} className="px-2 py-1 border rounded" /></p>
                 <div className="flex gap-2">
-                  <button type="submit" className="px-4 py-2 bg-goout-green text-white rounded-lg text-sm">Create Flash Deal</button>
-                  <button type="button" onClick={() => setShowOffer(false)} className="px-4 py-2 border rounded-lg text-sm">Cancel</button>
+                  <button type="submit" className="px-4 py-2 bg-goout-green text-white rounded-xl text-sm hover:bg-goout-accent transition">Create Flash Deal</button>
+                  <button type="button" onClick={() => setShowOffer(false)} className="px-4 py-2 border rounded-xl text-sm">Cancel</button>
                 </div>
               </form>
             )}
@@ -1397,12 +1293,12 @@ export default function Merchant() {
                 <p className="text-slate-500 text-sm">No active offers.</p>
               ) : (
                 offers.map((o) => (
-                  <div key={o._id} className="flex justify-between items-center p-3 bg-goout-mint rounded-lg">
+                  <div key={o._id} className="flex justify-between items-center p-3 bg-goout-mint/80 border border-emerald-100 rounded-xl">
                     <div>
                       <p className="font-medium">{o.title}</p>
                       <p className="text-sm text-slate-600">₹{o.offerPrice} {o.originalPrice && <span className="line-through">₹{o.originalPrice}</span>} · Valid till {new Date(o.validUntil).toLocaleString()}</p>
                     </div>
-                    <button type="button" onClick={async () => { try { await api.patch(`/offers/${o._id}/stop`); setOffers((prev) => prev.filter((x) => x._id !== o._id)); } catch (e) { console.error(e); } }} className="px-3 py-1 bg-red-100 text-red-700 rounded text-sm font-medium hover:bg-red-200">Stop Deal</button>
+                    <button type="button" onClick={async () => { try { await api.patch(`/offers/${o._id}/stop`); setOffers((prev) => prev.filter((x) => x._id !== o._id)); } catch (e) { console.error(e); } }} className="px-3 py-1 bg-red-100 text-red-700 rounded-lg text-sm font-medium hover:bg-red-200">Stop Deal</button>
                   </div>
                 ))
               )}

@@ -33,13 +33,13 @@ export default function ForgotPassword() {
 
   return (
     <div className="min-h-screen goout-auth-shell flex items-center justify-center p-4 relative z-10">
-      <div className="w-full max-w-md goout-animate-in">
+      <div className="w-full max-w-3xl goout-animate-in">
         <Link
           to="/"
           className="block font-display font-extrabold text-3xl mb-8 bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent w-fit">
           GoOut
         </Link>
-        <div className="goout-glass-card rounded-2xl p-8 shadow-xl border border-white/60">
+        <div className="goout-glass-card rounded-2xl p-8 shadow-md border border-slate-200">
           <h1 className="text-2xl font-bold text-slate-900 mb-2">Forgot password</h1>
           <p className="text-slate-600 text-sm mb-6">
             Enter your account email. If it&apos;s registered, we&apos;ll send a link to choose a new password.

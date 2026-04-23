@@ -1,35 +1,46 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { GoogleMap, useLoadScript } from '@react-google-maps/api';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
-import { estimateMerchantSpendInr, businessIsStrongGreen } from '../../utils/searchMapRank';
+import { estimateMerchantSpendInr, businessIsStrongGreen, poiMatchesPreciseQuery } from '../../utils/searchMapRank';
 
 const DEFAULT_ZOOM = 17;
 
-/** Softer highways, lift parks & paths — Green Mode map tint (indicative, not a data layer). */
+/** Rich green map style for modern themed experience. */
 const GREEN_MAP_STYLES = [
-  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ saturation: 35 }, { lightness: -12 }] },
-  { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ saturation: 22 }, { lightness: -8 }] },
-  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ saturation: -55 }, { lightness: 25 }] },
-  { featureType: 'road.arterial', elementType: 'geometry.stroke', stylers: [{ saturation: -35 }, { lightness: 12 }] },
-  { featureType: 'transit.line', elementType: 'geometry', stylers: [{ saturation: 10 }, { lightness: -5 }] }
+  { elementType: 'geometry', stylers: [{ color: '#163a2c' }] },
+  { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#c9e6d7' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#0f2a20' }] },
+  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#dcfce7' }] },
+  { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#133527' }] },
+  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#1a4633' }] },
+  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#1f573d' }] },
+  { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#b8f2c9' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2b5d46' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#224d3a' }] },
+  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#d8f5e2' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#367559' }] },
+  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#275741' }] },
+  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#204d39' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0b271e' }] },
+  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#99d9bf' }] }
 ];
 
 const DARK_MAP_STYLES = [
-  { elementType: 'geometry', stylers: [{ color: '#0f172a' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#0b1220' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#94a3b8' }] },
-  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#cbd5e1' }] },
-  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#9ca3af' }] },
-  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#14532d' }] },
-  { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#86efac' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1e293b' }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#0f172a' }] },
-  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#cbd5e1' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#334155' }] },
-  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#1e293b' }] },
-  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#1f2937' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#082f49' }] },
-  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#7dd3fc' }] }
+  { elementType: 'geometry', stylers: [{ color: '#10281f' }] },
+  { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#091710' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#9ec8b3' }] },
+  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#d1fae5' }] },
+  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#17392b' }] },
+  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#9ec8b3' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#244c39' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#193626' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#2f664d' }] },
+  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#214936' }] },
+  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#1a3d2d' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0a1d16' }] },
+  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#82b39d' }] }
 ];
 
 /** Compact “my location” dot (delivery-app style): white halo, teal fill, center = GPS point. */
@@ -48,10 +59,23 @@ function buildUserLocationMarkerIcon(google, size = 22) {
   };
 }
 
-const PIN_ICONS = {
-  red: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
-  blue: 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png'
-};
+function buildMapPinIcon(google, { fill = '#ef4444', stroke = '#ffffff', dot = '#ffffff', size = 34, pulse = false } = {}) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28">
+    ${pulse ? `<circle cx="14" cy="12.2" r="4.4" fill="none" stroke="${fill}" stroke-opacity="0.62" stroke-width="1.4">
+      <animate attributeName="r" values="4.4;9.6;4.4" dur="1.8s" repeatCount="indefinite" />
+      <animate attributeName="stroke-opacity" values="0.62;0;0.62" dur="1.8s" repeatCount="indefinite" />
+    </circle>` : ''}
+    <path d="M14 26s-8-5.1-8-13a8 8 0 1 1 16 0c0 7.9-8 13-8 13z" fill="${fill}" stroke="${stroke}" stroke-width="1.35"/>
+    <circle cx="14" cy="12.2" r="3.2" fill="${dot}" />
+  </svg>`;
+  const url = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+  const anchor = Math.round(size / 2);
+  return {
+    url,
+    scaledSize: new google.maps.Size(size, size),
+    anchor: new google.maps.Point(anchor, size - 3)
+  };
+}
 
 function escapeHtml(s) {
   if (s == null) return '';
@@ -68,6 +92,15 @@ function crowdLabel(level) {
   return 'Crowded';
 }
 
+function crowdFreshnessText(lastPing) {
+  const ts = new Date(lastPing || '').getTime();
+  if (!Number.isFinite(ts)) return 'Live updates';
+  const deltaMs = Date.now() - ts;
+  if (deltaMs < 60 * 1000) return 'Updated just now';
+  if (deltaMs < 60 * 60 * 1000) return `Updated ${Math.max(1, Math.round(deltaMs / 60000))}m ago`;
+  return `Updated ${Math.max(1, Math.round(deltaMs / 3600000))}h ago`;
+}
+
 function businessPopupHtml(b, { isHighlighted }) {
   const mapLabel = b?.mapDisplayName || b?.name;
   const name = escapeHtml(mapLabel);
@@ -82,17 +115,36 @@ function businessPopupHtml(b, { isHighlighted }) {
   const lat = loc?.[1];
 
   const crowd = crowdLabel(b?.crowdLevel);
-  const crowdHtml = crowd ? `<p class="text-xs mt-1">${escapeHtml(crowd)}</p>` : '';
+  const crowdNum = Math.max(0, Math.min(100, Number(b?.crowdLevel) || 0));
+  const crowdHtml = crowd ?
+    `<div class="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
+      <div class="flex items-center justify-between gap-2">
+        <p class="text-[11px] font-semibold text-slate-700">Live crowd</p>
+        <span class="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">LIVE</span>
+      </div>
+      <div class="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+        <div class="h-full rounded-full ${crowdNum >= 66 ? 'bg-rose-500' : crowdNum >= 33 ? 'bg-amber-500' : 'bg-emerald-500'}" style="width:${crowdNum}%"></div>
+      </div>
+      <p class="mt-1 text-[11px] text-slate-700">${escapeHtml(crowd)} · ${crowdNum}%</p>
+      <p class="mt-0.5 text-[10px] text-slate-500">${escapeHtml(crowdFreshnessText(b?.crowdLastPing))}</p>
+      <p class="text-[11px] mt-1.5 text-slate-600">
+        Report:
+        <a href="#" class="text-blue-600 font-medium" data-crowd-report data-business-id="${escapeHtml(b?._id)}" data-level="33">Quiet</a>
+        · <a href="#" class="text-blue-600 font-medium" data-crowd-report data-business-id="${escapeHtml(b?._id)}" data-level="66">Busy</a>
+        · <a href="#" class="text-blue-600 font-medium" data-crowd-report data-business-id="${escapeHtml(b?._id)}" data-level="100">Crowded</a>
+      </p>
+    </div>` :
+    '';
   const address = escapeHtml(b?.address || '');
   const vibe = escapeHtml(b?.vibe || '');
-  const tags = Array.isArray(b?.tags) ? b.tags.slice(0, 5).map((t) => escapeHtml(t)).filter(Boolean) : [];
-  const tagsHtml = tags.length ? `<p class="text-xs mt-1 text-slate-600">Tags: ${tags.join(' · ')}</p>` : '';
   const ecoFlags = [];
   if (b?.ecoOptions?.plasticFree) ecoFlags.push('Plastic-free');
   if (b?.ecoOptions?.solarPowered) ecoFlags.push('Solar powered');
   if (b?.ecoOptions?.zeroWaste) ecoFlags.push('Zero-waste');
   if (b?.carbonWalkIncentive) ecoFlags.push('Walker incentive');
   const ecoHtml = ecoFlags.length ? `<p class="text-xs mt-1 text-emerald-800">Eco: ${ecoFlags.map((x) => escapeHtml(x)).join(' · ')}</p>` : '';
+  const descriptionText = escapeHtml(String(b?.description || b?.localSourcingNote || '').trim());
+  const descriptionHtml = descriptionText ? `<p class="text-xs mt-1.5 text-slate-700"><span class="font-semibold text-slate-800">Description:</span> ${descriptionText}</p>` : '';
   const distanceText =
   typeof b?.distanceMeters === 'number' && Number.isFinite(b.distanceMeters) ?
   `<p class="text-xs mt-1 text-slate-500">Distance: ${b.distanceMeters < 1000 ? `${Math.round(b.distanceMeters)} m` : `${(b.distanceMeters / 1000).toFixed(2)} km`}</p>` :
@@ -119,27 +171,32 @@ function businessPopupHtml(b, { isHighlighted }) {
     : '';
 
   return `
-    <div class="min-w-[200px]">
-      <h3 class="font-semibold text-slate-900">Title: ${name}</h3>
-      <p class="text-sm text-slate-600">Category: ${category || 'N/A'}</p>
-      <p class="text-sm">Average Price: ₹${avgPrice || 0}</p>
-      <p class="text-xs mt-1 text-slate-600">Location: ${address || 'Location not available'}</p>
-      ${menuAnchorHtml ? `<p class="mt-2">View menu: ${menuAnchorHtml}</p>` : '<p class="mt-2 text-xs text-slate-500">View menu: Not available</p>'}
-      <p class="text-xs mt-1 text-slate-500">Rating: ⭐ ${rating.toFixed(1) || '—'}</p>
+    <div class="goout-map-popup min-w-[250px] max-w-[330px] rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+      <div class="flex items-start justify-between gap-2">
+        <div>
+          <h3 class="font-semibold text-slate-900 text-sm leading-snug">${name}</h3>
+          <p class="text-xs text-slate-600 mt-0.5">${category || 'N/A'}</p>
+        </div>
+        ${hasLiveDeal ? '<span class="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-800">Flash deal</span>' : ''}
+      </div>
+      <div class="mt-2 grid grid-cols-2 gap-2">
+        <div class="rounded-lg bg-slate-50 border border-slate-200 px-2 py-1.5">
+          <p class="text-[10px] uppercase tracking-wide text-slate-500">Rating</p>
+          <p class="text-xs font-semibold text-slate-800">⭐ ${rating.toFixed(1) || '—'}</p>
+        </div>
+        <div class="rounded-lg bg-slate-50 border border-slate-200 px-2 py-1.5">
+          <p class="text-[10px] uppercase tracking-wide text-slate-500">Distance</p>
+          <p class="text-xs font-semibold text-slate-800">${distanceText ? distanceText.replace(/<[^>]*>/g, '').replace('Distance: ', '') : 'N/A'}</p>
+        </div>
+      </div>
+      <p class="text-[11px] mt-2 text-slate-600">${address || 'Location not available'}</p>
+      ${menuAnchorHtml ? `<p class="mt-2 text-xs font-medium text-emerald-800">Menu: ${menuAnchorHtml}</p>` : '<p class="mt-2 text-xs text-slate-500">Menu: Not available</p>'}
       ${vibe ? `<p class="text-xs mt-1 text-slate-700">Vibe: ${vibe}</p>` : ''}
+      ${descriptionHtml}
       ${verifiedHtml}
       ${recommendedHtml}
       ${crowdHtml}
-      ${distanceText}
-      ${tagsHtml}
       ${ecoHtml}
-      ${/cafe|coffee|grocery|supermarket|bakery|restaurant|bistro|juice/i.test(String(b?.category || '')) ? '<p class="text-xs mt-1 text-emerald-800">Tip: bring a reusable cup or bag when you can.</p>' : ''}
-      <p class="text-xs mt-2 text-slate-500">
-        Report crowd:
-        <a href="#" class="text-blue-600" data-crowd-report data-business-id="${escapeHtml(b?._id)}" data-level="33">Quiet</a>
-        · <a href="#" class="text-blue-600" data-crowd-report data-business-id="${escapeHtml(b?._id)}" data-level="66">Busy</a>
-        · <a href="#" class="text-blue-600" data-crowd-report data-business-id="${escapeHtml(b?._id)}" data-level="100">Crowded</a>
-      </p>
       <div class="mt-3">
         <button
           type="button"
@@ -166,23 +223,29 @@ function poiLatLngMatch(p, hl) {
 
 }
 
-function poiPopupHtml(p, { isSearchPrimary } = {}) {
+function poiPopupHtml(p, { isSearchPrimary, isExactSearchMatch, isMayMatch } = {}) {
   const name = escapeHtml(p?.name);
   const category = escapeHtml(p?.category || 'place');
   const stars = Number.isFinite(Number(p?.rating)) ? Number(p.rating).toFixed(1) : 'N/A';
-  const primaryHtml = isSearchPrimary ? '<p class="text-xs mt-1 text-purple-700 font-medium">Best match for your search</p>' : '';
+  const statusHtml = isSearchPrimary ?
+    '<p class="text-xs mt-1 text-purple-700 font-medium">Best match for your search</p>' :
+    isExactSearchMatch ?
+      '<p class="text-xs mt-1 text-blue-900 font-medium">Exact match</p>' :
+      isMayMatch ?
+        '<p class="text-xs mt-1 text-blue-700 font-medium">May match your search</p>' :
+        '';
   const locationText =
   Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lng)) ?
   `${Number(p.lat).toFixed(5)}, ${Number(p.lng).toFixed(5)}` :
   'Location not available';
 
   return `
-    <div class="min-w-[200px]">
+    <div class="goout-map-popup min-w-[200px]">
       <h3 class="font-semibold text-slate-900">Name: ${name}</h3>
       <p class="text-xs text-slate-600 capitalize">Category: ${category}</p>
       <p class="text-xs text-slate-600">Stars: ${stars}</p>
       <p class="text-xs text-slate-600">Location: ${escapeHtml(locationText)}</p>
-      ${primaryHtml}
+      ${statusHtml}
       <div class="mt-3">
         <button
           type="button"
@@ -198,6 +261,247 @@ function poiPopupHtml(p, { isSearchPrimary } = {}) {
       </div>
     </div>
   `;
+}
+
+function summarizeReviewText(text, maxLen = 180) {
+  const t = String(text || '').trim();
+  if (!t) return '';
+  if (t.length <= maxLen) return t;
+  return `${t.slice(0, maxLen).trim()}…`;
+}
+
+function poiGoogleLikePopupHtml(p, details, { isSearchPrimary, isExactSearchMatch, isMayMatch } = {}) {
+  const name = escapeHtml(details?.name || p?.name || 'Place');
+  const category = escapeHtml(p?.category || details?.types?.[0] || 'place');
+  const ratingNum = Number(details?.rating ?? p?.rating);
+  const stars = Number.isFinite(ratingNum) ? ratingNum.toFixed(1) : 'N/A';
+  const ratingsCount = Number(details?.userRatingsTotal || details?.user_ratings_total || 0);
+  const openNow = details?.openingHours?.openNow;
+  const openBadge =
+    openNow === true ? '<span class="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800">Open now</span>' :
+      openNow === false ? '<span class="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-800">Closed now</span>' :
+        '';
+  const locationText = escapeHtml(
+    details?.formattedAddress || details?.vicinity || (
+      Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lng)) ?
+        `${Number(p.lat).toFixed(5)}, ${Number(p.lng).toFixed(5)}` :
+        'Location not available'
+    )
+  );
+  const website = String(details?.website || details?.websiteUrl || '').trim();
+  const mapsUrl = Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lng)) ?
+    `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${p.lat},${p.lng}`)}` :
+    '';
+  const priceLevel = Number(details?.priceLevel ?? details?.price_level);
+  const priceText = Number.isFinite(priceLevel) && priceLevel >= 0 && priceLevel <= 4 ? '₹'.repeat(Math.max(1, priceLevel + 1)) : '';
+  const reviewRows = Array.isArray(details?.reviews) ? details.reviews.slice(0, 2) : [];
+  const reviewsHtml = reviewRows.length ?
+    `<div class="mt-2 space-y-1.5">${reviewRows.map((r) => {
+      const rr = Number(r?.rating);
+      const rStars = Number.isFinite(rr) ? `⭐ ${rr.toFixed(1)}` : '';
+      const author = escapeHtml(r?.author_name || r?.authorAttribution?.displayName || 'Visitor');
+      const txt = escapeHtml(summarizeReviewText(r?.text || r?.originalText || ''));
+      return `<div class="rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5"><p class="text-[11px] font-medium text-slate-700">${author}${rStars ? ` · ${rStars}` : ''}</p><p class="text-[11px] text-slate-600 mt-0.5">${txt}</p></div>`;
+    }).join('')}</div>` :
+    '<p class="text-xs text-slate-500 mt-2">No review snippets available.</p>';
+  const photoUrl = String(details?.photoUrl || '').trim();
+  const statusHtml = isSearchPrimary ?
+    '<p class="text-xs mt-1 text-purple-700 font-medium">Best match for your search</p>' :
+    isExactSearchMatch ?
+      '<p class="text-xs mt-1 text-blue-900 font-medium">Exact match</p>' :
+      isMayMatch ?
+        '<p class="text-xs mt-1 text-blue-700 font-medium">May match your search</p>' :
+        '';
+
+  return `
+    <div class="goout-map-popup min-w-[240px] max-w-[320px]">
+      <h3 class="font-semibold text-slate-900 text-sm">${name}</h3>
+      <div class="mt-1 flex flex-wrap items-center gap-2">
+        <p class="text-xs text-slate-600 capitalize">${category}</p>
+        ${openBadge}
+      </div>
+      <p class="text-xs text-slate-600 mt-1">⭐ ${stars}${ratingsCount > 0 ? ` (${ratingsCount.toLocaleString()} reviews)` : ''}${priceText ? ` · ${priceText}` : ''}</p>
+      <p class="text-xs text-slate-600 mt-1">${locationText}</p>
+      ${statusHtml}
+      ${photoUrl ? `<img src="${escapeHtml(photoUrl)}" alt="${name}" class="mt-2 h-28 w-full rounded-lg object-cover border border-slate-200" />` : ''}
+      <div class="mt-2">
+        <p class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Recent reviews</p>
+        ${reviewsHtml}
+      </div>
+      <div class="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          class="goout-go-route px-3 py-1.5 rounded-lg bg-goout-green text-white text-sm font-medium hover:bg-goout-accent transition"
+          data-go-route="1"
+          data-lat="${p?.lat}"
+          data-lng="${p?.lng}"
+          data-kind="poi"
+          data-label="${encodeURIComponent(p?.name || '')}"
+        >
+          Go
+        </button>
+        ${website ? `<a href="${escapeHtml(website)}" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50">Website</a>` : ''}
+        ${mapsUrl ? `<a href="${escapeHtml(mapsUrl)}" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50">Open in Maps</a>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function placeSearchPromise(service, request) {
+  return new Promise((resolve) => {
+    try {
+      service.nearbySearch(request, (results, status) => {
+        resolve({ results: Array.isArray(results) ? results : [], status });
+      });
+    } catch {
+      resolve({ results: [], status: 'ERROR' });
+    }
+  });
+}
+
+function placeDetailsPromise(service, request) {
+  return new Promise((resolve) => {
+    try {
+      service.getDetails(request, (result, status) => {
+        resolve({ result: result || null, status });
+      });
+    } catch {
+      resolve({ result: null, status: 'ERROR' });
+    }
+  });
+}
+
+function placeFindFromQueryPromise(service, request) {
+  return new Promise((resolve) => {
+    try {
+      service.findPlaceFromQuery(request, (results, status) => {
+        resolve({ results: Array.isArray(results) ? results : [], status });
+      });
+    } catch {
+      resolve({ results: [], status: 'ERROR' });
+    }
+  });
+}
+
+function normalizeGooglePlaceId(rawId) {
+  const s = String(rawId || '').trim();
+  if (!s) return '';
+  // New Places API can return IDs as "places/PLACE_ID".
+  if (s.startsWith('places/')) return s.split('/').pop() || '';
+  return s;
+}
+
+function mapDetailsResult(result) {
+  if (!result) return null;
+  const photoUrls =
+    Array.isArray(result.photos) && result.photos.length > 0 ?
+      result.photos.slice(0, 8).map((ph) => ph.getUrl({ maxWidth: 1200, maxHeight: 900 })).filter(Boolean) :
+      [];
+  const photoUrl =
+    Array.isArray(result.photos) && result.photos.length > 0 ?
+      result.photos[0].getUrl({ maxWidth: 640, maxHeight: 360 }) :
+      '';
+  return {
+    name: result.name,
+    formattedAddress: result.formatted_address,
+    vicinity: result.vicinity,
+    rating: result.rating,
+    userRatingsTotal: result.user_ratings_total,
+    reviews: Array.isArray(result.reviews) ? result.reviews : [],
+    openingHours: {
+      openNow: result.opening_hours?.isOpen?.() ?? result.opening_hours?.open_now,
+      weekdayText: Array.isArray(result.opening_hours?.weekday_text) ? result.opening_hours.weekday_text : []
+    },
+    website: result.website,
+    googleMapsUrl: result.url,
+    formattedPhoneNumber: result.formatted_phone_number,
+    internationalPhoneNumber: result.international_phone_number,
+    businessStatus: result.business_status,
+    priceLevel: result.price_level,
+    photoUrl,
+    photoUrls,
+    types: result.types || []
+  };
+}
+
+async function fetchPoiOriginalDetails(google, map, p) {
+  if (!google?.maps?.places || !map || !p) return null;
+  const lat = Number(p.lat);
+  const lng = Number(p.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const service = new google.maps.places.PlacesService(map);
+  const detailFields = [
+    'name',
+    'formatted_address',
+    'vicinity',
+    'rating',
+    'user_ratings_total',
+    'reviews',
+    'opening_hours',
+    'photos',
+    'website',
+    'url',
+    'formatted_phone_number',
+    'international_phone_number',
+    'business_status',
+    'price_level',
+    'types'
+  ];
+
+  // Fast path: many POIs already carry Google place IDs.
+  const directIds = [
+    normalizeGooglePlaceId(p?.placeId),
+    normalizeGooglePlaceId(p?.place_id),
+    normalizeGooglePlaceId(p?.id)
+  ].filter(Boolean);
+  for (const placeId of [...new Set(directIds)]) {
+    const { result } = await placeDetailsPromise(service, { placeId, fields: detailFields });
+    const mapped = mapDetailsResult(result);
+    if (mapped) return mapped;
+  }
+
+  // Fallback 1: text query around location.
+  const query = `${String(p?.name || '').slice(0, 100)} ${String(p?.category || '').slice(0, 60)}`.trim();
+  if (query) {
+    const { results } = await placeFindFromQueryPromise(service, {
+      query,
+      fields: ['place_id', 'geometry', 'name'],
+      locationBias: new google.maps.Circle({
+        center: { lat, lng },
+        radius: 250
+      })
+    });
+    const findPick = [...results]
+      .filter((r) => Number.isFinite(Number(r?.geometry?.location?.lat?.())) && Number.isFinite(Number(r?.geometry?.location?.lng?.())))
+      .sort((a, b) => {
+        const ad = Math.hypot((a.geometry.location.lat() - lat), (a.geometry.location.lng() - lng));
+        const bd = Math.hypot((b.geometry.location.lat() - lat), (b.geometry.location.lng() - lng));
+        return ad - bd;
+      })[0];
+    if (findPick?.place_id) {
+      const { result } = await placeDetailsPromise(service, { placeId: findPick.place_id, fields: detailFields });
+      const mapped = mapDetailsResult(result);
+      if (mapped) return mapped;
+    }
+  }
+
+  // Fallback 2: nearby search + nearest match.
+  const { results } = await placeSearchPromise(service, {
+    location: { lat, lng },
+    radius: 220,
+    keyword: String(p.name || '').slice(0, 120)
+  });
+  if (!results.length) return null;
+  const pick = [...results]
+    .filter((r) => Number.isFinite(Number(r?.geometry?.location?.lat?.())) && Number.isFinite(Number(r?.geometry?.location?.lng?.())))
+    .sort((a, b) => {
+      const ad = Math.hypot((a.geometry.location.lat() - lat), (a.geometry.location.lng() - lng));
+      const bd = Math.hypot((b.geometry.location.lat() - lat), (b.geometry.location.lng() - lng));
+      return ad - bd;
+    })[0];
+  if (!pick?.place_id) return null;
+  const { result } = await placeDetailsPromise(service, { placeId: pick.place_id, fields: detailFields });
+  return mapDetailsResult(result);
 }
 
 function DiscoveryMap({
@@ -228,6 +532,8 @@ function DiscoveryMap({
   mapVisualTheme = 'default',
   greenEcoRoute = null,
   destinationPoint = null,
+  mapZoom = DEFAULT_ZOOM,
+  onCancelRoute,
   /** Explorer search radius (meters) — shown in footer. */
   searchRadiusM = null
 }) {
@@ -247,6 +553,10 @@ function DiscoveryMap({
     typeof document !== 'undefined' &&
     document.documentElement.classList.contains('theme-dark')
   );
+  const [activePoiPanel, setActivePoiPanel] = useState(null);
+  const [activeLocalPanel, setActiveLocalPanel] = useState(null);
+  const [activePoiPanelLoading, setActivePoiPanelLoading] = useState(false);
+  const [activePoiPhotoIndex, setActivePoiPhotoIndex] = useState(0);
 
   const activeMapStyles = useMemo(() => {
     if (isDarkMode) return DARK_MAP_STYLES;
@@ -267,7 +577,7 @@ function DiscoveryMap({
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
   const { isLoaded, loadError } = useLoadScript({
     googleMapsApiKey: apiKey || '',
-    libraries: []
+    libraries: ['places']
   });
 
   const mapRef = useRef(null);
@@ -289,6 +599,8 @@ function DiscoveryMap({
   const routeEndpointMarkersRef = useRef({ start: null, end: null });
   const userZoomListenerRef = useRef(null);
   const businessMarkerByIdRef = useRef(new Map());
+  const activePopupBusinessIdRef = useRef('');
+  const poiDetailsReqSeqRef = useRef(0);
   const highlightedIdRef = useRef(effectiveHighlightBusinessId != null ? String(effectiveHighlightBusinessId) : null);
   const businessesByIdRef = useRef(new Map());
   useEffect(() => {
@@ -311,6 +623,36 @@ function DiscoveryMap({
   const q = (categoryFilter || '').trim();
   const merchantCount = (businesses || []).length;
   const poiCount = (pois || []).length;
+  const panelDetails = activePoiPanel?.details || null;
+  const panelPoi = activePoiPanel?.poi || null;
+  const panelPhotoUrls = useMemo(() => {
+    const urls = Array.isArray(panelDetails?.photoUrls) ? panelDetails.photoUrls.filter(Boolean) : [];
+    if (urls.length) return urls;
+    return panelDetails?.photoUrl ? [panelDetails.photoUrl] : [];
+  }, [panelDetails]);
+  const panelPhotoCount = panelPhotoUrls.length;
+  const clampedPhotoIndex = panelPhotoCount ? Math.max(0, Math.min(activePoiPhotoIndex, panelPhotoCount - 1)) : 0;
+  const activePanelPhotoUrl = panelPhotoCount ? panelPhotoUrls[clampedPhotoIndex] : '';
+
+  useEffect(() => {
+    if (!panelPhotoCount) {
+      if (activePoiPhotoIndex !== 0) setActivePoiPhotoIndex(0);
+      return;
+    }
+    if (clampedPhotoIndex !== activePoiPhotoIndex) setActivePoiPhotoIndex(clampedPhotoIndex);
+  }, [panelPhotoCount, clampedPhotoIndex, activePoiPhotoIndex]);
+
+  useEffect(() => {
+    if (!activePoiPanel?.poi) return;
+    const la = Number(activePoiPanel.poi.lat);
+    const lo = Number(activePoiPanel.poi.lng);
+    const stillExists = (pois || []).some((p) => Number(p?.lat) === la && Number(p?.lng) === lo);
+    if (!stillExists) {
+      setActivePoiPanel(null);
+      setActivePoiPanelLoading(false);
+      setActivePoiPhotoIndex(0);
+    }
+  }, [activePoiPanel, pois]);
   const userLocationText =
   userLocation && Number.isFinite(userLocation.lat) && Number.isFinite(userLocation.lng) ?
   `${Number(userLocation.lat).toFixed(8)}, ${Number(userLocation.lng).toFixed(8)}${
@@ -326,16 +668,79 @@ function DiscoveryMap({
 
   const footerCount = (() => {
     if (!q) {
-      return `Search radius: ${radiusKmLabel} · type a query and Apply to load GoOut merchants and public places`;
+      if (merchantCount > 0 || poiCount > 0) {
+        return `Area · ${merchantCount} local · ${poiCount} public`;
+      }
+      return `${radiusKmLabel} radius · search + Apply`;
     }
     if (searchHasNoResults && !isSearching) {
       return `No places found for "${q}" (within ${radiusKmLabel})`;
     }
     if (isSearching) {
-      return `Searching… (${merchantCount} GoOut · ${poiCount} public within ${radiusKmLabel})`;
+      return `Searching… ${merchantCount} local · ${poiCount} public · ${radiusKmLabel}`;
     }
-    return `Within ${radiusKmLabel} · ${merchantCount} GoOut merchants · ${poiCount} public places (search + area)`;
+    return `${radiusKmLabel} · ${merchantCount} local · ${poiCount} public`;
   })();
+
+  const closePoiPanel = () => {
+    setActivePoiPanel(null);
+    setActivePoiPanelLoading(false);
+    setActivePoiPhotoIndex(0);
+  };
+  const closeLocalPanel = () => {
+    setActiveLocalPanel(null);
+  };
+  const closeDetailPanels = () => {
+    closePoiPanel();
+    closeLocalPanel();
+  };
+
+  const panelTitle = panelDetails?.name || panelPoi?.name || 'Public place';
+  const panelCategoryRaw = panelPoi?.category || panelDetails?.types?.[0] || 'place';
+  const panelCategory = String(panelCategoryRaw).replace(/_/g, ' ');
+  const panelRatingNum = Number(panelDetails?.rating ?? panelPoi?.rating);
+  const panelStars = Number.isFinite(panelRatingNum) ? panelRatingNum.toFixed(1) : 'N/A';
+  const panelRatingsCount = Number(panelDetails?.userRatingsTotal || panelDetails?.user_ratings_total || 0);
+  const panelAddress =
+    panelDetails?.formattedAddress || panelDetails?.vicinity || (
+      Number.isFinite(Number(panelPoi?.lat)) && Number.isFinite(Number(panelPoi?.lng)) ?
+        `${Number(panelPoi.lat).toFixed(5)}, ${Number(panelPoi.lng).toFixed(5)}` :
+        'Location not available'
+    );
+  const panelWebsite = String(panelDetails?.website || '').trim();
+  const panelMapsUrl = String(panelDetails?.googleMapsUrl || '').trim() || (
+    Number.isFinite(Number(panelPoi?.lat)) && Number.isFinite(Number(panelPoi?.lng)) ?
+      `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${panelPoi.lat},${panelPoi.lng}`)}` :
+      ''
+  );
+  const panelOpenNow = panelDetails?.openingHours?.openNow;
+  const panelWeekdayRows = Array.isArray(panelDetails?.openingHours?.weekdayText) ? panelDetails.openingHours.weekdayText : [];
+  const panelPhone = String(panelDetails?.formattedPhoneNumber || panelDetails?.internationalPhoneNumber || '').trim();
+  const panelPhoneHref = panelPhone ? `tel:${panelPhone.replace(/[^\d+]/g, '')}` : '';
+  const panelPriceLevel = Number(panelDetails?.priceLevel ?? panelDetails?.price_level);
+  const panelPriceText = Number.isFinite(panelPriceLevel) && panelPriceLevel >= 0 && panelPriceLevel <= 4 ? '₹'.repeat(Math.max(1, panelPriceLevel + 1)) : '';
+  const panelReviews = Array.isArray(panelDetails?.reviews) ? panelDetails.reviews.slice(0, 4) : [];
+  const localPanelBusiness = activeLocalPanel?.business || null;
+  const localPanelName = localPanelBusiness?.mapDisplayName || localPanelBusiness?.name || 'Local place';
+  const localPanelAddress = String(localPanelBusiness?.address || '').trim() || 'Location not available';
+  const localPanelCategory = String(localPanelBusiness?.category || 'local');
+  const localPanelRating = Number(localPanelBusiness?.rating);
+  const localPanelDistance = Number(localPanelBusiness?.distanceMeters);
+  const localPanelDistanceLabel = Number.isFinite(localPanelDistance) ?
+    (localPanelDistance < 1000 ? `${Math.round(localPanelDistance)} m` : `${(localPanelDistance / 1000).toFixed(2)} km`) :
+    'N/A';
+  const localPanelDescription = String(localPanelBusiness?.description || localPanelBusiness?.localSourcingNote || '').trim();
+  const localPanelMenu = String(localPanelBusiness?.menuCatalogFileUrl || '').trim();
+  const localPanelMenuAbs =
+    typeof window !== 'undefined' && localPanelMenu.startsWith('/') ?
+      `${window.location.origin}${localPanelMenu}` :
+      localPanelMenu.startsWith('http') ?
+        localPanelMenu :
+        '';
+  const localPanelCrowd = crowdLabel(localPanelBusiness?.crowdLevel);
+  const localPanelCrowdNum = Math.max(0, Math.min(100, Number(localPanelBusiness?.crowdLevel) || 0));
+  const localPanelIsRedPin = Boolean(localPanelBusiness?.localVerification?.redPin);
+  const localPanelHasLiveDeal = Boolean(activeLocalPanel?.hasLiveDeal);
 
 
   useEffect(() => {
@@ -474,7 +879,12 @@ function DiscoveryMap({
       null;
 
       // Local shops must always be red (single local pin color policy).
-      const icon = PIN_ICONS.red;
+      const icon = buildMapPinIcon(google, {
+        fill: hasLiveDeal ? '#dc2626' : '#ef4444',
+        dot: hasLiveDeal ? '#fee2e2' : '#ffffff',
+        size: isHighlighted ? 44 : 40,
+        pulse: true
+      });
 
       const marker = new google.maps.Marker({
         position: { lat: Number(lat), lng: Number(lng) },
@@ -484,10 +894,14 @@ function DiscoveryMap({
 
       marker.addListener('click', () => {
         const isHighlighted = highlightedIdRef.current && String(b?._id) === highlightedIdRef.current;
-
-        const popupModel = { ...b, __hasLiveDeal: hasLiveDeal, distanceMeters };
-        infoWindow.setContent(businessPopupHtml(popupModel, { isHighlighted }));
-        infoWindow.open({ map, anchor: marker });
+        activePopupBusinessIdRef.current = '';
+        closePoiPanel();
+        setActiveLocalPanel({
+          business: { ...b, distanceMeters },
+          hasLiveDeal,
+          isHighlighted
+        });
+        infoWindow.close();
       });
 
       businessMarkerByIdRef.current.set(String(b?._id), marker);
@@ -503,15 +917,59 @@ function DiscoveryMap({
     const poiMarkers = [];
     (pois || []).forEach((p) => {
       if (!Number.isFinite(p?.lat) || !Number.isFinite(p?.lng)) return;
+      const q = String(categoryFilter || '').trim();
+      const isExactSearchMatch = q ? poiMatchesPreciseQuery(q, p) : false;
+      const isMayMatch = q ? !isExactSearchMatch : false;
+      const isSearchPrimary = Boolean(highlightedPoiLatLng && poiLatLngMatch(p, highlightedPoiLatLng));
+      const isPerfectMatch = isSearchPrimary || isExactSearchMatch;
       const marker = new google.maps.Marker({
         position: { lat: p.lat, lng: p.lng },
-        icon: PIN_ICONS.blue
+        icon: buildMapPinIcon(google, {
+          fill: isPerfectMatch ? '#1e3a8a' : isMayMatch ? '#6b7280' : '#334155',
+          dot: isPerfectMatch ? '#bfdbfe' : isMayMatch ? '#e5e7eb' : '#cbd5e1',
+          size: 38
+        }),
+        zIndex: isPerfectMatch ? 560 : 420
       });
 
       marker.addListener('click', () => {
-        const isSearchPrimary = Boolean(highlightedPoiLatLng && poiLatLngMatch(p, highlightedPoiLatLng));
-        infoWindow.setContent(poiPopupHtml(p, { isSearchPrimary }));
-        infoWindow.open({ map, anchor: marker });
+        closeLocalPanel();
+        activePopupBusinessIdRef.current = '';
+        const reqSeq = ++poiDetailsReqSeqRef.current;
+        setActivePoiPhotoIndex(0);
+        setActivePoiPanelLoading(true);
+        setActivePoiPanel({
+          poi: p,
+          details: null,
+          isSearchPrimary,
+          isExactSearchMatch,
+          isMayMatch
+        });
+        // Public-place details are shown in the side panel; avoid duplicate map popup content.
+        infoWindow.close();
+        fetchPoiOriginalDetails(google, map, p).
+          then((details) => {
+            if (reqSeq !== poiDetailsReqSeqRef.current) return;
+            setActivePoiPanel({
+              poi: p,
+              details: details || null,
+              isSearchPrimary,
+              isExactSearchMatch,
+              isMayMatch
+            });
+            setActivePoiPanelLoading(false);
+          }).
+          catch(() => {
+            if (reqSeq !== poiDetailsReqSeqRef.current) return;
+            setActivePoiPanel({
+              poi: p,
+              details: null,
+              isSearchPrimary,
+              isExactSearchMatch,
+              isMayMatch
+            });
+            setActivePoiPanelLoading(false);
+          });
       });
 
       poiMarkers.push(marker);
@@ -530,7 +988,76 @@ function DiscoveryMap({
       businessCluster,
       poiCluster
     };
-  }, [isLoaded, loadError, userLocation, userLocationAccuracy, businesses, pois, offers, offerIds, effectiveHighlightBusinessId, highlightedPoiLatLng, budgetCapInr]);
+
+    // Keep currently open local-place popup refreshed when merchant crowd data changes.
+    const activeBusinessId = String(activePopupBusinessIdRef.current || '');
+    if (activeBusinessId) {
+      const latest = (businesses || []).find((b) => String(b?._id) === activeBusinessId);
+      const marker = businessMarkerByIdRef.current.get(activeBusinessId);
+      if (latest && marker) {
+        const popupModel = {
+          ...latest,
+          __hasLiveDeal: offerIds.has(activeBusinessId),
+          distanceMeters:
+            userLocation && Number.isFinite(userLocation.lat) && Number.isFinite(userLocation.lng) ?
+              (() => {
+                const loc = latest?.location?.coordinates || [];
+                const lng = Number(loc?.[0]);
+                const lat = Number(loc?.[1]);
+                if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+                const R = 6371e3;
+                const phi1 = userLocation.lat * Math.PI / 180;
+                const phi2 = lat * Math.PI / 180;
+                const dPhi = (lat - userLocation.lat) * Math.PI / 180;
+                const dLambda = (lng - userLocation.lng) * Math.PI / 180;
+                const a = Math.sin(dPhi / 2) ** 2 + Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLambda / 2) ** 2;
+                return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+              })() :
+              null
+        };
+        infoWindow.setContent(
+          businessPopupHtml(popupModel, {
+            isHighlighted: highlightedIdRef.current && String(latest?._id) === highlightedIdRef.current
+          })
+        );
+        infoWindow.open({ map, anchor: marker });
+      }
+    }
+  }, [isLoaded, loadError, userLocation, userLocationAccuracy, businesses, pois, offers, offerIds, effectiveHighlightBusinessId, highlightedPoiLatLng, budgetCapInr, categoryFilter]);
+
+  useEffect(() => {
+    const activeId = String(activeLocalPanel?.business?._id || '');
+    if (!activeId) return;
+    const latest = (businesses || []).find((b) => String(b?._id) === activeId);
+    if (!latest) {
+      setActiveLocalPanel(null);
+      return;
+    }
+    setActiveLocalPanel((prev) => {
+      if (!prev) return prev;
+      const dist =
+        userLocation && Number.isFinite(userLocation.lat) && Number.isFinite(userLocation.lng) ?
+          (() => {
+            const loc = latest?.location?.coordinates || [];
+            const lng = Number(loc?.[0]);
+            const lat = Number(loc?.[1]);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+            const R = 6371e3;
+            const phi1 = userLocation.lat * Math.PI / 180;
+            const phi2 = lat * Math.PI / 180;
+            const dPhi = (lat - userLocation.lat) * Math.PI / 180;
+            const dLambda = (lng - userLocation.lng) * Math.PI / 180;
+            const a = Math.sin(dPhi / 2) ** 2 + Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLambda / 2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          })() :
+          prev.business?.distanceMeters || null;
+      return {
+        ...prev,
+        hasLiveDeal: offerIds.has(activeId),
+        business: { ...latest, distanceMeters: dist }
+      };
+    });
+  }, [activeLocalPanel?.business?._id, businesses, offerIds, userLocation?.lat, userLocation?.lng]);
 
 
   useEffect(() => {
@@ -838,7 +1365,9 @@ function DiscoveryMap({
       map,
       position: { lat: endLat, lng: endLng },
       title: destinationPoint?.label ? `Destination: ${destinationPoint.label}` : 'Route destination',
-      icon: destinationPoint?.kind === 'local' ? PIN_ICONS.red : PIN_ICONS.blue,
+      icon: destinationPoint?.kind === 'local' ?
+        buildMapPinIcon(google, { fill: '#ef4444', dot: '#ffffff', size: 33 }) :
+        buildMapPinIcon(google, { fill: '#2563eb', dot: '#dbeafe', size: 33 }),
       optimized: false,
       zIndex: 9700
     });
@@ -876,11 +1405,11 @@ function DiscoveryMap({
 
   return (
     <div className="rounded-2xl overflow-hidden border border-slate-200 bg-white shadow-sm">
-      <div className="h-[500px] relative">
+      <div className="h-[420px] sm:h-[500px] relative">
         {highlightedPoiLatLng && typeof onDismissHighlightedPoi === 'function' &&
         <button
           type="button"
-          className="absolute top-3 left-3 z-[6] flex h-11 w-11 items-center justify-center rounded-full border-2 border-slate-200/90 bg-white/95 text-slate-500 shadow-lg backdrop-blur-sm transition-all duration-200 hover:scale-105 hover:border-red-300 hover:bg-red-50 hover:text-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
+          className="absolute top-3 left-3 z-[6] flex h-11 w-11 items-center justify-center rounded-full border-2 border-slate-200 bg-white text-slate-500 shadow-lg transition-all duration-200 hover:scale-105 hover:border-red-300 hover:bg-red-50 hover:text-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
           onClick={(e) => {
             e.stopPropagation();
             onDismissHighlightedPoi();
@@ -942,13 +1471,14 @@ function DiscoveryMap({
             } catch {}
           }}
           onClick={(e) => {
+            closeDetailPanels();
             if (!enablePinSelection || typeof onLocationChange !== 'function') return;
             const ll = e?.latLng;
             if (!ll) return;
             onLocationChange(ll.lat(), ll.lng());
           }}
           center={safeCenter}
-          zoom={DEFAULT_ZOOM}
+          zoom={Number.isFinite(Number(mapZoom)) ? Number(mapZoom) : DEFAULT_ZOOM}
           mapContainerStyle={{ width: '100%', height: '100%' }}
           options={{
             streetViewControl: false,
@@ -961,36 +1491,262 @@ function DiscoveryMap({
           }} />
 
         }
+        {activeLocalPanel && localPanelBusiness && (
+          <aside className="absolute right-3 top-3 z-[8] w-[min(92vw,380px)] max-h-[calc(100%-1.5rem)] overflow-hidden rounded-2xl border border-rose-400/40 bg-[#2f1212]/95 text-rose-50 shadow-2xl backdrop-blur-sm">
+            <div className="flex items-start justify-between gap-2 border-b border-rose-400/30 px-4 py-3">
+              <div>
+                <p className="text-base font-semibold leading-tight">{localPanelName}</p>
+                <p className="mt-1 text-xs capitalize text-rose-200/90">{localPanelCategory}</p>
+              </div>
+              <button
+                type="button"
+                onClick={closeLocalPanel}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-rose-400/35 text-rose-100 transition hover:bg-rose-200/10"
+                aria-label="Close local place details"
+              >
+                ×
+              </button>
+            </div>
+            <div className="max-h-[calc(100%-3.6rem)] overflow-y-auto p-4 space-y-3 text-sm">
+              <div className="rounded-xl border border-rose-400/30 bg-[#3b1515] p-3">
+                <p>⭐ {Number.isFinite(localPanelRating) ? localPanelRating.toFixed(1) : 'N/A'} · {localPanelDistanceLabel}</p>
+                {localPanelHasLiveDeal && <p className="mt-1 text-xs font-medium text-rose-200">Flash deal live</p>}
+                {localPanelIsRedPin && <p className="mt-1 text-xs font-medium text-rose-200">Verified local red pin</p>}
+                {activeLocalPanel?.isHighlighted && <p className="mt-1 text-xs font-medium text-fuchsia-200">Highlighted match</p>}
+              </div>
+              <div className="rounded-xl border border-rose-400/30 bg-[#3b1515] p-3 space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-rose-200/80">Address</p>
+                <p>{localPanelAddress}</p>
+              </div>
+              {localPanelDescription && (
+                <div className="rounded-xl border border-rose-400/30 bg-[#3b1515] p-3 space-y-1">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-rose-200/80">Description</p>
+                  <p className="text-rose-100/95">{localPanelDescription}</p>
+                </div>
+              )}
+              {localPanelCrowd && (
+                <div className="rounded-xl border border-rose-400/30 bg-[#3b1515] p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-rose-200/80">Live crowd</p>
+                  <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-rose-900/60">
+                    <div
+                      className={`h-full rounded-full ${localPanelCrowdNum >= 66 ? 'bg-rose-300' : localPanelCrowdNum >= 33 ? 'bg-amber-300' : 'bg-emerald-300'}`}
+                      style={{ width: `${localPanelCrowdNum}%` }}
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-rose-100">{localPanelCrowd} · {localPanelCrowdNum}%</p>
+                  <p className="mt-0.5 text-[11px] text-rose-200/80">{crowdFreshnessText(localPanelBusiness?.crowdLastPing)}</p>
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={`goout-go-route text-xs ${localPanelHasLiveDeal ? 'bg-rose-600 hover:bg-rose-700' : 'goout-btn-primary'}`}
+                  data-go-route="1"
+                  data-lat={Number(localPanelBusiness?.location?.coordinates?.[1])}
+                  data-lng={Number(localPanelBusiness?.location?.coordinates?.[0])}
+                  data-kind="local"
+                  data-business-id={String(localPanelBusiness?._id || '')}
+                  data-label={encodeURIComponent(localPanelName)}
+                >
+                  Go
+                </button>
+                {localPanelMenuAbs ? (
+                  <a
+                    href={localPanelMenuAbs}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-2 rounded-lg border border-rose-400/35 bg-[#4a1a1a] text-xs font-medium text-rose-100 hover:bg-[#5c2323]"
+                  >
+                    View menu
+                  </a>
+                ) : (
+                  <span className="px-3 py-2 rounded-lg border border-rose-400/25 bg-[#3b1515] text-xs text-rose-200/75">
+                    Menu unavailable
+                  </span>
+                )}
+              </div>
+            </div>
+          </aside>
+        )}
+        {activePoiPanel && panelPoi && (
+          <aside className="absolute right-3 top-3 z-[8] w-[min(92vw,380px)] max-h-[calc(100%-1.5rem)] overflow-hidden rounded-2xl border border-emerald-400/40 bg-[#0f2f24]/95 text-emerald-50 shadow-2xl backdrop-blur-sm">
+            <div className="flex items-start justify-between gap-2 border-b border-emerald-500/30 px-4 py-3">
+              <div>
+                <p className="text-base font-semibold leading-tight">{panelTitle}</p>
+                <p className="mt-1 text-xs capitalize text-emerald-200/90">{panelCategory}</p>
+              </div>
+              <button
+                type="button"
+                onClick={closePoiPanel}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-emerald-500/35 text-emerald-100 transition hover:bg-emerald-200/10"
+                aria-label="Close place details"
+              >
+                ×
+              </button>
+            </div>
+            <div className="max-h-[calc(100%-3.6rem)] overflow-y-auto p-4 space-y-3">
+              {activePanelPhotoUrl ? (
+                <div className="relative overflow-hidden rounded-xl border border-emerald-500/30 bg-[#102f24]">
+                  <img src={activePanelPhotoUrl} alt={panelTitle} className="h-44 w-full object-cover" />
+                  {panelPhotoCount > 1 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setActivePoiPhotoIndex((i) => (i - 1 + panelPhotoCount) % panelPhotoCount)}
+                        className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full border border-emerald-500/40 bg-[#0f2f24]/90 px-2 py-1 text-xs"
+                        aria-label="Previous photo"
+                      >
+                        ‹
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setActivePoiPhotoIndex((i) => (i + 1) % panelPhotoCount)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full border border-emerald-500/40 bg-[#0f2f24]/90 px-2 py-1 text-xs"
+                        aria-label="Next photo"
+                      >
+                        ›
+                      </button>
+                      <div className="absolute bottom-2 right-2 rounded-full bg-[#0a1f18]/90 px-2 py-0.5 text-[11px] text-emerald-100">
+                        {clampedPhotoIndex + 1}/{panelPhotoCount}
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-emerald-500/30 bg-[#102f24] px-3 py-6 text-center text-xs text-emerald-200/80">
+                  No photos available for this place.
+                </div>
+              )}
+
+              <div className="rounded-xl border border-emerald-500/30 bg-[#123627] p-3 text-sm">
+                <p>⭐ {panelStars}{panelRatingsCount > 0 ? ` (${panelRatingsCount.toLocaleString()} reviews)` : ''}{panelPriceText ? ` · ${panelPriceText}` : ''}</p>
+                {panelOpenNow === true && <p className="mt-1 text-xs font-medium text-emerald-200">Open now</p>}
+                {panelOpenNow === false && <p className="mt-1 text-xs font-medium text-rose-200">Closed now</p>}
+                {activePoiPanelLoading && <p className="mt-1 text-xs text-emerald-200/90">Loading more place details...</p>}
+              </div>
+
+              <div className="rounded-xl border border-emerald-500/30 bg-[#123627] p-3 text-sm space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-200/80">Address</p>
+                <p className="text-emerald-50">{panelAddress}</p>
+                {panelPhone && <p className="text-xs text-emerald-200/90">Phone: {panelPhone}</p>}
+              </div>
+
+              {!!panelWeekdayRows.length && (
+                <div className="rounded-xl border border-emerald-500/30 bg-[#123627] p-3 text-sm">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-200/80">Opening hours</p>
+                  <div className="mt-2 space-y-1 text-xs text-emerald-100">
+                    {panelWeekdayRows.map((row) => (
+                      <p key={row}>{row}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="goout-btn-primary text-xs"
+                  data-go-route="1"
+                  data-lat={panelPoi?.lat}
+                  data-lng={panelPoi?.lng}
+                  data-kind="poi"
+                  data-label={encodeURIComponent(panelPoi?.name || panelTitle)}
+                >
+                  Go
+                </button>
+                {panelMapsUrl && (
+                  <a
+                    href={panelMapsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-2 rounded-lg border border-emerald-500/35 bg-[#143b2b] text-xs font-medium text-emerald-100 hover:bg-[#194734]"
+                  >
+                    Open in Maps
+                  </a>
+                )}
+                {panelWebsite && (
+                  <a
+                    href={panelWebsite}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-2 rounded-lg border border-emerald-500/35 bg-[#143b2b] text-xs font-medium text-emerald-100 hover:bg-[#194734]"
+                  >
+                    Website
+                  </a>
+                )}
+                {panelPhoneHref && (
+                  <a
+                    href={panelPhoneHref}
+                    className="px-3 py-2 rounded-lg border border-emerald-500/35 bg-[#143b2b] text-xs font-medium text-emerald-100 hover:bg-[#194734]"
+                  >
+                    Call
+                  </a>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-emerald-500/30 bg-[#123627] p-3 text-sm">
+                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-200/80">Reviews</p>
+                {panelReviews.length ? (
+                  <div className="mt-2 space-y-2">
+                    {panelReviews.map((r, idx) => {
+                      const rr = Number(r?.rating);
+                      const rStars = Number.isFinite(rr) ? `⭐ ${rr.toFixed(1)}` : '';
+                      const author = String(r?.author_name || r?.authorAttribution?.displayName || 'Visitor');
+                      const txt = summarizeReviewText(r?.text || r?.originalText || '');
+                      return (
+                        <div key={`${author}-${idx}`} className="rounded-lg border border-emerald-500/25 bg-[#0f2f24] px-2.5 py-2">
+                          <p className="text-[11px] font-semibold text-emerald-100">{author}{rStars ? ` · ${rStars}` : ''}</p>
+                          <p className="mt-1 text-[11px] text-emerald-200/90">{txt || 'No text review provided.'}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-emerald-200/85">No review snippets available.</p>
+                )}
+              </div>
+            </div>
+          </aside>
+        )}
         {(isSearching || showResultsLoader) && (
-          <div className="absolute inset-0 z-[7] pointer-events-none bg-white/45 backdrop-blur-[1px] flex items-center justify-center">
+          <div className="absolute inset-0 z-[7] pointer-events-none bg-white flex items-center justify-center">
             <div className="rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-xs text-slate-700 shadow">
-              Loading places...
+              Loading…
             </div>
           </div>
         )}
         {enablePinSelection &&
         <div className="absolute top-3 left-3 z-[6] rounded-lg bg-emerald-50/95 border border-emerald-200 px-3 py-2 text-xs text-emerald-900 shadow-sm">
-            Pin mode ON: click map to set exact location.
+            Pin mode: tap map to set location.
           </div>
         }
       </div>
       <div className="p-4 bg-slate-50 border-t flex flex-col gap-1 text-sm">
-        <span><strong>Your location:</strong> {userLocationText}</span>
-        <span><strong>Public places found by search:</strong> {q ? poiCount : 0}</span>
-        <span><strong>Local places found by search:</strong> {q ? merchantCount : 0}</span>
+        <span><strong>You:</strong> {userLocationText}</span>
+        <span><strong>Public:</strong> {q ? poiCount : 0}</span>
+        <span><strong>Local:</strong> {q ? merchantCount : 0}</span>
+        {destinationPoint && typeof onCancelRoute === 'function' && (
+          <button
+            type="button"
+            onClick={onCancelRoute}
+            className="mt-2 inline-flex w-fit items-center rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+          >
+            Cancel route
+          </button>
+        )}
         {Number.isFinite(Number(budgetCapInr)) && Number(budgetCapInr) > 0 &&
         <span className="text-xs text-slate-600">
-            Budget overlay: grey pins are above your cap (or use a flash deal if one appears). Larger green dots highlight strong sustainability tags.
+            Budget: grey = over cap. Big green = strong eco tags.
           </span>
         }
         {Array.isArray(compareRouteOverlays) && compareRouteOverlays.length > 0 &&
         <span className="text-xs text-slate-600">
-            Comparator routes: green = best value for your goals; grey = alternate choice.
+            Compare: green = top pick; grey = alt.
           </span>
         }
         {mapVisualTheme === 'green' &&
         <span className="text-xs text-emerald-800">
-            Green layer: parks and landscape are emphasized; animated line = eco route preview from Green tab.
+            Green: softer map + animated eco route (Green tab).
           </span>
         }
       </div>

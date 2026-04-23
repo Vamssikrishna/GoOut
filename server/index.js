@@ -26,7 +26,28 @@ import conciergeRoutes from './routes/concierge.js';
 import uploadRoutes from './routes/uploads.js';
 import { setupSocketHandlers } from './socket/handlers.js';
 import Business from './models/Business.js';
+import { runBuddyMeetupReminderSweep } from './services/buddyReminderService.js';
 connectDB();
+
+function parseAllowedOrigins() {
+  const defaults = ['http://localhost:5173'];
+  const fromClientUrl = String(process.env.CLIENT_URL || '').split(',');
+  const fromMobile = String(process.env.MOBILE_APP_ORIGINS || '').split(',');
+  const all = [...defaults, ...fromClientUrl, ...fromMobile]
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  return [...new Set(all)];
+}
+
+const allowedOrigins = parseAllowedOrigins();
+const allowAnyOrigin = allowedOrigins.includes('*');
+
+function corsOriginHandler(origin, callback) {
+  if (allowAnyOrigin) return callback(null, true);
+  if (!origin) return callback(null, true);
+  if (allowedOrigins.includes(origin)) return callback(null, true);
+  return callback(null, false);
+}
 
 const CROWD_DECAY_MS = 3 * 60 * 60 * 1000;
 setInterval(async () => {
@@ -41,13 +62,29 @@ setInterval(async () => {
   }
 }, 15 * 60 * 1000);
 
+let buddyReminderSweepRunning = false;
+setInterval(async () => {
+  if (buddyReminderSweepRunning) return;
+  buddyReminderSweepRunning = true;
+  try {
+    await runBuddyMeetupReminderSweep(io);
+  } catch (e) {
+    console.error('[BuddyReminder] sweep error', e);
+  } finally {
+    buddyReminderSweepRunning = false;
+  }
+}, 30 * 1000);
+
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
-  cors: { origin: process.env.CLIENT_URL || 'http://localhost:5173' }
+  cors: {
+    origin: corsOriginHandler,
+    credentials: true,
+  },
 });
 
-app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173', credentials: true }));
+app.use(cors({ origin: corsOriginHandler, credentials: true }));
 app.use(express.json());
 app.use('/uploads', express.static(join(__dirname, 'uploads')));
 
@@ -75,6 +112,11 @@ app.use((err, req, res, next) => {
 
 app.set('io', io);
 setupSocketHandlers(io);
+
+// Initial sweep shortly after startup so reminders are not missed.
+setTimeout(() => {
+  runBuddyMeetupReminderSweep(io).catch((e) => console.error('[BuddyReminder] initial sweep error', e));
+}, 4000);
 
 function getCliArgValue(flag) {
   const idx = process.argv.indexOf(flag);

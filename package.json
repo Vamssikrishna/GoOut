@@ -7,7 +7,11 @@
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "server": "cd server && npm run dev",
     "client": "cd client && npm run dev",
-    "install:all": "npm install && cd server && npm install && cd ../client && npm install"
+    "mobile:start": "cd apps/mobile && npm run start",
+    "mobile:android": "cd apps/mobile && npm run android",
+    "mobile:ios": "cd apps/mobile && npm run ios",
+    "mobile:windows": "cd apps/mobile && npm run windows",
+    "install:all": "npm install && cd server && npm install && cd ../client && npm install && cd ../apps/mobile && npm install"
   },
   "keywords": ["goout", "local-discovery", "social-exploration"],
   "author": "",

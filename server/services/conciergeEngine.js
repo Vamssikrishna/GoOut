@@ -105,6 +105,14 @@ function normalizeDiscoveryPreferences(p) {
   };
 }
 
+function normalizeInterests(interests) {
+  if (!Array.isArray(interests)) return [];
+  return interests
+    .map((s) => String(s || '').trim().slice(0, 80))
+    .filter(Boolean)
+    .slice(0, 32);
+}
+
 function parseIntentSummary(rawMessage, budget, searchHint) {
   const t = String(rawMessage || '');
   const tl = t.toLowerCase();
@@ -675,6 +683,38 @@ function mergeMapContextFlashOffers(serverList, mapOffers, merchantPayload) {
   return out.slice(0, 28);
 }
 
+/**
+ * Active flash deals for businesses in the exploration radius — independent of
+ * budget / search filters on the merchant list, so the model sees the same
+ * live deals as the map feed (within the same radius cap).
+ */
+async function fetchFlashOffersNear(coords, maxDistanceM) {
+  const d = Number(maxDistance);
+  if (!Array.isArray(coords) || coords.length < 2 || !Number.isFinite(d) || d < 50) return [];
+  const businesses = await Business.find({
+    location: {
+      $nearSphere: {
+        $geometry: { type: 'Point', coordinates: coords },
+        $maxDistance: d
+      }
+    }
+  })
+    .select('_id')
+    .limit(220)
+    .lean();
+  const ids = businesses.map((b) => b._id);
+  if (!ids.length) return [];
+  return Offer.find({
+    businessId: { $in: ids },
+    isActive: true,
+    validUntil: { $gt: new Date() }
+  })
+    .populate('businessId', 'name')
+    .sort({ validUntil: 1 })
+    .limit(32)
+    .lean();
+}
+
 /** Diet / vibe signals from recent chat turns (session memory without DB). */
 function extractSessionSignalsFromHistory(history) {
   const arr = Array.isArray(history) ? history.slice(-14) : [];
@@ -817,6 +857,7 @@ function formatContextForPrompt(
     mapPois = [],
     hasExplorerMapMerchants = false,
     discoveryPreferences = null,
+    userInterests = [],
     parsedIntent = null,
     liveMapSyncLine = '',
     sessionSignals = [],
@@ -851,7 +892,10 @@ function formatContextForPrompt(
           'Public fetch ran but returned 0 places (API/geodata empty for this pin).') :
         'Public fetch was skipped (short greeting).') +
       ' If LOCAL_MERCHANT count > 0, you MUST answer with those merchants whenever the user asks about food, shops, nearby picks, prices, Red Pin, or generic "what is good" — do not treat empty public results as "no data".' +
-      ' PUBLIC_SPACES lists parks, libraries, attractions and similar near the same radius when fetched — treat them as real options for outdoor/civic questions.'
+      ' PUBLIC_SPACES lists parks, libraries, attractions and similar near the same radius when fetched — treat them as real options for outdoor/civic questions.' +
+      (Array.isArray(liveFlashOffers) && liveFlashOffers.length ?
+        ` LIVE_FLASH_DEALS includes ${liveFlashOffers.length} active offer(s) in this radius; a merchant can appear there even if not in LOCAL_MERCHANTS (e.g. budget filter) — still use LIVE_FLASH_DEALS for flash-deal questions.` :
+        '')
   );
   if (contextNotes.length) {
     lines.push('');
@@ -865,12 +909,16 @@ function formatContextForPrompt(
     lines.push('User may be splitting one budget across multiple stops (e.g. lunch + park): suggest combinations whose typical avgPrice sum fits their cap.');
   }
   const dp = normalizeDiscoveryPreferences(discoveryPreferences);
+  const normalizedInterests = normalizeInterests(userInterests);
   if (dp.prefer.length || dp.avoid.length || dp.notes) {
     lines.push('');
     lines.push('USER_DISCOVERY_MEMORY (this logged-in user — filter and rank accordingly):');
     if (dp.prefer.length) lines.push(`Prefer: ${dp.prefer.join(' · ')}`);
     if (dp.avoid.length) lines.push(`Avoid / dislike: ${dp.avoid.join(' · ')}`);
     if (dp.notes) lines.push(`Notes: ${dp.notes.slice(0, 500)}`);
+  }
+  if (normalizedInterests.length) {
+    lines.push(`Profile interests: ${normalizedInterests.join(' · ')}`);
   }
   if (sessionSignals.length) {
     lines.push('');
@@ -1052,7 +1100,10 @@ const SYSTEM_BASE = `You are the GoOut City Concierge — a knowledgeable, frien
 ${CONCIERGE_POLICIES}`;
 
 const SYSTEM_GREETING = `${SYSTEM_BASE}
-The user sent a short greeting or thanks. Answer in one or two warm sentences. Set browseIntent to "none".
+VOICE:
+- Talk cool and real: short lines, natural phrasing, no corporate tone.
+- Keep it brief: 1-2 sentences max for greetings.
+The user sent a short greeting or thanks. Set browseIntent to "none".
 ${JSON_SCHEMA_HINT}`;
 
 function conciergeUserIdentityInstruction(displayName) {
@@ -1071,6 +1122,10 @@ Answer using ONLY the supplied lists. LOCAL_MERCHANTS and PUBLIC_SPACES are inde
 If LOCAL_MERCHANTS is non-empty, base your answer on it for food, cafés, shops, prices, Red Pin, sustainability tags, and generic "nearby" questions — even when PUBLIC_SPACES is empty or "(not loaded)".
 Mention missing parks only when the user explicitly wanted parks/outdoors or a park+shop itinerary and public data is empty; then suggest locals plus moving the map for parks.
 NATURAL_GUIDE: Sound like a friendly local — concise, warm, and actionable. When MAP_POIS, PUBLIC_SPACES, and LOCAL_MERCHANTS all contribute, weave one short story (e.g. grab tea at [merchant] then walk a few minutes to [park/bench POI]) using exact names from the lists and straight-line distances when walk times are not in WALKING_ROUTE lines.
+VOICE:
+- Talk cool and real. Use plain words, contractions, and short punchy lines.
+- Keep replies tight: usually 2-5 lines. Skip fluff and repetitive caveats.
+- Be confident but honest. If data is missing, say it once and move to useful picks.
 LANGUAGE_ADAPTATION: Mirror the user's style (simple, casual, Hinglish-like phrases, or formal) while staying clear and respectful. Understand short/slang asks and map them to nearby intents.
 HYBRID_QUESTIONS: If user asks combinations (e.g. "coffee + park", "shop and monument", "food then walk"), always provide a combined plan with sequence, route hint, and why each stop fits.
 ROUTE_FIRST: When route hints exist (WALKING_ROUTE / HYBRID_ROUTE_HINT), include them naturally in the answer.
@@ -1079,6 +1134,7 @@ ${JSON_SCHEMA_HINT}`;
 
 const SYSTEM_COMPACT = `You are GoOut City Concierge.
 Use only provided lists. Do not invent places.
+Tone: cool, real, concise.
 Return only JSON with fields: reply,browseIntent,mapPan,highlightBusinessId,walkDistanceMeters,carbonCreditsNudge.`;
 
 function safeJsonParse(text) {
@@ -1134,8 +1190,8 @@ function buildOfflineConciergeParsed({
     const hasPins = merchantPayload.length > 0;
     return {
       reply: hasPins ?
-        `${hey}I can’t reach the AI service right now, but your map already has ${merchantPayload.length} nearby GoOut spot(s). Try tapping a pin or searching for cafés, parks, or budget-friendly places.` :
-        `${hey}I can’t reach the AI service right now, and there are no GoOut merchants loaded very close to this pin — try moving the map or searching a wider area.`,
+        `${hey}Quick heads-up: AI is down right now. You still have ${merchantPayload.length} nearby GoOut spots on map — tap a pin and go.` :
+        `${hey}AI is down right now, and this pin has no nearby GoOut spots. Move the map a bit or zoom out.`,
       browseIntent: 'none',
       mapPan: null,
       highlightBusinessId: null,
@@ -1157,15 +1213,14 @@ function buildOfflineConciergeParsed({
 
   let reply = '';
   if (list.length) {
-    reply = `I can’t reach the live AI model right now, but here are nearby GoOut listings:\n${bullets}`;
+    reply = `AI is down right now, but nearby GoOut picks are still here:\n${bullets}`;
   } else if (publicPayload.length) {
-    reply = `I can’t reach the live AI model right now. No GoOut merchants in this radius, but here are nearby public places:\n${publicPayload
+    reply = `AI is down right now. No GoOut merchants in this radius, but nearby public spots are:\n${publicPayload
       .slice(0, 6)
       .map((p, i) => `${i + 1}. ${p.name} (${p.category})`)
       .join('\n')}`;
   } else {
-    reply =
-      'I can’t reach the live AI model and there are no listings in this radius. Try zooming out or moving the map pin, then ask again.';
+    reply = 'AI is down and this radius is empty. Zoom out or move the pin, then ask again.';
   }
   if (publicPayload.length && list.length) {
     reply += `\n\nPublic picks nearby: ${publicPayload
@@ -1222,6 +1277,7 @@ export async function runConciergeChat({
   mapContext = null,
   userId = null,
   discoveryPreferences = null,
+  userInterests = [],
   userDisplayName = null,
   explorationRadiusM = null,
   userActivitySnapshot = null
@@ -1325,20 +1381,16 @@ export async function runConciergeChat({
   }
 
   let flashOfferDocs = [];
-  if (!casualGreeting && merchants.length) {
-    flashOfferDocs = await Offer.find({
-      businessId: { $in: merchants.map((m) => m._id) },
-      isActive: true,
-      validUntil: { $gt: new Date() }
-    })
-      .populate('businessId', 'name')
-      .sort({ validUntil: 1 })
-      .limit(25)
-      .lean();
+  if (!casualGreeting) {
+    try {
+      flashOfferDocs = await fetchFlashOffersNear(coords, maxMerchantRadiusM);
+    } catch (e) {
+      console.error('[concierge] flash offers near', e);
+    }
     const flashBizIds = new Set(
       flashOfferDocs.map((o) => String(o.businessId?._id || o.businessId))
     );
-    if (wantsFlashDealPriority(rawMessage) && flashBizIds.size) {
+    if (wantsFlashDealPriority(rawMessage) && flashBizIds.size && merchants.length) {
       merchants = [...merchants].sort((a, b) => {
         const af = flashBizIds.has(String(a._id)) ? 1 : 0;
         const bf = flashBizIds.has(String(b._id)) ? 1 : 0;
@@ -1364,16 +1416,13 @@ export async function runConciergeChat({
 
   merchants = merchants.slice(0, casualGreeting ? 16 : 48);
 
-  const sliceIds = new Set(merchants.map((m) => String(m._id)));
-  let liveFlashOffersForPrompt = flashOfferDocs
-    .filter((o) => sliceIds.has(String(o.businessId?._id || o.businessId)))
-    .map((o) => ({
-      businessId: String(o.businessId?._id || o.businessId),
-      merchantName: String(o.businessId?.name || 'Merchant'),
-      title: String(o.title || ''),
-      offerPrice: o.offerPrice ?? 0,
-      validUntilIso: o.validUntil ? new Date(o.validUntil).toISOString() : ''
-    }));
+  let liveFlashOffersForPrompt = flashOfferDocs.map((o) => ({
+    businessId: String(o.businessId?._id || o.businessId),
+    merchantName: String(o.businessId?.name || 'Merchant'),
+    title: String(o.title || ''),
+    offerPrice: o.offerPrice ?? 0,
+    validUntilIso: o.validUntil ? new Date(o.validUntil).toISOString() : ''
+  })).slice(0, 28);
 
   const publicFetchAttempted = !casualGreeting;
   let publicSpaces = [];
@@ -1554,6 +1603,7 @@ export async function runConciergeChat({
     mapPois: mapPoisPayload,
     hasExplorerMapMerchants,
     discoveryPreferences,
+    userInterests,
     parsedIntent,
     liveMapSyncLine,
     sessionSignals,
@@ -1574,8 +1624,13 @@ export async function runConciergeChat({
     `User location: ${userLat},${userLng}`,
     `Merchants: ${(forPromptMerchants || []).slice(0, 8).map((m) => `${m.name}|${m.category}|${m.distanceMeters ?? 'n/a'}m`).join('; ') || 'none'}`,
     `Public: ${(forPromptPublicWithMapPois || []).slice(0, 8).map((p) => `${p.name}|${p.category}|${p.distanceMeters ?? 'n/a'}m`).join('; ') || 'none'}`,
+    !casualGreeting && liveFlashOffersForPrompt.length ?
+      `Flash deals: ${liveFlashOffersForPrompt.slice(0, 8).map((o) => `${o.merchantName}:${o.title}|₹${o.offerPrice}`).join('; ')}` :
+      null,
     `User: ${rawMessage}`
-  ].join('\n');
+  ].
+    filter(Boolean).
+    join('\n');
 
   const nameBlock = conciergeUserIdentityInstruction(userDisplayName);
   const sharedModelOptions = {

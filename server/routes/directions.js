@@ -65,6 +65,134 @@ function getGoogleMode(profile) {
   return 'driving';
 }
 
+function stripHtml(text) {
+  return String(text || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function isLikelyHighwayStep(step) {
+  const txt = stripHtml(step?.html_instructions || '');
+  const maneuver = String(step?.maneuver || '').toLowerCase();
+  const blob = `${txt} ${maneuver}`;
+  return (
+    /\b(highway|expressway|freeway|motorway|toll road|interstate|nh\s*\d+|sh\s*\d+|ring road)\b/.test(blob) ||
+    /\bmerge\b/.test(maneuver)
+  );
+}
+
+function mapGoogleRouteOut(route, { localPreferred = false } = {}) {
+  const legs = Array.isArray(route?.legs) ? route.legs : [];
+  const distanceMeters = legs.length ?
+    legs.reduce((sum, leg) => sum + (leg?.distance?.value || 0), 0) :
+    route?.legs?.[0]?.distance?.value || 0;
+  const durationSeconds = legs.length ?
+    legs.reduce((sum, leg) => sum + (leg?.duration?.value || 0), 0) :
+    route?.legs?.[0]?.duration?.value || 0;
+
+  const allSteps = legs.flatMap((leg) => (Array.isArray(leg?.steps) ? leg.steps : []));
+  const totalSteps = allSteps.length || 1;
+  const highwayStepCount = allSteps.reduce((n, s) => n + (isLikelyHighwayStep(s) ? 1 : 0), 0);
+  const highwayShare = highwayStepCount / totalSteps;
+  const usesHighway = highwayStepCount > 0;
+  const poly = route?.overview_polyline?.points;
+  const decoded = decodePolyline(poly);
+
+  return {
+    distanceMeters: Number(distanceMeters) || 0,
+    durationSeconds: Number(durationSeconds) || 0,
+    geometryLatLng: decoded.map((p) => [p.lat, p.lng]),
+    localPreferred: Boolean(localPreferred),
+    usesHighway,
+    highwayShare
+  };
+}
+
+function dedupeRoutes(routes) {
+  const seen = new Set();
+  return (Array.isArray(routes) ? routes : []).filter((r) => {
+    const dist = Math.round(Number(r?.distanceMeters) || 0);
+    const dur = Math.round(Number(r?.durationSeconds) || 0);
+    const first = Array.isArray(r?.geometryLatLng) && r.geometryLatLng[0] ? r.geometryLatLng[0] : [];
+    const key = `${dist}|${dur}|${Number(first[0] || 0).toFixed(4)}|${Number(first[1] || 0).toFixed(4)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function fetchGoogleDirectionsRoutes({
+  oLat,
+  oLng,
+  dLat,
+  dLng,
+  googleKey,
+  mode,
+  alternatives = true,
+  avoidHighways = false
+}) {
+  const avoid = avoidHighways ? '&avoid=highways|tolls' : '';
+  const url =
+    `https://maps.googleapis.com/maps/api/directions/json?` +
+    `origin=${encodeURIComponent(`${oLat},${oLng}`)}` +
+    `&destination=${encodeURIComponent(`${dLat},${dLng}`)}` +
+    `&mode=${encodeURIComponent(mode)}` +
+    `&alternatives=${alternatives ? 'true' : 'false'}` +
+    `${avoid}` +
+    `&key=${encodeURIComponent(googleKey)}`;
+  const resp = await fetchWithTimeout(url, { method: 'GET' }, 15000);
+  if (!resp.ok) return [];
+  const data = await resp.json();
+  if ((data?.status || '').toString() !== 'OK') return [];
+  return Array.isArray(data?.routes) ? data.routes : [];
+}
+
+function isLocalishRoute(route) {
+  const h = Number(route?.highwayShare);
+  if (Number.isFinite(h)) return h <= 0.22;
+  if (route?.usesHighway === false) return true;
+  return Boolean(route?.localPreferred);
+}
+
+function rankRoutesLocalFirst(routes, limit) {
+  const sorted = dedupeRoutes(routes).sort((a, b) => {
+    const aLocal = isLocalishRoute(a) ? 1 : 0;
+    const bLocal = isLocalishRoute(b) ? 1 : 0;
+    if (aLocal !== bLocal) return bLocal - aLocal;
+    const ah = Number(a.highwayShare ?? (a.usesHighway ? 1 : 0));
+    const bh = Number(b.highwayShare ?? (b.usesHighway ? 1 : 0));
+    if (ah !== bh) return ah - bh;
+    return (a.durationSeconds || 0) - (b.durationSeconds || 0);
+  });
+
+  const local = sorted.filter((r) => isLocalishRoute(r));
+  const fallback = sorted.filter((r) => !isLocalishRoute(r));
+  const cap = Math.max(1, Number(limit) || 4);
+  if (local.length >= cap) return local.slice(0, cap);
+  return [...local, ...fallback].slice(0, cap);
+}
+
+async function fetchOsrmRoutes({
+  coords,
+  osrmProfile,
+  alternatives = true,
+  excludeMotorway = false,
+  localPreferred = false
+}) {
+  const base = `https://router.project-osrm.org/route/v1/${osrmProfile}/${coords}?overview=full&geometries=geojson&alternatives=${alternatives ? 'true' : 'false'}&steps=false&annotations=distance,duration`;
+  const url = excludeMotorway && osrmProfile === 'driving' ? `${base}&exclude=motorway` : base;
+  const resp = await fetchWithTimeout(url, { method: 'GET', headers: { 'User-Agent': 'GoOut/1.0 (Local Development)' } }, 10000);
+  if (!resp.ok) return [];
+  const data = await resp.json();
+  const routes = Array.isArray(data?.routes) ? data.routes : [];
+  return routes.map((r) => ({
+    distanceMeters: Number(r.distance) || 0,
+    durationSeconds: Number(r.duration) || 0,
+    geometryLatLng: (r.geometry?.coordinates || []).map(([lng, lat]) => [lat, lng]),
+    localPreferred: Boolean(localPreferred),
+    usesHighway: null,
+    highwayShare: null
+  }));
+}
+
 router.post('/route', async (req, res) => {
   try {
     const { origin, destination, profile = 'driving', alternatives = true, maxAlternatives = 4 } = req.body || {};
@@ -86,72 +214,82 @@ router.post('/route', async (req, res) => {
     if (googleKey) {
       try {
         const googleMode = getGoogleMode(profile);
-        const url =
-        `https://maps.googleapis.com/maps/api/directions/json?` +
-        `origin=${encodeURIComponent(`${oLat},${oLng}`)}` +
-        `&destination=${encodeURIComponent(`${dLat},${dLng}`)}` +
-        `&mode=${encodeURIComponent(googleMode)}` +
-        `&alternatives=${alternatives ? 'true' : 'false'}` +
-        `&key=${encodeURIComponent(googleKey)}`;
+        const preferLocalDriving = googleMode === 'driving';
+        const [localRaw, regularRaw] = preferLocalDriving ?
+          await Promise.all([
+            fetchGoogleDirectionsRoutes({
+              oLat,
+              oLng,
+              dLat,
+              dLng,
+              googleKey,
+              mode: googleMode,
+              alternatives,
+              avoidHighways: true
+            }),
+            fetchGoogleDirectionsRoutes({
+              oLat,
+              oLng,
+              dLat,
+              dLng,
+              googleKey,
+              mode: googleMode,
+              alternatives,
+              avoidHighways: false
+            })
+          ]) :
+          [await fetchGoogleDirectionsRoutes({
+            oLat,
+            oLng,
+            dLat,
+            dLng,
+            googleKey,
+            mode: googleMode,
+            alternatives,
+            avoidHighways: false
+          }), []];
 
-        const resp = await fetchWithTimeout(url, { method: 'GET' }, 15000);
-        if (resp.ok) {
-          const data = await resp.json();
-          const googleStatus = (data?.status || '').toString();
-          const googleRoutes = Array.isArray(data?.routes) ? data.routes : [];
+        const mappedLocal = (localRaw || []).map((r) => mapGoogleRouteOut(r, { localPreferred: true }));
+        const mappedRegular = (regularRaw || []).map((r) => mapGoogleRouteOut(r, { localPreferred: false }));
+        const outRoutes = rankRoutesLocalFirst([...mappedLocal, ...mappedRegular], Math.max(1, Number(maxAlternatives) || 4));
 
-          if (googleStatus === 'OK' && googleRoutes.length > 0) {
-            const outRoutes = googleRoutes.
-            map((r) => {
-              const distanceMeters = Array.isArray(r?.legs) ?
-              r.legs.reduce((sum, leg) => sum + (leg?.distance?.value || 0), 0) :
-              r?.legs?.[0]?.distance?.value || 0;
-              const durationSeconds = Array.isArray(r?.legs) ?
-              r.legs.reduce((sum, leg) => sum + (leg?.duration?.value || 0), 0) :
-              r?.legs?.[0]?.duration?.value || 0;
-
-              const poly = r?.overview_polyline?.points;
-              const decoded = decodePolyline(poly);
-
-              return {
-                distanceMeters: Number(distanceMeters) || 0,
-                durationSeconds: Number(durationSeconds) || 0,
-
-                geometryLatLng: decoded.map((p) => [p.lat, p.lng])
-              };
-            }).
-            sort((a, b) => (a.durationSeconds || 0) - (b.durationSeconds || 0)).
-            slice(0, Math.max(1, Number(maxAlternatives) || 4));
-
-            if (outRoutes.length > 0) return res.json({ routes: outRoutes });
-          }
-        }
+        if (outRoutes.length > 0) return res.json({ routes: outRoutes });
       } catch (e) {
 
       }
     }
 
     const coords = `${oLng},${oLat};${dLng},${dLat}`;
-
-
-    const url = `https://router.project-osrm.org/route/v1/${osrmProfile}/${coords}?overview=full&geometries=geojson&alternatives=${alternatives ? 'true' : 'false'}&steps=false&annotations=distance,duration`;
-
-    const resp = await fetchWithTimeout(url, { method: 'GET', headers: { 'User-Agent': 'GoOut/1.0 (Local Development)' } }, 10000);
-    if (!resp.ok) {
-      return res.status(502).json({ error: 'Directions provider error', status: resp.status });
+    const preferLocalDriving = osrmProfile === 'driving';
+    const [localOsrm, regularOsrm] = preferLocalDriving ?
+      await Promise.all([
+        fetchOsrmRoutes({
+          coords,
+          osrmProfile,
+          alternatives,
+          excludeMotorway: true,
+          localPreferred: true
+        }),
+        fetchOsrmRoutes({
+          coords,
+          osrmProfile,
+          alternatives,
+          excludeMotorway: false,
+          localPreferred: false
+        })
+      ]) :
+      [await fetchOsrmRoutes({
+        coords,
+        osrmProfile,
+        alternatives,
+        excludeMotorway: false,
+        localPreferred: false
+      }), []];
+    const outRoutesRaw = dedupeRoutes([...(localOsrm || []), ...(regularOsrm || [])]);
+    if (!outRoutesRaw.length) {
+      return res.status(502).json({ error: 'Directions provider error', status: 502 });
     }
-
-    const data = await resp.json();
-    const routes = Array.isArray(data?.routes) ? data.routes : [];
-
-
-    routes.sort((a, b) => (a.duration || 0) - (b.duration || 0));
-
-    const outRoutes = routes.slice(0, Math.max(1, Number(maxAlternatives) || 4)).map((r) => ({
-      distanceMeters: r.distance,
-      durationSeconds: r.duration,
-      geometryLatLng: (r.geometry?.coordinates || []).map(([lng, lat]) => [lat, lng])
-    }));
+    const outRoutes = rankRoutesLocalFirst(outRoutesRaw, Math.max(1, Number(maxAlternatives) || 4));
 
     return res.json({ routes: outRoutes });
   } catch (e) {

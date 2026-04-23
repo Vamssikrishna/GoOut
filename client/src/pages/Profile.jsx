@@ -13,6 +13,35 @@ function parseTags(line) {
   return line.split(/[,;\n]/).map((s) => s.trim()).filter(Boolean);
 }
 
+function toId(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') return String(value._id || value.id || '');
+  return String(value);
+}
+
+function computeBuddySocialStats(groups, myId) {
+  const me = String(myId || '');
+  if (!me) return { groupsJoined: 0, friendsCount: 0 };
+  const joinedGroups = (Array.isArray(groups) ? groups : []).filter((g) =>
+    Array.isArray(g?.members) && g.members.some((m) => toId(m) === me)
+  );
+  const friendIds = new Set();
+  joinedGroups.forEach((g) => {
+    if (toId(g?.creatorId) && toId(g.creatorId) !== me) {
+      friendIds.add(toId(g.creatorId));
+    }
+    (Array.isArray(g?.members) ? g.members : []).forEach((m) => {
+      const id = toId(m);
+      if (id && id !== me) friendIds.add(id);
+    });
+  });
+  return {
+    groupsJoined: joinedGroups.length,
+    friendsCount: friendIds.size
+  };
+}
+
 export default function Profile() {
   const { user, refreshUser, logout } = useAuth();
   const { addToast } = useToast();
@@ -27,7 +56,7 @@ export default function Profile() {
   const [name, setName] = useState('');
   const [interestsLine, setInterestsLine] = useState('');
   const [weight, setWeight] = useState('');
-  const [emergencyContact, setEmergencyContact] = useState('');
+  const [emergencyEmailsLine, setEmergencyEmailsLine] = useState('');
   const [buddyMode, setBuddyMode] = useState(false);
   const [preferLine, setPreferLine] = useState('');
   const [avoidLine, setAvoidLine] = useState('');
@@ -42,6 +71,8 @@ export default function Profile() {
   const [bizWebsite, setBizWebsite] = useState('');
   const [bizInstagram, setBizInstagram] = useState('');
   const [bizFacebook, setBizFacebook] = useState('');
+  const [groupsJoined, setGroupsJoined] = useState(0);
+  const [friendsCount, setFriendsCount] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -55,8 +86,23 @@ export default function Profile() {
       setName(u.name || '');
       setInterestsLine(Array.isArray(u.interests) ? u.interests.join(', ') : '');
       setWeight(u.weight != null ? String(u.weight) : '');
-      setEmergencyContact(u.emergencyContact || '');
+      const emergencyEmails = Array.isArray(u.emergencyEmails) ? u.emergencyEmails : [];
+      setEmergencyEmailsLine(emergencyEmails.join(', '));
       setBuddyMode(Boolean(u.buddyMode));
+      if (!roleMerchant) {
+        try {
+          const { data: buddyGroups } = await api.get('/buddies/groups');
+          const stats = computeBuddySocialStats(buddyGroups, u.id || u._id);
+          setGroupsJoined(stats.groupsJoined);
+          setFriendsCount(stats.friendsCount);
+        } catch {
+          setGroupsJoined(0);
+          setFriendsCount(0);
+        }
+      } else {
+        setGroupsJoined(0);
+        setFriendsCount(0);
+      }
       if (!roleMerchant) {
         try {
           const { data } = await api.get('/users/discovery-preferences');
@@ -99,10 +145,20 @@ export default function Profile() {
     try {
       const body = { name: name.trim() };
       if (!isMerchant) {
+        const emergencyEmails = parseTags(emergencyEmailsLine).map((s) => s.toLowerCase());
+        if (emergencyEmails.length < 1 || emergencyEmails.length > 3) {
+          addToast({
+            type: 'error',
+            title: 'Emergency emails required',
+            message: 'Please add at least 1 and at most 3 emergency family emails.'
+          });
+          setSavingAccount(false);
+          return;
+        }
         body.interests = parseTags(interestsLine);
         const w = parseFloat(weight);
         if (Number.isFinite(w)) body.weight = w;
-        body.emergencyContact = emergencyContact.trim();
+        body.emergencyEmails = emergencyEmails;
         body.buddyMode = buddyMode;
       }
       await api.put('/users/profile', body);
@@ -199,20 +255,80 @@ export default function Profile() {
   const linkedBizName = bizPopulated ? user.businessId.name : '';
   const linkedBizCategory = bizPopulated ? user.businessId.category : '';
   const linkedBizAddress = bizPopulated ? user.businessId.address : '';
+  const interestCount = parseTags(interestsLine).length;
+  const preferCount = parseTags(preferLine).length;
+  const avoidCount = parseTags(avoidLine).length;
+  const profileCompleteness = isMerchant ?
+    (name.trim() ? 40 : 0) + (bizName.trim() ? 30 : 0) + (bizDescription.trim() ? 30 : 0) :
+    (name.trim() ? 34 : 0) + (interestCount > 0 ? 33 : 0) + (preferCount > 0 ? 33 : 0);
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8 pb-16 goout-animate-in">
-      <div className="goout-animate-stagger space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-goout-green/90">Account</p>
-        <h1 className="font-display text-3xl md:text-4xl font-bold text-slate-900 tracking-tight">Your profile</h1>
-        <p className="text-slate-600 text-sm md:text-base max-w-xl">
+    <div className="w-full space-y-6 pb-16 goout-animate-in">
+      <div className="relative overflow-hidden rounded-3xl border border-emerald-200/60 bg-gradient-to-br from-white via-emerald-50/40 to-slate-50/40 p-6 md:p-7 shadow-sm">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_85%_20%,rgba(16,185,129,0.12),transparent_40%)]" />
+        <div className="relative goout-animate-stagger space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-goout-green/90">Account</p>
+          <h1 className="font-display text-3xl md:text-4xl font-bold text-slate-900 tracking-tight">Your profile</h1>
+          <p className="text-slate-700 text-sm md:text-base max-w-2xl font-medium">
           {isMerchant
-            ? 'Everything about your account and storefront in one place — review details below and save when you make changes.'
-            : 'Your account, safety, concierge preferences, and activity — review and update below.'}
-        </p>
+            ? 'Manage your identity, storefront details, and public listing fields from one modern workspace.'
+            : 'Manage your explorer identity, safety details, and concierge preferences in one place.'}
+          </p>
+          <div className="pt-3 flex flex-wrap gap-2">
+            <span className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-700">
+              Profile completeness: {Math.min(100, profileCompleteness)}%
+            </span>
+            {!isMerchant && (
+              <>
+                <span className="rounded-full border border-sky-200 bg-white px-3 py-1 text-xs font-semibold text-sky-700">
+                  Groups: {groupsJoined}
+                </span>
+                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                  Friends: {friendsCount}
+                </span>
+              </>
+            )}
+            {isMerchant && (
+              <span className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700">
+                Listing: {bid ? 'Linked' : 'Not linked'}
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
-      <section className="goout-glass-card rounded-2xl p-6 md:p-8 goout-hover-lift border border-white/50">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="goout-soft-card rounded-2xl p-4 border border-slate-200">
+          <p className="text-xs uppercase tracking-wider text-slate-500 font-semibold">Profile Score</p>
+          <p className="mt-1 text-2xl font-bold text-slate-900">{Math.min(100, profileCompleteness)}%</p>
+        </div>
+        <div className="goout-soft-card rounded-2xl p-4 border border-slate-200">
+          <p className="text-xs uppercase tracking-wider text-slate-500 font-semibold">Buddy Mode</p>
+          <p className="mt-1 text-2xl font-bold text-slate-900">{buddyMode ? 'On' : 'Off'}</p>
+        </div>
+        <div className="goout-soft-card rounded-2xl p-4 border border-slate-200">
+          <p className="text-xs uppercase tracking-wider text-slate-500 font-semibold">{isMerchant ? 'Business Status' : 'Groups Joined'}</p>
+          <p className="mt-1 text-2xl font-bold text-slate-900">
+            {isMerchant ? (bid ? 'Linked' : 'Pending') : groupsJoined}
+          </p>
+        </div>
+        <div className="goout-soft-card rounded-2xl p-4 border border-slate-200 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-wider text-slate-500 font-semibold">{isMerchant ? 'Quick Action' : 'Friends'}</p>
+            <p className="mt-1 text-sm text-slate-700">{isMerchant ? 'Open Merchant Hub' : `${friendsCount} total`}</p>
+          </div>
+          {isMerchant ?
+          <Link to="/app/merchant" className="goout-btn-primary text-sm py-2 px-3">
+              Open
+            </Link> :
+          <Link to="/app/buddies" className="goout-btn-primary text-sm py-2 px-3">
+              View
+            </Link>
+          }
+        </div>
+      </section>
+
+      <section className="goout-glass-card rounded-3xl p-6 md:p-8 goout-hover-lift border border-slate-200">
         <div className="flex flex-wrap items-start gap-5">
           <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-xl font-bold text-white shadow-lg shadow-emerald-500/25">
             {getInitials(user?.name)}
@@ -260,9 +376,9 @@ export default function Profile() {
         </div>
       </section>
 
-      <form onSubmit={saveAccount} className="goout-glass-card rounded-2xl p-6 md:p-8 space-y-5 goout-hover-lift">
+      <form onSubmit={saveAccount} className="goout-glass-card rounded-3xl p-6 md:p-8 space-y-5 goout-hover-lift border border-slate-200">
         <div className="flex items-center justify-between gap-4 flex-wrap">
-          <h2 className="font-display text-lg font-semibold text-slate-900">Account &amp; safety</h2>
+          <h2 className="font-display text-lg font-semibold text-slate-900">Account &amp; safety settings</h2>
           <span
             className={`goout-role-pill ${isMerchant ? 'goout-role-pill--merchant' : 'goout-role-pill--explorer'}`}>
             {isMerchant ? 'Merchant' : 'Explorer'}
@@ -315,13 +431,16 @@ export default function Profile() {
                 </span>
               </label>
               <label className="block">
-                <span className="goout-label">Emergency contact</span>
+                <span className="goout-label">Emergency family emails (1 to 3)</span>
                 <input
                   className="goout-input mt-1"
-                  value={emergencyContact}
-                  onChange={(e) => setEmergencyContact(e.target.value)}
-                  placeholder="Name or phone"
+                  value={emergencyEmailsLine}
+                  onChange={(e) => setEmergencyEmailsLine(e.target.value)}
+                  placeholder="family1@email.com, family2@email.com"
                 />
+                <span className="text-xs text-slate-500 mt-1 block">
+                  SOS will email your current location to these addresses.
+                </span>
               </label>
             </div>
             <label className="flex items-center gap-3 cursor-pointer group">
@@ -349,7 +468,7 @@ export default function Profile() {
       </form>
 
       {!isMerchant && (
-        <form onSubmit={saveDiscovery} className="goout-glass-card rounded-2xl p-6 md:p-8 space-y-5 goout-hover-lift">
+        <form onSubmit={saveDiscovery} className="goout-glass-card rounded-3xl p-6 md:p-8 space-y-5 goout-hover-lift border border-slate-200">
           <h2 className="font-display text-lg font-semibold text-slate-900">Discovery &amp; concierge</h2>
           <p className="text-sm text-slate-600">
             Short chips help the AI concierge bias recommendations. Separate items with commas.
@@ -389,7 +508,7 @@ export default function Profile() {
       )}
 
       {isMerchant && (
-        <div className="goout-glass-card rounded-2xl p-6 md:p-8 space-y-6 goout-hover-lift">
+        <div className="goout-glass-card rounded-3xl p-6 md:p-8 space-y-6 goout-hover-lift border border-slate-200">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <h2 className="font-display text-lg font-semibold text-slate-900">Business listing</h2>
             {!bid && (
@@ -405,6 +524,9 @@ export default function Profile() {
             </p>
           ) : (
             <form onSubmit={saveBusiness} className="space-y-4">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                Keep this section updated — these values are visible to explorers on map cards and listing surfaces.
+              </div>
               <label className="block">
                 <span className="goout-label">Business name</span>
                 <input className="goout-input mt-1" value={bizName} onChange={(e) => setBizName(e.target.value)} required />
@@ -481,7 +603,7 @@ export default function Profile() {
         </div>
       )}
 
-      <section className="goout-glass-card rounded-2xl p-6 md:p-8 border border-slate-200/60">
+      <section className="goout-glass-card rounded-3xl p-6 md:p-8 border border-slate-200">
         <h2 className="font-display text-lg font-semibold text-slate-900 mb-2">Session</h2>
         <p className="text-sm text-slate-600 mb-4">Sign out on this device. You can sign in again anytime.</p>
         <button type="button" onClick={handleLogout} className="goout-btn-ghost border-red-200 text-red-700 hover:bg-red-50 hover:border-red-300">

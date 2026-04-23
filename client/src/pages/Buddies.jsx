@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import ExplorerCalendar from '../components/explorer/ExplorerCalendar';
 
 const FALLBACK_COORDS = { lng: 77.209, lat: 28.6139 };
 
@@ -12,8 +13,60 @@ function formatDateTime(value) {
   return dt.toLocaleString();
 }
 
+function planDateMs(value) {
+  const t = new Date(value).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+function normalizeBuddyPlans(groups, myId) {
+  const me = String(myId || '');
+  return (Array.isArray(groups) ? groups : [])
+    .map((g) => {
+      const id = String(g?._id || '');
+      if (!id) return null;
+      const scheduledTs = planDateMs(g?.scheduledAt);
+      if (scheduledTs == null) return null;
+      const creatorId = String(g?.creatorId?._id || g?.creatorId || '');
+      const memberIds = Array.isArray(g?.members) ? g.members.map((m) => String(m?._id || m || '')) : [];
+      const pendingIds = Array.isArray(g?.pendingRequests) ? g.pendingRequests.map((m) => String(m?._id || m || '')) : [];
+      const roleLabel =
+        creatorId === me ? 'Host' :
+          memberIds.includes(me) ? 'Member' :
+            pendingIds.includes(me) ? 'Pending approval' :
+              'Invite';
+      const venueName = String(g?.safeVenue?.name || g?.meetingPlace || '').trim() || 'Venue TBD';
+      const lat = Number(g?.safeVenue?.lat);
+      const lng = Number(g?.safeVenue?.lng);
+      return {
+        id,
+        title: String(g?.activity || 'Buddy meetup'),
+        scheduledAt: g?.scheduledAt,
+        scheduledTs,
+        status: String(g?.status || 'open'),
+        venueName,
+        lat: Number.isFinite(lat) ? lat : null,
+        lng: Number.isFinite(lng) ? lng : null,
+        roleLabel
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.scheduledTs - b.scheduledTs);
+}
+
+function mergeUniqueGroups(primary, secondary) {
+  const byId = new Map();
+  [...(Array.isArray(primary) ? primary : []), ...(Array.isArray(secondary) ? secondary : [])].forEach((g) => {
+    const id = String(g?._id || '');
+    if (!id) return;
+    if (!byId.has(id)) byId.set(id, g);
+  });
+  return [...byId.values()];
+}
+
 export default function Buddies() {
   const { user, updateUser } = useAuth();
+  const userId = String(user?.id || user?._id || '');
+  const buddyModeEnabled = Boolean(user?.buddyMode);
   const [groups, setGroups] = useState([]);
   const [matches, setMatches] = useState([]);
   const [pendingInvites, setPendingInvites] = useState([]);
@@ -22,8 +75,8 @@ export default function Buddies() {
   const [safeVenues, setSafeVenues] = useState({ redPin: [], publicPlazas: [] });
   const [showCreate, setShowCreate] = useState(false);
   const [showPairInvite, setShowPairInvite] = useState(false);
-  const [showPairRequestModal, setShowPairRequestModal] = useState(false);
-  const [selectedPeerForRequest, setSelectedPeerForRequest] = useState(null);
+  const [showAllPairMatches, setShowAllPairMatches] = useState(false);
+  const [showCalendarModal, setShowCalendarModal] = useState(false);
   const [showIntentModal, setShowIntentModal] = useState(false);
   const [intentModalMode, setIntentModalMode] = useState(''); // 'group' or 'pair'
   const [intentInput, setIntentInput] = useState('');
@@ -32,47 +85,37 @@ export default function Buddies() {
   const [actionGroupId, setActionGroupId] = useState('');
   const [error, setError] = useState('');
   const [buddyBusy, setBuddyBusy] = useState(false);
+  const [sendingPairRequestId, setSendingPairRequestId] = useState('');
+  const [sentPairRequestIds, setSentPairRequestIds] = useState(new Set());
   const [peerIntent, setPeerIntent] = useState('');
-  const [peerMaxDistanceKm, setPeerMaxDistanceKm] = useState(8);
   const [matchingPeers, setMatchingPeers] = useState(false);
   const [hasRunPeerMatch, setHasRunPeerMatch] = useState(false);
   const [matchingGroups, setMatchingGroups] = useState(false);
   const [generatingDescription, setGeneratingDescription] = useState(false);
   const [showPeerSearch, setShowPeerSearch] = useState(false);
-  const [pairRequestForm, setPairRequestForm] = useState({
-    activity: '',
-    scheduledAt: '',
-    venueKey: ''
-  });
+  const [meetingPlaceDraft, setMeetingPlaceDraft] = useState('');
+  const loadedUserIdRef = useRef('');
   const [form, setForm] = useState({
     activity: '',
     description: '',
-    interests: '',
     meetingPlace: '',
     scheduledAt: '',
-    maxMembers: 3,
+    maxMembers: '',
     safeBy: ''
   });
-  const [pairForm, setPairForm] = useState({
-    inviteUserId: '',
-    activity: '',
-    description: '',
-    scheduledAt: '',
-    intentSnippet: '',
-    venueKey: ''
-  });
 
-  const getAnchorCoords = () => {
+  const getAnchorCoords = useCallback(() => {
     if (user?.location?.coordinates?.length === 2) {
-      return { lng: user.location.coordinates[0], lat: user.location.coordinates[1] };
+      const lng = Number(user.location.coordinates[0]);
+      const lat = Number(user.location.coordinates[1]);
+      if (Number.isFinite(lng) && Number.isFinite(lat)) return { lng, lat };
     }
     return FALLBACK_COORDS;
-  };
+  }, [user?.location?.coordinates]);
 
   const openIntentModal = (mode) => {
-    // Check if user has profile preferences set
-    if (!user?.discoveryPreferences?.prefer || user.discoveryPreferences.prefer.length === 0) {
-      setError('Please complete your profile with preferences first. Go to Profile to add your interests and preferences.');
+    if (!buddyModeEnabled) {
+      setError('Turn on Buddy Mode first to create groups or pair hangouts.');
       return;
     }
     setIntentModalMode(mode);
@@ -90,39 +133,16 @@ export default function Buddies() {
     setShowPeerSearch(true);
     
     if (intentModalMode === 'group') {
-      // For group creation, set the activity and show matches
       const intentText = intentInput.trim();
-      setForm((f) => ({ ...f, activity: intentText }));
+      setForm((f) => ({ ...f, activity: intentText, description: '' }));
+      setMeetingPlaceDraft('');
       setShowIntentModal(false);
       setShowCreate(true);
-      
-      // Auto-generate description on next tick
-      setTimeout(async () => {
-        setGeneratingDescription(true);
-        try {
-          const { data } = await api.post('/buddies/generate-description', {
-            activity: intentText,
-            interests: [],
-            meetingPlace: ''
-          });
-          if (data.description) {
-            setForm((f) => ({ ...f, description: data.description }));
-          }
-        } catch (err) {
-          console.error('Auto-generate failed:', err?.response?.data?.error || err.message);
-        } finally {
-          setGeneratingDescription(false);
-        }
-      }, 100);
     } else if (intentModalMode === 'pair') {
-      // For pair hangout, search for matches and show them
       setPeerIntent(intentInput.trim());
       setShowIntentModal(false);
-      
-      // Trigger peer matching
+      setShowAllPairMatches(false);
       await searchPeersWithIntent(intentInput.trim());
-      
-      // Then show pair invite form
       setShowPairInvite(true);
     }
   };
@@ -141,43 +161,48 @@ export default function Buddies() {
       setPendingInvites(Array.isArray(invitesRes.data) ? invitesRes.data : []);
       
       // Sent requests are pair hangouts created by user that target hasn't accepted
-      const sent = allGroups.filter(g => 
-        String(g.creatorId?._id || g.creatorId) === String(user?.id || user?._id) && 
+      const sent = allGroups.filter(g =>
+        String(g.creatorId?._id || g.creatorId) === userId && 
         g.inviteTargetUserId && 
         !g.members?.some(m => String(m?._id || m) === String(g.inviteTargetUserId))
       );
       setSentRequests(sent);
+      setSentPairRequestIds(new Set(
+        sent
+          .map((g) => String(g?.inviteTargetUserId?._id || g?.inviteTargetUserId || ''))
+          .filter(Boolean)
+      ));
 
-      if (user?.buddyMode) {
+      if (buddyModeEnabled) {
         const venuesRes = await api.get('/buddies/groups/safe-venues', { params: coords });
         setSafeVenues(venuesRes.data || { redPin: [], publicPlazas: [] });
       } else {
         setSuggestedPeers([]);
         setHasRunPeerMatch(false);
+        setSafeVenues({ redPin: [], publicPlazas: [] });
       }
     } catch (err) {
       setError(err?.response?.data?.error || 'Could not load buddy data right now.');
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [getAnchorCoords, userId, buddyModeEnabled]);
 
   const searchPeersWithIntent = async (customIntent = null) => {
-    if (!user?.buddyMode) return;
+    if (!buddyModeEnabled) return;
     const coords = getAnchorCoords();
     setError('');
     setMatchingPeers(true);
     setMatchingGroups(true);
     setHasRunPeerMatch(true);
     try {
-      const maxDistanceM = Math.max(1, Number(peerMaxDistanceKm || 8)) * 1000;
       const intentToUse = customIntent || peerIntent;
       const [peersRes, groupsRes] = await Promise.all([
         api.get('/buddies/groups/suggested-peers', {
-          params: { ...coords, intent: intentToUse, maxDistance: maxDistanceM }
+          params: { intent: intentToUse }
         }),
         api.get('/buddies/match', {
-          params: { ...coords, intent: intentToUse, maxDistance: maxDistanceM }
+          params: { ...coords, intent: intentToUse }
         })
       ]);
       setSuggestedPeers(Array.isArray(peersRes.data) ? peersRes.data : []);
@@ -190,38 +215,69 @@ export default function Buddies() {
     }
   };
 
-  const sendPairRequest = async () => {
-    if (!selectedPeerForRequest || !pairRequestForm.activity.trim() || !pairRequestForm.scheduledAt || !pairRequestForm.venueKey) {
-      setError('Please fill in activity, when, and venue.');
+  const generateDescriptionFor = async ({ activity, meetingPlace, onSet, onBusy }) => {
+    const activityText = String(activity || '').trim();
+    if (!activityText) {
+      setError('Add intent/activity first.');
       return;
     }
-    
-    const coords = getAnchorCoords();
-    const opts = [
-      ...(safeVenues.redPin || []).map((v, i) => ({ ...v, key: `r-${i}` })),
-      ...(safeVenues.publicPlazas || []).map((v, i) => ({ ...v, key: `p-${i}` }))
-    ];
-    const picked = opts.find((v) => v.key === pairRequestForm.venueKey);
-    
-    if (!picked?.lat || !picked?.lng) {
-      setError('Selected venue has no coordinates.');
-      return;
-    }
-
-    setSubmitting(true);
+    onBusy(true);
     setError('');
     try {
+      const { data } = await api.post('/buddies/generate-description', {
+        activity: activityText,
+        interests: [],
+        meetingPlace: String(meetingPlace || '').trim()
+      });
+      if (data?.description) onSet(data.description);
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not generate description right now.');
+    } finally {
+      onBusy(false);
+    }
+  };
+
+  const sendPairRequest = async (peer) => {
+    if (!buddyModeEnabled) {
+      setError('Turn on Buddy Mode first to send a pair request.');
+      return;
+    }
+    const peerId = String(peer?.id || '');
+    if (!peerId || sentPairRequestIds.has(peerId) || sendingPairRequestId === peerId) return;
+    const intentText = String(peerIntent || '').trim();
+    if (!intentText) {
+      setError('Enter intent first.');
+      return;
+    }
+    setSendingPairRequestId(peerId);
+    setError('');
+    try {
+      const coords = getAnchorCoords();
+      let redPin = Array.isArray(safeVenues?.redPin) ? safeVenues.redPin : [];
+      let publicPlazas = Array.isArray(safeVenues?.publicPlazas) ? safeVenues.publicPlazas : [];
+      if (!redPin.length && !publicPlazas.length) {
+        const venuesRes = await api.get('/buddies/groups/safe-venues', { params: coords });
+        redPin = Array.isArray(venuesRes?.data?.redPin) ? venuesRes.data.redPin : [];
+        publicPlazas = Array.isArray(venuesRes?.data?.publicPlazas) ? venuesRes.data.publicPlazas : [];
+        setSafeVenues({ redPin, publicPlazas });
+      }
+      const picked = redPin[0] || publicPlazas[0];
+      if (!picked || !Number.isFinite(Number(picked.lat)) || !Number.isFinite(Number(picked.lng))) {
+        setError('No safe meetup venue is available near your area yet.');
+        return;
+      }
+      const scheduledAt = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
       await api.post('/buddies/groups', {
-        activity: pairRequestForm.activity,
+        activity: intentText,
         description: '',
         interests: user?.interests || ['hangout'],
-        meetingPlace: picked.name,
-        scheduledAt: pairRequestForm.scheduledAt,
+        meetingPlace: String(picked.name || 'Safe meetup point').trim(),
+        scheduledAt,
         maxMembers: 2,
         lat: coords.lat,
         lng: coords.lng,
-        inviteTargetUserId: selectedPeerForRequest.id,
-        intentSnippet: peerIntent,
+        inviteTargetUserId: peerId,
+        intentSnippet: intentText,
         safeVenue: {
           kind: picked.kind,
           name: picked.name,
@@ -232,31 +288,70 @@ export default function Buddies() {
           safetyNote: picked.safetyNote || ''
         }
       });
-      
-      await refreshData();
-      setShowPairRequestModal(false);
-      setSelectedPeerForRequest(null);
-      setPairRequestForm({ activity: '', scheduledAt: '', venueKey: '' });
+      setSentPairRequestIds((prev) => {
+        const next = new Set(prev);
+        next.add(peerId);
+        return next;
+      });
+      refreshData();
     } catch (err) {
       setError(err?.response?.data?.error || 'Could not send pair request.');
     } finally {
-      setSubmitting(false);
+      setSendingPairRequestId('');
     }
   };
 
   useEffect(() => {
+    if (!userId) {
+      setLoading(false);
+      return;
+    }
+    if (loadedUserIdRef.current === userId) return;
+    loadedUserIdRef.current = userId;
     setLoading(true);
     refreshData();
-  }, [refreshData]);
+  }, [userId, refreshData, loadedUserIdRef]);
+
+  useEffect(() => {
+    if (!showCalendarModal) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setShowCalendarModal(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showCalendarModal]);
 
   const toggleBuddyMode = async () => {
+    if (buddyBusy) return;
+    const prevMode = buddyModeEnabled;
+    const nextMode = !prevMode;
     setBuddyBusy(true);
     setError('');
+    // Optimistic UI: flip immediately for snappy toggle.
+    updateUser({ buddyMode: nextMode });
+    if (!nextMode) {
+      setShowPeerSearch(false);
+      setShowPairInvite(false);
+      setShowAllPairMatches(false);
+      setSuggestedPeers([]);
+      setHasRunPeerMatch(false);
+      setSafeVenues({ redPin: [], publicPlazas: [] });
+    }
     try {
-      const { data } = await api.put('/users/profile', { buddyMode: !user?.buddyMode });
+      const { data } = await api.put('/users/profile', { buddyMode: nextMode });
       updateUser({ buddyMode: data.buddyMode, interests: data.interests, name: data.name });
-      await refreshData();
+      if (data.buddyMode) {
+        const coords = getAnchorCoords();
+        // Keep toggle responsive; load venue options in background.
+        api.get('/buddies/groups/safe-venues', { params: coords })
+          .then((venuesRes) => {
+            setSafeVenues(venuesRes.data || { redPin: [], publicPlazas: [] });
+          })
+          .catch(() => {});
+      }
     } catch (err) {
+      // Revert optimistic toggle on failure.
+      updateUser({ buddyMode: prevMode });
       setError(err?.response?.data?.error || 'Could not update Buddy Mode.');
     } finally {
       setBuddyBusy(false);
@@ -265,13 +360,30 @@ export default function Buddies() {
 
   const createGroup = async (e) => {
     e.preventDefault();
+    if (!buddyModeEnabled) {
+      setError('Turn on Buddy Mode first to create a group.');
+      return;
+    }
+    if (!form.meetingPlace.trim()) {
+      setError('Please enter and save a meeting place.');
+      return;
+    }
+    const parsedMaxMembers = Number.parseInt(String(form.maxMembers), 10);
+    if (!Number.isFinite(parsedMaxMembers) || parsedMaxMembers < 3) {
+      setError('Max members should be more than 2.');
+      return;
+    }
+    const ok = window.confirm('Please review details once more. Create this group and send AI-matched invites now?');
+    if (!ok) return;
     setSubmitting(true);
     setError('');
     try {
       const coords = getAnchorCoords();
       await api.post('/buddies/groups', {
         ...form,
-        interests: form.interests.split(',').map((s) => s.trim()).filter(Boolean),
+        maxMembers: parsedMaxMembers,
+        description: String(form.description || '').trim(),
+        intentSnippet: String(form.activity || '').trim(),
         lat: coords.lat,
         lng: coords.lng,
         safeBy: form.safeBy ? new Date(form.safeBy).toISOString() : undefined
@@ -279,7 +391,8 @@ export default function Buddies() {
       await refreshData();
       setShowCreate(false);
       setShowPeerSearch(false);
-      setForm({ activity: '', description: '', interests: '', meetingPlace: '', scheduledAt: '', maxMembers: 3, safeBy: '' });
+      setMeetingPlaceDraft('');
+      setForm({ activity: '', description: '', meetingPlace: '', scheduledAt: '', maxMembers: '', safeBy: '' });
     } catch (err) {
       setError(err?.response?.data?.error || 'Could not create the group. Check fields and retry.');
     } finally {
@@ -287,60 +400,6 @@ export default function Buddies() {
     }
   };
 
-  const createPairInvite = async (e) => {
-    e.preventDefault();
-    setSubmitting(true);
-    setError('');
-    try {
-      const coords = getAnchorCoords();
-      const opts = [
-        ...(safeVenues.redPin || []).map((v, i) => ({ ...v, key: `r-${i}` })),
-        ...(safeVenues.publicPlazas || []).map((v, i) => ({ ...v, key: `p-${i}` }))
-      ];
-      const picked = opts.find((v) => v.key === pairForm.venueKey);
-      if (!pairForm.inviteUserId || !picked?.lat || !picked?.lng) {
-        setError('Choose a guest and a safe venue from the list.');
-        setSubmitting(false);
-        return;
-      }
-      await api.post('/buddies/groups', {
-        activity: pairForm.activity,
-        description: pairForm.description,
-        interests: (user?.interests || []).length ? user.interests : ['hangout'],
-        meetingPlace: picked.name,
-        scheduledAt: pairForm.scheduledAt,
-        maxMembers: 2,
-        lat: coords.lat,
-        lng: coords.lng,
-        inviteTargetUserId: pairForm.inviteUserId,
-        intentSnippet: pairForm.intentSnippet,
-        safeVenue: {
-          kind: picked.kind,
-          name: picked.name,
-          lat: picked.lat,
-          lng: picked.lng,
-          businessId: picked.businessId,
-          placeId: picked.placeId || '',
-          safetyNote: picked.safetyNote || ''
-        }
-      });
-      await refreshData();
-      setShowPairInvite(false);
-      setShowPeerSearch(false);
-      setPairForm({
-        inviteUserId: '',
-        activity: '',
-        description: '',
-        scheduledAt: '',
-        intentSnippet: '',
-        venueKey: ''
-      });
-    } catch (err) {
-      setError(err?.response?.data?.error || 'Could not send hangout invite.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   const joinGroup = async (id) => {
     setActionGroupId(id);
@@ -378,6 +437,34 @@ export default function Buddies() {
       await refreshData();
     } catch (err) {
       setError(err?.response?.data?.error || 'Could not reject hangout.');
+    } finally {
+      setActionGroupId('');
+    }
+  };
+
+  const acceptGroupInvite = async (id) => {
+    setActionGroupId(id);
+    setError('');
+    try {
+      await api.post(`/buddies/groups/${id}/accept-invite`);
+      await refreshData();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not accept group invite.');
+    } finally {
+      setActionGroupId('');
+    }
+  };
+
+  const rejectGroupInvite = async (id) => {
+    const confirmed = window.confirm('Reject this group invitation?');
+    if (!confirmed) return;
+    setActionGroupId(id);
+    setError('');
+    try {
+      await api.post(`/buddies/groups/${id}/reject-invite`);
+      await refreshData();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not reject group invite.');
     } finally {
       setActionGroupId('');
     }
@@ -422,18 +509,29 @@ export default function Buddies() {
     }
   };
 
-  const myId = String(user?.id || user?._id || '');
+  const myId = userId;
+  const calendarPlans = useMemo(
+    () => normalizeBuddyPlans(mergeUniqueGroups(groups, pendingInvites), myId),
+    [groups, pendingInvites, myId]
+  );
+  const rankedSuggestedPeers = useMemo(
+    () => [...suggestedPeers].sort((a, b) => Number(b?.matchPercent || 0) - Number(a?.matchPercent || 0)),
+    [suggestedPeers]
+  );
+  const topSuggestedPeers = rankedSuggestedPeers.slice(0, 3);
   const openMatchCount = hasRunPeerMatch ? matches.filter((g) => g?.status === 'open').length : 0;
   const pendingForMe = groups.reduce((sum, g) => sum + (g?.pendingRequests?.length || 0), 0);
-
-  const venueOptions = [
-    ...(safeVenues.redPin || []).map((v, i) => ({ ...v, key: `r-${i}` })),
-    ...(safeVenues.publicPlazas || []).map((v, i) => ({ ...v, key: `p-${i}` }))
-  ];
+  const openPlanOnMap = useCallback((plan) => {
+    const lat = Number(plan?.lat);
+    const lng = Number(plan?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    const query = encodeURIComponent(`${lat},${lng}`);
+    window.open(`https://www.google.com/maps/search/?api=1&query=${query}`, '_blank', 'noopener,noreferrer');
+  }, []);
 
   return (
     <div className="space-y-8 goout-animate-in">
-      <div className="goout-glass-card rounded-2xl p-6 md:p-7 goout-hover-lift border border-white/50">
+      <div className="goout-glass-card rounded-2xl p-6 md:p-7 goout-hover-lift border border-slate-200">
         <div className="flex flex-wrap justify-between items-center gap-4">
           <div>
             <h1 className="font-display font-bold text-2xl md:text-3xl bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent">
@@ -450,17 +548,24 @@ export default function Buddies() {
             <button
               type="button"
               onClick={() => openIntentModal('group')}
+              disabled={!buddyModeEnabled}
               className="goout-btn-primary text-sm py-2 px-4">
               Create group
             </button>
             <button
               type="button"
               onClick={() => openIntentModal('pair')}
-              className="goout-btn-ghost text-sm py-2 px-3 border-emerald-200/80 text-emerald-800 hover:bg-emerald-50/80">
+              disabled={!buddyModeEnabled}
+              className="goout-btn-ghost text-sm py-2 px-3 border-emerald-200/80 text-emerald-800 hover:bg-emerald-50/80 disabled:opacity-60">
               Pair hangout invite
             </button>
           </div>
         </div>
+        {!buddyModeEnabled && (
+          <p className="mt-3 text-xs text-slate-500">
+            Buddy Mode is off. You can still view invites, but creating groups/pair hangouts is locked.
+          </p>
+        )}
       </div>
 
       <div className="goout-surface rounded-2xl p-5 border border-slate-200">
@@ -475,10 +580,19 @@ export default function Buddies() {
             type="button"
             disabled={buddyBusy}
             onClick={toggleBuddyMode}
-            className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition disabled:opacity-60 ${
-              user?.buddyMode ? 'bg-goout-green text-white' : 'bg-slate-200 text-slate-800'
+            className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition disabled:opacity-60 ${
+              user?.buddyMode ?
+                'bg-goout-green text-white border border-emerald-300/40' :
+                'bg-slate-800/90 text-slate-100 border border-indigo-300/40 hover:bg-slate-700/90'
             }`}>
-            {buddyBusy ? 'Saving…' : user?.buddyMode ? 'Buddy Mode: On' : 'Buddy Mode: Off'}
+            <span
+              className={`h-2.5 w-2.5 rounded-full ${user?.buddyMode ? 'bg-emerald-100' : 'bg-slate-500'}`}
+              aria-hidden
+            />
+            <span>Buddy Mode</span>
+            <span className="rounded-full border border-current/35 px-2 py-0.5 text-[11px] leading-none tracking-wide">
+              {buddyBusy ? 'SAVING' : user?.buddyMode ? 'ON' : 'OFF'}
+            </span>
           </button>
         </div>
       </div>
@@ -495,6 +609,22 @@ export default function Buddies() {
         <div className="goout-soft-card rounded-xl p-4">
           <p className="text-xs text-slate-500 uppercase tracking-wide">Pending</p>
           <p className="text-2xl font-bold text-slate-900 mt-1">{pendingForMe + pendingInvites.length}</p>
+        </div>
+      </div>
+
+      <div className="goout-surface rounded-2xl p-5 border border-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-display font-semibold text-slate-900">Buddy calendar</h2>
+            <p className="text-xs text-slate-600 mt-1">Open your plans in a quick popup view.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowCalendarModal(true)}
+            className="px-4 py-2 rounded-lg bg-goout-green text-white text-sm font-medium shadow-sm hover:bg-goout-accent transition"
+          >
+            Open Calendar
+          </button>
         </div>
       </div>
 
@@ -536,14 +666,14 @@ export default function Buddies() {
                   <button
                     type="button"
                     disabled={actionGroupId === g._id}
-                    onClick={() => acceptHangout(g._id)}
+                    onClick={() => (g.inviteType === 'group' ? acceptGroupInvite(g._id) : acceptHangout(g._id))}
                     className="px-4 py-2 bg-goout-green text-white rounded-lg text-sm font-medium disabled:opacity-60">
-                    {actionGroupId === g._id ? '…' : 'Accept hangout'}
+                    {actionGroupId === g._id ? '…' : g.inviteType === 'group' ? 'Accept invite' : 'Accept hangout'}
                   </button>
                   <button
                     type="button"
                     disabled={actionGroupId === g._id}
-                    onClick={() => rejectHangout(g._id)}
+                    onClick={() => (g.inviteType === 'group' ? rejectGroupInvite(g._id) : rejectHangout(g._id))}
                     className="px-4 py-2 bg-red-100 text-red-700 rounded-lg text-sm font-medium disabled:opacity-60">
                     {actionGroupId === g._id ? '…' : 'Reject'}
                   </button>
@@ -589,11 +719,11 @@ export default function Buddies() {
         </div>
       )}
 
-      {user?.buddyMode && showPeerSearch && (
+      {user?.buddyMode && showPeerSearch && !showPairInvite && (
         <div className="goout-surface rounded-2xl p-5 border border-slate-200">
-          <h2 className="font-display font-semibold text-lg mb-2">Suggested partners (intent + proximity)</h2>
+          <h2 className="font-display font-semibold text-lg mb-2">Match groups by intent</h2>
           <p className="text-xs text-slate-600 mb-3">
-            Enter intent first, then search. AI matching will show both buddy users and matching groups.
+            Enter intent first, then search to find matching open groups.
           </p>
           <div className="flex flex-wrap gap-2 items-center mb-4">
             <input
@@ -607,42 +737,12 @@ export default function Buddies() {
               type="button"
               onClick={searchPeersWithIntent}
               className="px-3 py-2 rounded-lg bg-slate-800 text-white text-sm font-medium">
-              {matchingPeers ? 'Matching…' : 'Match users'}
+              {matchingPeers ? 'Matching…' : 'Match groups'}
             </button>
           </div>
-          <div className="mb-4">
-            <label className="block text-xs text-slate-500 mb-1">Proximity (km)</label>
-            <input
-              type="number"
-              min={1}
-              max={30}
-              value={peerMaxDistanceKm}
-              onChange={(e) => setPeerMaxDistanceKm(Math.max(1, Math.min(30, Number(e.target.value) || 8)))}
-              className="w-32 px-3 py-2 border border-slate-200 rounded-lg text-sm"
-            />
-          </div>
-          {loading ? (
-            <p className="text-sm text-slate-500">Loading suggestions…</p>
-          ) : !hasRunPeerMatch ? (
-            <p className="text-sm text-slate-500">Run matching to see users.</p>
-          ) : suggestedPeers.length === 0 ? (
-            <p className="text-sm text-slate-500">No one is there to meet right now.</p>
-          ) : (
-            <ul className="divide-y divide-slate-100 border border-slate-100 rounded-xl overflow-hidden">
-              {suggestedPeers.map((p) => (
-                <li key={p.id} className="px-3 py-2 flex flex-wrap justify-between gap-2 text-sm bg-white">
-                  <span>
-                    <span className="font-medium text-slate-900">{p.displayName}</span>
-                    <span className="text-slate-500"> · Green {p.greenScore}</span>
-                    {p.interests?.length ? <span className="text-slate-600"> · {p.interests.join(', ')}</span> : null}
-                  </span>
-                  <span className="text-xs text-slate-400">
-                    match {Number(p.matchPercent || 0)}% · intent {Number(p.intentPercent || 0)}% · proximity {Number(p.proximityPercent || 0)}%
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
+          <p className="text-sm text-slate-500">
+            {loading ? 'Loading suggestions…' : !hasRunPeerMatch ? 'Run matching to see groups.' : 'Groups updated below.'}
+          </p>
         </div>
       )}
 
@@ -651,49 +751,87 @@ export default function Buddies() {
           <h2 className="font-display font-semibold text-lg mb-4">Create Buddy Group</h2>
           <form onSubmit={createGroup} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium mb-1">Activity</label>
+              <label className="block text-sm font-medium mb-1">Intent</label>
               <input
                 type="text"
                 value={form.activity}
                 onChange={(e) => setForm((f) => ({ ...f, activity: e.target.value }))}
-                onBlur={() => {
-                  if (form.activity.trim() && !form.description) {
-                    autoGenerateDescription();
-                  }
-                }}
-                placeholder="e.g. Coffee, Park walk, Hiking"
+                placeholder="e.g. sunset walk + street photography"
                 required
                 className="w-full px-4 py-2 border border-slate-200 rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Description {generatingDescription && <span className="text-xs text-blue-500">✨ Generating...</span>}</label>
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <label className="block text-sm font-medium">Description</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => generateDescriptionFor({
+                      activity: form.activity,
+                      meetingPlace: form.meetingPlace,
+                      onSet: (description) => setForm((f) => ({ ...f, description })),
+                      onBusy: setGeneratingDescription
+                    })}
+                    className="px-2.5 py-1 rounded-md text-xs font-medium border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
+                    disabled={generatingDescription || !form.activity.trim()}>
+                    {generatingDescription ? 'Generating…' : 'Write with AI'}
+                  </button>
+                </div>
+              </div>
               <textarea
                 value={form.description}
                 onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                placeholder="AI will auto-generate based on activity, or write your own"
+                placeholder="Write your own description or use AI."
                 className="w-full px-4 py-2 border border-slate-200 rounded-lg"
                 rows="3"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Interests (comma-separated)</label>
+              <label className="block text-sm font-medium mb-1">Max members</label>
               <input
-              type="text"
-              value={form.interests}
-              onChange={(e) => setForm((f) => ({ ...f, interests: e.target.value }))}
-              placeholder="cafe, reading, walking"
+              type="number"
+              value={form.maxMembers}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  maxMembers: e.target.value === '' ? '' : Number(e.target.value)
+                }))}
+              min={3}
+              max={20}
+              placeholder="3 or more"
+              required
               className="w-full px-4 py-2 border border-slate-200 rounded-lg" />
-            
+              {form.maxMembers !== '' && Number(form.maxMembers) < 3 && (
+                <p className="text-xs text-red-600 mt-1">Max members should be more than 2.</p>
+              )}
+              <p className="text-xs text-slate-500 mt-1">We invite top AI matches up to this member limit.</p>
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Meeting place (optional label)</label>
-              <input
-              type="text"
-              value={form.meetingPlace}
-              onChange={(e) => setForm((f) => ({ ...f, meetingPlace: e.target.value }))}
-              className="w-full px-4 py-2 border border-slate-200 rounded-lg" />
-              <p className="text-xs text-slate-500 mt-1">Do not use home addresses. For private pair hangs, use Pair hangout invite with a safe venue.</p>
+              <label className="block text-sm font-medium mb-1">Meeting place</label>
+              <div className="flex gap-2">
+                <input
+                type="text"
+                value={meetingPlaceDraft}
+                onChange={(e) => setMeetingPlaceDraft(e.target.value)}
+                placeholder="Enter place and click Save"
+                className="w-full px-4 py-2 border border-slate-200 rounded-lg" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = meetingPlaceDraft.trim();
+                    if (!next) return;
+                    setForm((f) => ({ ...f, meetingPlace: next }));
+                  }}
+                  className="px-3 py-2 rounded-lg border border-slate-300 bg-slate-50 text-sm font-medium hover:bg-slate-100">
+                  Save
+                </button>
+              </div>
+              {form.meetingPlace ? (
+                <p className="text-xs text-emerald-700 mt-1">Saved: {form.meetingPlace}</p>
+              ) : (
+                <p className="text-xs text-slate-500 mt-1">Save a public place only (no private/home addresses).</p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">When</label>
@@ -703,36 +841,24 @@ export default function Buddies() {
               onChange={(e) => setForm((f) => ({ ...f, scheduledAt: e.target.value }))}
               required
               className="w-full px-4 py-2 border border-slate-200 rounded-lg" />
-            
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Max members</label>
-              <input
-              type="number"
-              value={form.maxMembers}
-              onChange={(e) => setForm((f) => ({ ...f, maxMembers: Number(e.target.value) || 3 }))}
-              min={3}
-              max={20}
-              className="w-full px-4 py-2 border border-slate-200 rounded-lg" />
-              <p className="text-xs text-slate-500 mt-1">Group size must be more than 2 (3 to 20).</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Safety check deadline</label>
+              <label className="block text-sm font-medium mb-1">Deadline</label>
               <input
               type="datetime-local"
               value={form.safeBy}
               onChange={(e) => setForm((f) => ({ ...f, safeBy: e.target.value }))}
               className="w-full px-4 py-2 border border-slate-200 rounded-lg" />
-            
-              <p className="text-xs text-slate-500 mt-1">If you do not confirm safety by this time, the emergency contact is notified.</p>
+              <p className="text-xs text-slate-500 mt-1">Optional safety check-in deadline.</p>
             </div>
             <div className="flex gap-2">
               <button type="submit" disabled={submitting} className="px-4 py-2 bg-goout-green text-white rounded-lg font-medium disabled:opacity-60">
-                {submitting ? 'Creating...' : 'Create'}
+                {submitting ? 'Creating...' : 'Review & create'}
               </button>
               <button type="button" disabled={submitting} onClick={() => {
                 setShowCreate(false);
                 setShowPeerSearch(false);
+                setMeetingPlaceDraft('');
               }} className="px-4 py-2 border border-slate-200 rounded-lg disabled:opacity-60">
                 Cancel
               </button>
@@ -745,7 +871,7 @@ export default function Buddies() {
         <div className="goout-surface rounded-2xl p-6 border border-goout-green/30">
           <h2 className="font-display font-semibold text-lg mb-2">Find hangout partners</h2>
           <p className="text-sm text-slate-600 mb-4">
-            Browse other explorers looking for the same activity. Send requests to connect with them.
+            Matched by your intent + profile fit (interests, prefer, avoid). Top matches are shown first.
           </p>
           
           {matchingPeers || loading ? (
@@ -759,32 +885,50 @@ export default function Buddies() {
             <p className="text-slate-600 text-sm text-center py-8">No one is looking for this activity right now.</p>
           ) : (
             <div className="space-y-3">
-              {suggestedPeers
-                .filter(p => String(p.id) !== String(user?.id || user?._id))
-                .map((p) => (
-                  <div key={p.id} className="border border-slate-200 rounded-xl p-4 flex items-center justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium text-slate-900">{p.displayName}</p>
-                      <p className="text-sm text-slate-600">
-                        Green score: <span className="font-semibold text-goout-green">{p.greenScore}</span>
-                        {p.interests?.length ? ` · ${p.interests.join(', ')}` : ''}
-                      </p>
-                      <p className="text-xs text-slate-500 mt-1">
-                        Intent match: {Number(p.intentPercent || p.matchPercent || 0)}% · Distance: {Number(p.proximityPercent || 0)}%
-                      </p>
+              {topSuggestedPeers
+                .filter((p) => String(p.id) !== String(user?.id || user?._id))
+                .map((p, idx) => {
+                  const peerId = String(p.id || '');
+                  const isSent = sentPairRequestIds.has(peerId);
+                  const isSending = sendingPairRequestId === peerId;
+                  return (
+                    <div key={p.id} className="border border-slate-200 rounded-xl p-4 flex items-center justify-between gap-3 bg-white/90">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-slate-900">
+                          #{idx + 1} {p.displayName}
+                        </p>
+                        <p className="text-sm text-slate-600">
+                          Match: <span className="font-semibold text-goout-green">{Number(p.matchPercent || 0)}%</span>
+                          {' · '}
+                          Profile fit: {Number(p.preferencePercent || 0)}%
+                        </p>
+                        <p className="text-xs text-slate-500 mt-1">
+                          Intent: {Number(p.intentPercent || p.matchPercent || 0)}%
+                          {p.interests?.length ? ` · ${p.interests.join(', ')}` : ''}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => sendPairRequest(p)}
+                        disabled={isSent || isSending || !buddyModeEnabled}
+                        className={`px-4 py-2 rounded-lg font-medium text-sm whitespace-nowrap disabled:opacity-60 ${
+                          isSent ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' : 'bg-goout-green text-white hover:bg-goout-green/90'
+                        }`}
+                      >
+                        {isSending ? 'Sending…' : isSent ? 'Request Sent' : 'Send Request'}
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedPeerForRequest(p);
-                        setShowPairRequestModal(true);
-                      }}
-                      className="px-4 py-2 bg-goout-green text-white rounded-lg font-medium text-sm whitespace-nowrap hover:bg-goout-green/90 disabled:opacity-60"
-                    >
-                      Send Request
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
+              {rankedSuggestedPeers.length > 3 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllPairMatches(true)}
+                  className="text-sm font-semibold text-emerald-700 hover:text-emerald-500 underline underline-offset-4"
+                >
+                  View all matches ({rankedSuggestedPeers.length})
+                </button>
+              )}
             </div>
           )}
           
@@ -827,14 +971,14 @@ export default function Buddies() {
                       {g.status || 'open'}
                     </span>
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Link to={`/app/group/${g._id}`} className="px-3 py-1.5 text-sm rounded-lg bg-goout-green text-white font-medium hover:bg-goout-accent">
+                  <div className="mt-3 flex flex-col sm:flex-row gap-2">
+                    <Link to={`/app/group/${g._id}`} className="w-full sm:w-auto px-3 py-1.5 text-sm rounded-lg bg-goout-green text-white font-medium hover:bg-goout-accent text-center">
                       Open Chat
                     </Link>
                     <button
                   disabled={actionGroupId === g._id}
                   onClick={() => leaveGroup(g._id)}
-                  className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-60">
+                  className="w-full sm:w-auto px-3 py-1.5 text-sm rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-60">
                       {actionGroupId === g._id ? 'Please wait...' : 'Leave'}
                     </button>
                   </div>
@@ -901,76 +1045,84 @@ export default function Buddies() {
         </div>
       </div>
 
-      {/* Pair Request Modal */}
-      {showPairRequestModal && selectedPeerForRequest && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 goout-animate-in">
-            <h2 className="text-xl font-bold text-slate-900 mb-2">Send hangout request to {selectedPeerForRequest.displayName}?</h2>
-            <p className="text-sm text-slate-600 mb-4">
-              Choose where to meet and when. They'll see your profile basics (name, interests, Green score).
-            </p>
-            {error && <div className="mb-3 p-2 bg-red-50 text-red-600 text-sm rounded-lg">{error}</div>}
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Activity</label>
-                <input
-                  type="text"
-                  value={pairRequestForm.activity}
-                  onChange={(e) => setPairRequestForm((f) => ({ ...f, activity: e.target.value }))}
-                  placeholder="e.g. Coffee, gallery walk"
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg text-sm"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium mb-1">Safe venue</label>
-                <select
-                  required
-                  value={pairRequestForm.venueKey}
-                  onChange={(e) => setPairRequestForm((f) => ({ ...f, venueKey: e.target.value }))}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg text-sm">
-                  <option value="">Choose venue</option>
-                  {venueOptions.map((v) => (
-                    <option key={v.key} value={v.key}>
-                      {v.kind === 'red_pin' ? 'Red Pin: ' : 'Public: '}
-                      {v.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium mb-1">When</label>
-                <input
-                  type="datetime-local"
-                  required
-                  value={pairRequestForm.scheduledAt}
-                  onChange={(e) => setPairRequestForm((f) => ({ ...f, scheduledAt: e.target.value }))}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg text-sm"
-                />
-              </div>
+      {showAllPairMatches && (
+        <div className="fixed inset-0 z-50">
+          <button
+            type="button"
+            aria-label="Close all matches panel"
+            onClick={() => setShowAllPairMatches(false)}
+            className="absolute inset-0 bg-black/45"
+          />
+          <aside className="absolute right-0 top-0 h-full w-full max-w-md border-l border-emerald-300/40 bg-[#0f2c1e] p-5 shadow-2xl overflow-y-auto goout-animate-in">
+            <div className="flex items-center justify-between gap-2 mb-4">
+              <h3 className="font-display text-lg font-semibold text-emerald-50">All matched explorers</h3>
+              <button
+                type="button"
+                onClick={() => setShowAllPairMatches(false)}
+                className="rounded-lg border border-emerald-300/40 px-2.5 py-1 text-sm text-emerald-100 hover:bg-emerald-500/20"
+              >
+                Close
+              </button>
             </div>
-            
-            <div className="flex gap-2 mt-6">
+            <div className="space-y-3">
+              {rankedSuggestedPeers
+                .filter((p) => String(p.id) !== String(user?.id || user?._id))
+                .map((p, idx) => {
+                  const peerId = String(p.id || '');
+                  const isSent = sentPairRequestIds.has(peerId);
+                  const isSending = sendingPairRequestId === peerId;
+                  return (
+                    <div key={peerId} className="rounded-xl border border-emerald-300/30 bg-emerald-500/10 p-3">
+                      <p className="font-semibold text-emerald-50">#{idx + 1} {p.displayName}</p>
+                      <p className="text-xs text-emerald-100/85 mt-1">
+                        Match {Number(p.matchPercent || 0)}% · Intent {Number(p.intentPercent || 0)}% · Profile {Number(p.preferencePercent || 0)}%
+                      </p>
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          onClick={() => sendPairRequest(p)}
+                          disabled={isSent || isSending || !buddyModeEnabled}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-60 ${
+                            isSent ? 'bg-emerald-100 text-emerald-800' : 'bg-emerald-600 text-white hover:bg-emerald-500'
+                          }`}
+                        >
+                          {isSending ? 'Sending…' : isSent ? 'Request Sent' : 'Send Request'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {showCalendarModal && (
+        <div className="fixed inset-0 z-50">
+          <button
+            type="button"
+            aria-label="Close calendar popup"
+            onClick={() => setShowCalendarModal(false)}
+            className="absolute inset-0 bg-slate-950/50 transition-opacity duration-300 opacity-100"
+          />
+          <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-4xl -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-emerald-200/40 bg-white p-5 shadow-2xl transition-all duration-300 opacity-100 scale-100 goout-animate-in">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h3 className="font-display text-lg font-semibold text-slate-900">Your buddy calendar</h3>
               <button
-                onClick={() => {
-                  setShowPairRequestModal(false);
-                  setSelectedPeerForRequest(null);
-                  setPairRequestForm({ activity: '', scheduledAt: '', venueKey: '' });
-                }}
-                disabled={submitting}
-                className="flex-1 px-4 py-2 border border-slate-300 rounded-lg text-slate-700 font-medium hover:bg-slate-50 disabled:opacity-60"
+                type="button"
+                onClick={() => setShowCalendarModal(false)}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
-                Cancel
+                Close
               </button>
-              <button
-                onClick={sendPairRequest}
-                disabled={submitting}
-                className="flex-1 px-4 py-2 bg-goout-green text-white rounded-lg font-medium hover:bg-goout-green/90 disabled:opacity-60"
-              >
-                {submitting ? 'Sending…' : 'Send request'}
-              </button>
+            </div>
+            <div className="max-h-[75vh] overflow-y-auto">
+              <ExplorerCalendar
+                plans={calendarPlans}
+                loading={loading}
+                onRefresh={refreshData}
+                onOpenPlanMap={openPlanOnMap}
+              />
             </div>
           </div>
         </div>

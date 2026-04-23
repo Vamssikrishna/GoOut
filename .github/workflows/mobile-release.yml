@@ -1,0 +1,82 @@
+name: mobile-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Platform target'
+        required: true
+        default: 'android'
+        type: choice
+        options:
+          - android
+          - ios
+          - windows
+
+jobs:
+  android-release:
+    if: ${{ github.event.inputs.target == 'android' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile/android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - name: Install dependencies
+        run: cd .. && npm ci
+      - name: Build Android release AAB
+        run: ./gradlew bundleRelease
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: goout-android-aab
+          path: apps/mobile/android/app/build/outputs/bundle/release/*.aab
+
+  ios-release:
+    if: ${{ github.event.inputs.target == 'ios' }}
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Install CocoaPods
+        run: cd ios && pod install
+      - name: Build iOS archive
+        run: xcodebuild -workspace ios/GoOutNative.xcworkspace -scheme GoOutNative -configuration Release -sdk iphoneos -archivePath build/GoOutNative.xcarchive archive
+
+  windows-release:
+    if: ${{ github.event.inputs.target == 'windows' }}
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Configure MSBuild
+        uses: microsoft/setup-msbuild@v2
+      - name: Build Windows MSIX
+        run: msbuild windows/GoOutNative.sln /p:Configuration=Release /p:Platform=x64 /p:AppxBundle=Always /p:UapAppxPackageBuildMode=StoreUpload

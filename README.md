@@ -69,6 +69,18 @@ npm run dev
 - Frontend: http://localhost:5173
 - Backend API: http://localhost:5000
 
+### 4. Run native apps (React Native)
+
+```bash
+npm run mobile:start
+npm run mobile:android
+npm run mobile:ios
+npm run mobile:windows
+```
+
+Native app source lives in `apps/mobile`.
+Read platform-specific setup and release notes in `apps/mobile/README.md`.
+
 ## Project Structure
 
 ```
@@ -79,6 +91,12 @@ Go/
 │   │   ├── pages/          # Route pages
 │   │   ├── context/        # Auth context
 │   │   └── api/            # API client
+├── apps/
+│   └── mobile/             # React Native (iOS/Android/Windows)
+│       ├── src/
+│       ├── android/
+│       ├── ios/
+│       └── windows/
 ├── server/                 # Express backend
 │   ├── models/             # Mongoose models
 │   ├── routes/             # API routes

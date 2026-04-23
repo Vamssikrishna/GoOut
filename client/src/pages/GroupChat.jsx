@@ -5,6 +5,7 @@ import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 
 export default function GroupChat() {
+  const PIN_TTL_MS = 24 * 60 * 60 * 1000;
   const { groupId } = useParams();
   const { user } = useAuth();
   const [group, setGroup] = useState(null);
@@ -20,8 +21,19 @@ export default function GroupChat() {
   const [leavingGroup, setLeavingGroup] = useState(false);
   const [showLocationConfirm, setShowLocationConfirm] = useState(false);
   const [sharingLocation, setSharingLocation] = useState(false);
+  const [recordingAudio, setRecordingAudio] = useState(false);
+  const [recordingBusy, setRecordingBusy] = useState(false);
+  const [activeVoiceUrl, setActiveVoiceUrl] = useState('');
+  const [callRequest, setCallRequest] = useState(null);
+  const [callRoom, setCallRoom] = useState(null);
+  const [pendingVote, setPendingVote] = useState(false);
+  const [messageActionId, setMessageActionId] = useState('');
   const scrollRef = useRef(null);
   const fileInputRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const mediaStreamRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const voicePlaybackRef = useRef(null);
 
   const chatExpired = useMemo(() => {
     if (!group?.chatExpiresAt) return false;
@@ -32,6 +44,16 @@ export default function GroupChat() {
     if (!group?.scheduledAt) return false;
     return new Date() >= new Date(group.scheduledAt);
   }, [group?.scheduledAt]);
+
+  const myId = String(user?.id || user?._id || '');
+  const isAdmin = String(group?.creatorId?._id || group?.creatorId || '') === myId;
+  const pinnedMessages = useMemo(
+    () =>
+      [...messages]
+        .filter((m) => Boolean(m?.pinnedAt) && (Date.now() - new Date(m.pinnedAt).getTime()) < PIN_TTL_MS)
+        .sort((a, b) => new Date(b.pinnedAt).getTime() - new Date(a.pinnedAt).getTime()),
+    [messages]
+  );
 
   const myFeedback = useMemo(() => {
     const uid = String(user?.id || user?._id || '');
@@ -52,6 +74,42 @@ export default function GroupChat() {
     });
     s.on('new-message', (msg) => setMessages((m) => [...m, msg]));
     s.on('sos', ({ message }) => setMessages((m) => [...m, { ...message, isSOS: true }]));
+    s.on('message-pinned', ({ message }) =>
+      setMessages((prev) => prev.map((m) => (String(m._id) === String(message._id) ? { ...m, ...message } : m)))
+    );
+    s.on('message-unpinned', ({ messageId }) =>
+      setMessages((prev) => prev.map((m) => (String(m._id) === String(messageId) ? { ...m, pinnedAt: null, pinnedBy: null } : m)))
+    );
+    s.on('message-deleted', ({ messageId }) =>
+      setMessages((prev) => prev.filter((m) => String(m._id) !== String(messageId)))
+    );
+    s.on('call-consent-requested', (payload) => {
+      setCallRoom(null);
+      setCallRequest(payload);
+      setSockMsg(`${payload.callType === 'video' ? 'Video' : 'Voice'} call request started. Please vote.`);
+    });
+    s.on('call-consent-updated', (payload) => setCallRequest((prev) => ({ ...(prev || {}), ...payload })));
+    s.on('call-consent-rejected', (payload) => {
+      setCallRequest(null);
+      setCallRoom(null);
+      setSockMsg(`${payload.callType === 'video' ? 'Video' : 'Voice'} call was declined by a member.`);
+    });
+    s.on('call-consent-approved', (payload) => {
+      setCallRequest(null);
+      setCallRoom(payload);
+      setGroup((g) =>
+        g ?
+          {
+            ...g,
+            callSettings: {
+              ...(g.callSettings || {}),
+              ...(payload.callType === 'video' ? { videoApprovedForAll: true } : { voiceApprovedForAll: true })
+            }
+          } :
+          g
+      );
+      setSockMsg(`All members accepted ${payload.callType} call. You can join now.`);
+    });
     s.on('chat-error', ({ message }) => setSockMsg(message || 'Could not send'));
     setSocket(s);
     return () => {
@@ -63,6 +121,27 @@ export default function GroupChat() {
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => () => {
+    try {
+      mediaRecorderRef.current?.stop?.();
+    } catch {}
+    mediaRecorderRef.current = null;
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {}
+      });
+    }
+    mediaStreamRef.current = null;
+    if (voicePlaybackRef.current) {
+      try {
+        voicePlaybackRef.current.pause();
+      } catch {}
+    }
+    voicePlaybackRef.current = null;
+  }, []);
 
   const fetchWalkEta = () => {
     const dest = group?.safeVenue;
@@ -130,6 +209,82 @@ export default function GroupChat() {
     if (file) uploadFile(file);
   };
 
+  const startAudioRecording = async () => {
+    if (recordingAudio || recordingBusy || chatExpired) return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof window.MediaRecorder === 'undefined') {
+      setSockMsg('Audio recording is not supported in this browser.');
+      return;
+    }
+    setSockMsg('');
+    setRecordingBusy(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      audioChunksRef.current = [];
+      const preferredMimeTypes = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/ogg',
+        'audio/mp4'
+      ];
+      const pickedMimeType = preferredMimeTypes.find((mime) =>
+        typeof window.MediaRecorder.isTypeSupported === 'function' && window.MediaRecorder.isTypeSupported(mime)
+      );
+      const recorder = pickedMimeType ? new window.MediaRecorder(stream, { mimeType: pickedMimeType }) : new window.MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        const mime = recorder.mimeType || pickedMimeType || 'audio/webm';
+        const blob = new Blob(audioChunksRef.current, { type: mime });
+        audioChunksRef.current = [];
+        const ext =
+          mime.includes('ogg') ? 'ogg' :
+            mime.includes('mp4') || mime.includes('m4a') ? 'm4a' :
+              mime.includes('mpeg') || mime.includes('mp3') ? 'mp3' :
+                mime.includes('wav') ? 'wav' :
+                  'webm';
+        const voiceFile = new File([blob], `voice-note-${Date.now()}.${ext}`, { type: mime });
+        if (blob.size > 0) {
+          await uploadFile(voiceFile);
+        } else {
+          setSockMsg('No audio captured. Please try again.');
+        }
+      };
+
+      recorder.start(250);
+      setRecordingAudio(true);
+    } catch (err) {
+      setSockMsg(err?.message || 'Microphone access denied or unavailable.');
+    } finally {
+      setRecordingBusy(false);
+    }
+  };
+
+  const stopAudioRecording = () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === 'inactive') return;
+    setRecordingAudio(false);
+    try {
+      recorder.stop();
+    } catch {}
+    mediaRecorderRef.current = null;
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {}
+      });
+      mediaStreamRef.current = null;
+    }
+  };
+
   const confirmLeaveGroup = async () => {
     setLeavingGroup(true);
     setSockMsg('');
@@ -155,15 +310,111 @@ export default function GroupChat() {
     );
   };
 
+  const toggleVoicePlayback = (url) => {
+    const nextUrl = String(url || '').trim();
+    if (!nextUrl) return;
+    const current = voicePlaybackRef.current;
+    if (current && activeVoiceUrl === nextUrl) {
+      try {
+        current.pause();
+        current.currentTime = 0;
+      } catch {}
+      voicePlaybackRef.current = null;
+      setActiveVoiceUrl('');
+      return;
+    }
+    if (current) {
+      try {
+        current.pause();
+      } catch {}
+    }
+    const player = new Audio(nextUrl);
+    voicePlaybackRef.current = player;
+    setActiveVoiceUrl(nextUrl);
+    player.onended = () => {
+      if (voicePlaybackRef.current === player) {
+        voicePlaybackRef.current = null;
+        setActiveVoiceUrl('');
+      }
+    };
+    player.onerror = () => {
+      if (voicePlaybackRef.current === player) {
+        voicePlaybackRef.current = null;
+        setActiveVoiceUrl('');
+      }
+      setSockMsg('Could not play this voice message.');
+    };
+    player.play().catch(() => {
+      if (voicePlaybackRef.current === player) {
+        voicePlaybackRef.current = null;
+        setActiveVoiceUrl('');
+      }
+      setSockMsg('Could not play this voice message.');
+    });
+  };
+
+  const requestCall = (callType) => {
+    if (!socket || chatExpired) return;
+    if (!isAdmin) {
+      setSockMsg('Only the group admin can start call requests.');
+      return;
+    }
+    setSockMsg('');
+    socket.emit('call-request', { groupId, callType });
+  };
+
+  const voteOnCall = (response) => {
+    if (!socket || !callRequest || pendingVote) return;
+    setPendingVote(true);
+    socket.emit('call-vote', { groupId, response });
+    setTimeout(() => setPendingVote(false), 400);
+  };
+
+  const pinMessage = async (messageId) => {
+    if (!isAdmin) return;
+    try {
+      await api.post(`/chat/${groupId}/messages/${messageId}/pin`);
+    } catch (err) {
+      setSockMsg(err?.response?.data?.error || 'Could not pin message.');
+    }
+  };
+
+  const unpinMessage = async (messageId) => {
+    if (!isAdmin) return;
+    try {
+      await api.post(`/chat/${groupId}/messages/${messageId}/unpin`);
+    } catch (err) {
+      setSockMsg(err?.response?.data?.error || 'Could not unpin message.');
+    }
+  };
+
+  const deleteMessage = async (messageId) => {
+    try {
+      await api.delete(`/chat/${groupId}/messages/${messageId}`);
+      setMessageActionId('');
+    } catch (err) {
+      setSockMsg(err?.response?.data?.error || 'Could not delete message.');
+    }
+  };
+
+  const deleteMessageForMe = async (messageId) => {
+    try {
+      await api.post(`/chat/${groupId}/messages/${messageId}/delete-for-me`);
+      setMessages((prev) => prev.filter((m) => String(m._id) !== String(messageId)));
+      setMessageActionId('');
+    } catch (err) {
+      setSockMsg(err?.response?.data?.error || 'Could not delete message for you.');
+    }
+  };
+
   const confirmShareLocation = () => {
     setSharingLocation(true);
     setSockMsg('');
     navigator.geolocation.getCurrentPosition(
       (p) => {
-        const mapUrl = `https://www.google.com/maps?q=${p.coords.latitude},${p.coords.longitude}`;
         socket?.emit('chat-message', { 
           groupId, 
-          message: `📍 My location: ${mapUrl}`,
+          message: '📍 Shared location',
           hasLocation: true,
           lat: p.coords.latitude,
           lng: p.coords.longitude
@@ -192,6 +443,14 @@ export default function GroupChat() {
     }
   };
 
+  const openInExplorerMap = (lat, lng) => {
+    const q = new URLSearchParams({
+      focusLat: String(lat),
+      focusLng: String(lng)
+    }).toString();
+    window.location.href = `/app/explorer?${q}`;
+  };
+
   if (!group) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[40vh] gap-3 goout-animate-in">
@@ -207,7 +466,7 @@ export default function GroupChat() {
     : null;
 
   return (
-    <div className="max-w-3xl mx-auto space-y-4 goout-animate-in">
+    <div className="w-full space-y-4 goout-animate-in">
       <Link
         to="/app/buddies"
         className="goout-btn-ghost text-sm py-2 px-3 inline-flex border-slate-200 hover:border-emerald-300/50">
@@ -255,6 +514,14 @@ export default function GroupChat() {
         <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">{sockMsg}</div>
       )}
 
+      {pinnedMessages.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-amber-800 mb-1">Pinned message</p>
+          <p className="text-sm text-slate-800">{pinnedMessages[0].message}</p>
+          <p className="text-[11px] text-slate-500 mt-1">By {pinnedMessages[0].userName}</p>
+        </div>
+      )}
+
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col h-[600px]">
         <div className="p-4 border-b flex flex-wrap justify-between items-center gap-2">
           <div>
@@ -267,26 +534,106 @@ export default function GroupChat() {
             )}
           </div>
           <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => requestCall('voice')}
+              disabled={chatExpired}
+              aria-label="Voice call"
+              title="Voice call"
+              className="h-10 w-10 flex items-center justify-center bg-indigo-500 text-white rounded-lg font-medium hover:bg-indigo-600 text-base disabled:opacity-50"
+            >
+              📞
+            </button>
+            <button
+              type="button"
+              onClick={() => requestCall('video')}
+              disabled={chatExpired}
+              aria-label="Video call"
+              title="Video call"
+              className="h-10 w-10 flex items-center justify-center bg-purple-500 text-white rounded-lg font-medium hover:bg-purple-600 text-base disabled:opacity-50"
+            >
+              🎥
+            </button>
             {group.safeBy && String(group.safeByUserId) === String(user?.id || user?._id) && new Date(group.safeBy) > new Date() &&
-            <button type="button" onClick={() => api.post(`/buddies/groups/${groupId}/safe`).then(() => setGroup((g) => ({ ...g, safeBy: null })))} className="px-4 py-2 bg-goout-green text-white rounded-lg font-medium text-sm">
-                I&apos;m Safe
+            <button
+              type="button"
+              onClick={() => api.post(`/buddies/groups/${groupId}/safe`).then(() => setGroup((g) => ({ ...g, safeBy: null })))}
+              aria-label="I am safe"
+              title="I'm Safe"
+              className="h-10 w-10 flex items-center justify-center bg-goout-green text-white rounded-lg font-medium text-base"
+            >
+                ✅
               </button>
             }
-            <button type="button" onClick={sendSOS} disabled={chatExpired} className="px-4 py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 text-sm disabled:opacity-50">
-              SOS — need help
+            <button
+              type="button"
+              onClick={sendSOS}
+              disabled={chatExpired}
+              aria-label="SOS need help"
+              title="SOS - need help"
+              className="h-10 w-10 flex items-center justify-center bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 text-base disabled:opacity-50"
+            >
+              🚨
             </button>
-            <button type="button" onClick={() => setShowLocationConfirm(true)} disabled={chatExpired} className="px-4 py-2 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 text-sm disabled:opacity-50">
-              📍 Share Location
+            <button
+              type="button"
+              onClick={() => setShowLocationConfirm(true)}
+              disabled={chatExpired}
+              aria-label="Share location"
+              title="Share location"
+              className="h-10 w-10 flex items-center justify-center bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 text-base disabled:opacity-50"
+            >
+              📍
             </button>
             <button 
               type="button" 
               onClick={() => setShowLeaveConfirm(true)}
-              className="px-4 py-2 bg-slate-400 text-white rounded-lg font-medium hover:bg-slate-500 text-sm"
+              aria-label="Leave group"
+              title="Leave group"
+              className="h-10 w-10 flex items-center justify-center bg-slate-400 text-white rounded-lg font-medium hover:bg-slate-500 text-base"
             >
-              Leave group
+              🚪
             </button>
           </div>
         </div>
+
+        {callRequest && (
+          <div className="px-4 py-3 border-b bg-indigo-50 text-sm">
+            <p className="font-medium text-indigo-900">
+              {callRequest.callType === 'video' ? 'Video' : 'Voice'} call request from group admin
+            </p>
+            <p className="text-indigo-700 mt-1">Join only if you are comfortable. All members must accept.</p>
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={() => voteOnCall('yes')}
+                disabled={pendingVote}
+                className="px-3 py-1.5 rounded-lg bg-goout-green text-white text-xs font-medium disabled:opacity-60"
+              >
+                Yes, I&apos;m comfortable
+              </button>
+              <button
+                type="button"
+                onClick={() => voteOnCall('no')}
+                disabled={pendingVote}
+                className="px-3 py-1.5 rounded-lg bg-red-500 text-white text-xs font-medium disabled:opacity-60"
+              >
+                No
+              </button>
+            </div>
+          </div>
+        )}
+
+        {callRoom?.roomUrl && (
+          <div className="px-4 py-3 border-b bg-emerald-50 text-sm">
+            <p className="font-medium text-emerald-900">
+              {callRoom.callType === 'video' ? 'Video' : 'Voice'} call approved by everyone.
+            </p>
+            <a href={callRoom.roomUrl} target="_blank" rel="noreferrer" className="inline-block mt-1 text-emerald-800 underline font-medium">
+              Join call room
+            </a>
+          </div>
+        )}
 
         {showPostMeetup && (
           <div className="px-4 py-3 border-b bg-slate-50 text-sm">
@@ -325,10 +672,17 @@ export default function GroupChat() {
         )}
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {messages.map((m, i) =>
-          <div key={i} className={m.isSOS ? 'bg-red-50 border border-red-200 rounded-lg p-3' : ''}>
-              <p className="text-xs text-slate-500 mb-0.5">{m.userName}</p>
-              <p className={m.isSOS ? 'font-semibold text-red-700' : ''}>{m.message}</p>
+          {messages.map((m, i) => {
+            const isMine = String(m.userId?._id || m.userId) === myId;
+            return (
+          <div
+            key={i}
+            onDoubleClick={() => !m.isSOS && setMessageActionId((prev) => (prev === String(m._id) ? '' : String(m._id)))}
+            className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}
+          >
+              <div className={`max-w-[82%] ${m.isSOS ? 'bg-red-50 border border-red-200' : isMine ? 'bg-emerald-50 border border-emerald-200' : 'bg-slate-50 border border-slate-200'} rounded-lg p-3 hover:bg-opacity-90 cursor-pointer`}>
+              <p className={`text-xs mb-0.5 ${isMine ? 'text-emerald-700' : 'text-slate-500'}`}>{m.userName}</p>
+              <p className={m.isSOS ? 'font-semibold text-red-700' : 'text-slate-800'}>{m.message}</p>
               
               {/* Attachments */}
               {Array.isArray(m.attachments) && m.attachments.length > 0 && (
@@ -345,10 +699,19 @@ export default function GroupChat() {
                           Your browser does not support the video tag.
                         </video>
                       ) : att.type === 'audio' ? (
-                        <audio controls className="w-full">
-                          <source src={att.url} type={att.mimetype} />
-                          Your browser does not support the audio tag.
-                        </audio>
+                        <button
+                          type="button"
+                          onClick={() => toggleVoicePlayback(att.url)}
+                          aria-label={activeVoiceUrl === att.url ? 'Stop voice message' : 'Play voice message'}
+                          title={activeVoiceUrl === att.url ? 'Stop voice message' : 'Play voice message'}
+                          className={`h-10 w-10 flex items-center justify-center rounded-full border text-base font-medium ${
+                            activeVoiceUrl === att.url ?
+                              'border-red-200 bg-red-50 text-red-700' :
+                              'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                          }`}
+                        >
+                          {activeVoiceUrl === att.url ? '⏹' : '▶'}
+                        </button>
                       ) : (
                         <a 
                           href={att.url} 
@@ -363,18 +726,57 @@ export default function GroupChat() {
                   ))}
                 </div>
               )}
+
+              {m.sharedLocation?.coordinates && (
+                <button
+                  type="button"
+                  onClick={() => openInExplorerMap(m.sharedLocation.coordinates[1], m.sharedLocation.coordinates[0])}
+                  className="mt-2 px-2.5 py-1.5 rounded-md text-xs font-medium bg-blue-100 text-blue-700 hover:bg-blue-200"
+                >
+                  Open in Explorer map
+                </button>
+              )}
               
-              {m.sosLocation?.coordinates &&
-            <a
-              href={`https://www.google.com/maps?q=${m.sosLocation.coordinates[1]},${m.sosLocation.coordinates[0]}`}
-              target="_blank"
-              rel="noreferrer"
-              className="text-sm text-blue-600 hover:underline block mt-1">
-                  View location on map
-                </a>
-            }
+            {!m.isSOS && messageActionId === String(m._id) && (
+              <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                {isAdmin && (
+                  m.pinnedAt ?
+                  <button
+                    type="button"
+                    onClick={() => unpinMessage(m._id)}
+                    className="px-2 py-1 rounded-md border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                  >
+                    Unpin
+                  </button> :
+                  <button
+                    type="button"
+                    onClick={() => pinMessage(m._id)}
+                    className="px-2 py-1 rounded-md border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                  >
+                    Pin
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => deleteMessageForMe(m._id)}
+                  className="px-2 py-1 rounded-md border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                >
+                  Delete for me
+                </button>
+                {(isAdmin || String(m.userId?._id || m.userId) === myId) && (
+                  <button
+                    type="button"
+                    onClick={() => deleteMessage(m._id)}
+                    className="px-2 py-1 rounded-md border border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
+                  >
+                    Delete for everyone
+                  </button>
+                )}
+              </div>
+            )}
             </div>
-          )}
+            </div>
+          );})}
           <div ref={scrollRef} />
         </div>
         <div className="p-4 border-t flex gap-2">
@@ -390,11 +792,23 @@ export default function GroupChat() {
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={chatExpired || uploading}
+            disabled={chatExpired || uploading || recordingAudio || recordingBusy}
             className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg disabled:opacity-50"
             title="Upload file, image, or video"
           >
             📎
+          </button>
+
+          <button
+            type="button"
+            onClick={recordingAudio ? stopAudioRecording : startAudioRecording}
+            disabled={chatExpired || uploading || recordingBusy}
+            className={`p-2 rounded-lg disabled:opacity-50 ${
+              recordingAudio ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+            title={recordingAudio ? 'Stop recording and send voice note' : 'Record and send voice note'}
+          >
+            {recordingAudio ? '⏹️' : '🎤'}
           </button>
           
           <input
@@ -403,17 +817,17 @@ export default function GroupChat() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && send()}
             placeholder={chatExpired ? 'Chat expired' : 'Type a message...'}
-            disabled={chatExpired || uploading}
+            disabled={chatExpired || uploading || recordingAudio}
             className="flex-1 px-4 py-2 border border-slate-200 rounded-xl disabled:bg-slate-50"
           />
 
           <button 
             type="button" 
             onClick={send} 
-            disabled={chatExpired || uploading}
+            disabled={chatExpired || uploading || recordingAudio}
             className="px-4 py-2 bg-goout-green text-white rounded-xl font-medium disabled:opacity-50"
           >
-            {uploading ? 'Uploading...' : 'Send'}
+            {recordingAudio ? 'Recording...' : uploading ? 'Uploading...' : 'Send'}
           </button>
         </div>
       </div>

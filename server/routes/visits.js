@@ -3,6 +3,14 @@ import Visit from '../models/Visit.js';
 import Business from '../models/Business.js';
 import User from '../models/User.js';
 import { protect } from '../middleware/auth.js';
+import { sendMerchantFeedbackEmail } from '../utils/email.js';
+import {
+  createGeminiClient,
+  getGenerativeModelForModelId,
+  DEFAULT_GEMINI_MODEL,
+  buildGeminiCandidateModels,
+  GEMINI_KEY_SCOPES
+} from '../config/geminiConfig.js';
 
 const router = express.Router();
 const VISIT_RADIUS_M = 30;
@@ -11,6 +19,13 @@ const MAX_SPEED_KMH = 10;
 const CHECK_INTERVAL_SEC = 45;
 const MAX_VISIT_GPS_ACCURACY_M = 45;
 const BIKE_CO2_G_PER_KM = 72;
+const FEEDBACK_FOUL_PATTERNS = [
+  /\b(fuck|fucking|fucker|motherfucker)\b/i,
+  /\b(shit|bullshit|bitch|bastard|asshole|dickhead)\b/i,
+  /\b(chutiya|chu\*+tiya|bc|bhenchod|behenchod|mc|madarchod|gaand[u]?|harami)\b/i,
+  /\b(randi|saala|kutta|kamina)\b/i,
+  /(fuck|shit|bitch|asshole|bastard){2,}/i
+];
 
 function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371e3;
@@ -52,6 +67,41 @@ function computeEcoImpact(distanceMeters, weight, { strongGreen = false, compara
     caloriesBurned: Math.max(0, caloriesBurned),
     carbonCreditsEarned: Math.max(0, Math.round(carbonCreditsEarned * 10) / 10)
   };
+}
+
+function containsFoulLanguage(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return false;
+  return FEEDBACK_FOUL_PATTERNS.some((re) => re.test(raw));
+}
+
+async function containsFoulLanguageAi(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return false;
+  const genAI = createGeminiClient(GEMINI_KEY_SCOPES.COMPARE_GREEN);
+  if (!genAI) return containsFoulLanguage(raw);
+  const prompt = `Classify this user feedback as profanity or clean across any language.
+Return JSON only: {"isFoul": boolean}
+Feedback: ${raw}`;
+  const candidates = buildGeminiCandidateModels(process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL);
+  for (const modelId of candidates) {
+    try {
+      const model = getGenerativeModelForModelId(genAI, modelId, {
+        generationConfig: { temperature: 0, maxOutputTokens: 120, responseMimeType: 'application/json' }
+      });
+      if (!model) continue;
+      const result = await model.generateContent({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }]
+      });
+      const textOut = String(result?.response?.text?.() || '').trim();
+      const parsed = JSON.parse(textOut);
+      if (parsed?.isFoul === true) return true;
+      if (parsed?.isFoul === false) return false;
+    } catch {
+      // try next model
+    }
+  }
+  return containsFoulLanguage(raw);
 }
 
 router.post('/impact-preview', protect, async (req, res) => {
@@ -194,6 +244,10 @@ router.post('/benefit-feedback', protect, async (req, res) => {
   try {
     const { businessId, matched, note } = req.body;
     if (!businessId) return res.status(400).json({ error: 'businessId required' });
+    const safeNote = String(note || '').trim().slice(0, 500);
+    if (await containsFoulLanguageAi(safeNote)) {
+      return res.status(400).json({ error: 'No foul language please' });
+    }
     const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
     const visit = await Visit.findOne({
       userId: req.user._id,
@@ -204,9 +258,27 @@ router.post('/benefit-feedback', protect, async (req, res) => {
       return res.status(404).json({ error: 'No recent visit found for this place' });
     }
     visit.postBenefitMatched = Boolean(matched);
-    visit.postBenefitNote = String(note || '').slice(0, 500);
+    visit.postBenefitNote = safeNote;
     await visit.save();
-    const populated = await Visit.findById(visit._id).populate('businessId', 'name category avgPrice address');
+    const populated = await Visit.findById(visit._id).populate('businessId', 'name category avgPrice address contactEmail ownerId');
+    const feedbackBusiness = await Business.findById(businessId).select('name contactEmail ownerId');
+    let merchantEmail = String(feedbackBusiness?.contactEmail || '').trim().toLowerCase();
+    if (!merchantEmail && feedbackBusiness?.ownerId) {
+      const owner = await User.findById(feedbackBusiness.ownerId).select('email');
+      merchantEmail = String(owner?.email || '').trim().toLowerCase();
+    }
+    if (merchantEmail) {
+      const businessName = feedbackBusiness?.name || populated?.businessId?.name || 'your business';
+      await sendMerchantFeedbackEmail({
+        to: merchantEmail,
+        businessName,
+        matched: Boolean(matched),
+        note: safeNote,
+        userName: req.user?.name || 'Explorer',
+        userEmail: req.user?.email || 'unknown',
+        replyTo: req.user?.email || '',
+      });
+    }
     res.json(populated);
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, Component } from 'react';
+import { useLocation } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import api from '../api/client';
 import { useVisitMonitor } from '../hooks/useVisitMonitor';
@@ -25,7 +26,13 @@ const STRICT_ACCEPT_ACCURACY_M = 50;
 /** When GPS reports movement beyond this, accept the new fix even if accuracy is slightly worse (walking). */
 const SIGNIFICANT_MOVE_M = 25;
 const ARRIVAL_THRESHOLD_M = 8;
+const ARRIVAL_REPROMPT_WINDOW_MS = 2 * 60 * 1000;
+const ARRIVAL_REPROMPT_INTERVAL_MS = 15000;
+const OFF_ROUTE_REROUTE_M = 55;
+const OFF_ROUTE_REROUTE_COOLDOWN_MS = 8000;
 const USER_LOCATION_CACHE_KEY = 'goout_last_user_location';
+const DEFAULT_MAP_ZOOM = 17;
+const AREA_POI_MAX_RADIUS_M = 50000;
 
 class ExplorerSectionErrorBoundary extends Component {
   constructor(props) {
@@ -141,11 +148,25 @@ function ensureRouteEndsAtDestination(route, destination) {
   return { ...route, geometryLatLng: [...latlng, [dLat, dLng]] };
 }
 
+function LocationPinIcon({ className = '' }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 21s-7-4.35-7-11a7 7 0 1 1 14 0c0 6.65-7 11-7 11z" />
+      <circle cx="12" cy="10" r="2.4" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 export default function Explorer() {
+  const location = useLocation();
   const [userLocation, setUserLocation] = useState(() => readCachedUserLocation());
   const [locationError, setLocationError] = useState(false);
   const [categorySearch, setCategorySearch] = useState('');
+  const [cityLookup, setCityLookup] = useState('');
+  const [cityLookupLoading, setCityLookupLoading] = useState(false);
+  const [citySwitcherEnabled, setCitySwitcherEnabled] = useState(false);
   const [mapCenter, setMapCenter] = useState(() => readCachedUserLocation());
+  const [mapZoom, setMapZoom] = useState(DEFAULT_MAP_ZOOM);
   const [businesses, setBusinesses] = useState([]);
   const [offers, setOffers] = useState([]);
   const [poiResults, setPoiResults] = useState([]);
@@ -176,6 +197,8 @@ export default function Explorer() {
   const [highlightedPoiLatLng, setHighlightedPoiLatLng] = useState(null);
   const [locationAccuracy, setLocationAccuracy] = useState(null);
   const [liveTrackingEnabled, setLiveTrackingEnabled] = useState(false);
+  const [activeRouteProfile, setActiveRouteProfile] = useState('walking');
+  const [arrivalRepromptUntilTs, setArrivalRepromptUntilTs] = useState(0);
   const [locationPinnedByUser, setLocationPinnedByUser] = useState(false);
   const [liveTrackingPoint, setLiveTrackingPoint] = useState(null);
   const [mapBudgetInr, setMapBudgetInr] = useState(null);
@@ -183,9 +206,13 @@ export default function Explorer() {
   const [compareRouteOverlays, setCompareRouteOverlays] = useState([]);
   const [compareVersus, setCompareVersus] = useState(null);
   const [greenEcoRoute, setGreenEcoRoute] = useState(null);
+  const [greenRouteBundle, setGreenRouteBundle] = useState(null);
   const [currentCity, setCurrentCity] = useState('');
   const lastCityLatLngRef = useRef(null);
   const shouldAutoSearchAfterLocationUpdateRef = useRef(false);
+  const rerouteInFlightRef = useRef(false);
+  const lastRerouteAtRef = useRef(0);
+  const lastArrivalPromptAtRef = useRef(0);
 
   const fetchCityName = useCallback(async (lat, lng) => {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return '';
@@ -201,6 +228,83 @@ export default function Explorer() {
     }
     return '';
   }, []);
+
+  const loadAreaPublicPlaces = useCallback(async ({ lat, lng, cityName = '', areaRadiusMeters = 50000 }) => {
+    const centerLat = Number(lat);
+    const centerLng = Number(lng);
+    if (!Number.isFinite(centerLat) || !Number.isFinite(centerLng)) return;
+    const targetRadius = Math.max(12000, Math.min(220000, Number(areaRadiusMeters) || 50000));
+    const requestRadius = Math.min(AREA_POI_MAX_RADIUS_M, targetRadius);
+    const cosLat = Math.max(0.25, Math.cos(centerLat * Math.PI / 180));
+    const spreadMeters = targetRadius > AREA_POI_MAX_RADIUS_M ? Math.min(AREA_POI_MAX_RADIUS_M * 0.95, targetRadius * 0.6) : 0;
+    const dLat = spreadMeters > 0 ? spreadMeters / 111000 : 0;
+    const dLng = spreadMeters > 0 ? spreadMeters / (111000 * cosLat) : 0;
+    const centers = [
+      { lat: centerLat, lng: centerLng },
+      ...(spreadMeters > 0 ? [
+        { lat: centerLat + dLat, lng: centerLng },
+        { lat: centerLat - dLat, lng: centerLng },
+        { lat: centerLat, lng: centerLng + dLng },
+        { lat: centerLat, lng: centerLng - dLng },
+        { lat: centerLat + dLat, lng: centerLng + dLng },
+        { lat: centerLat + dLat, lng: centerLng - dLng },
+        { lat: centerLat - dLat, lng: centerLng + dLng },
+        { lat: centerLat - dLat, lng: centerLng - dLng }
+      ] : [])
+    ];
+    setIsSearching(true);
+    try {
+      const all = await Promise.all(
+        centers.map((c) =>
+          api.get('/geocode/poi', {
+            params: {
+              lat: c.lat,
+              lng: c.lng,
+              q: '',
+              city: cityName,
+              radius: requestRadius
+            }
+          })
+        )
+      );
+      const byKey = new Map();
+      all.forEach((resp) => {
+        const rows = Array.isArray(resp?.data) ? resp.data : [];
+        rows.forEach((p) => {
+          const pla = Number(p?.lat);
+          const plo = Number(p?.lng);
+          if (!Number.isFinite(pla) || !Number.isFinite(plo)) return;
+          const k = `${String(p?.name || '').toLowerCase().slice(0, 64)}|${pla.toFixed(4)}|${plo.toFixed(4)}`;
+          if (!byKey.has(k)) byKey.set(k, p);
+        });
+      });
+      const merged = [...byKey.values()]
+        .map((p) => ({
+          ...p,
+          distanceMeters: haversineMetersRaw(centerLat, centerLng, Number(p.lat), Number(p.lng))
+        }))
+        .sort((a, b) => (Number(a.distanceMeters) || 0) - (Number(b.distanceMeters) || 0))
+        .slice(0, 1200);
+      setPoiResults(merged);
+      setBusinesses([]);
+      setOffers([]);
+      setHighlightedBusinessId(null);
+      if (merged[0] && Number.isFinite(Number(merged[0].lat)) && Number.isFinite(Number(merged[0].lng))) {
+        setHighlightedPoiLatLng({ lat: Number(merged[0].lat), lng: Number(merged[0].lng) });
+      } else {
+        setHighlightedPoiLatLng(null);
+      }
+      addToast({
+        type: 'success',
+        title: 'Loaded',
+        message: `${merged.length} places · ${cityName || 'area'}`
+      });
+    } catch {
+      addToast({ type: 'error', title: 'Load failed', message: 'Try again.' });
+    } finally {
+      setIsSearching(false);
+    }
+  }, [addToast]);
 
   const visiblePois = useMemo(() => {
     if (!hiddenPoiKey) return poiResults;
@@ -237,6 +341,12 @@ export default function Explorer() {
   }, [highlightedPoiLatLng]);
 
   useEffect(() => {
+    if (activeTab !== 'map') {
+      setSearchSuggestions([]);
+      setSuggestionsLoading(false);
+      setActiveSuggestionIndex(-1);
+      return;
+    }
     const q = categorySearch.trim();
     if (q !== prevSearchTrimRef.current) {
       prevSearchTrimRef.current = q;
@@ -326,8 +436,8 @@ export default function Explorer() {
       if (showToast && normalizedQuery.length > 0) {
         addToast({
           type: 'info',
-          title: 'Search too short',
-          message: `Type at least ${MIN_SEARCH_LEN} characters, then click Apply.`
+          title: 'Too short',
+          message: `At least ${MIN_SEARCH_LEN} chars, then Apply.`
         });
       }
       return;
@@ -337,8 +447,8 @@ export default function Explorer() {
       if (showToast) {
         addToast({
           type: 'info',
-          title: 'Searching places',
-          message: `Finding results for "${normalizedQuery}"...`
+          title: 'Searching',
+          message: `"${normalizedQuery}"…`
         });
       }
       let activeCity = currentCity;
@@ -381,9 +491,8 @@ export default function Explorer() {
       setOffers(oRes.data);
       const primaryPois = Array.isArray(poiRes.data) ? poiRes.data : [];
       const broadPois = Array.isArray(poiBroadRes.data) ? poiBroadRes.data : [];
-      const precisePrimaryPois = normalizedQuery ?
-        primaryPois.filter((p) => poiMatchesPreciseQuery(normalizedQuery, p)) :
-        primaryPois;
+      // Primary POI API call already uses the search query; keep it as-is to avoid dropping dynamic place-name matches.
+      const precisePrimaryPois = primaryPois;
       const preciseBroadPois = normalizedQuery ?
         broadPois.filter((p) => poiMatchesPreciseQuery(normalizedQuery, p)) :
         broadPois;
@@ -408,11 +517,11 @@ export default function Explorer() {
       }
       if (showToast) {
         const total = rawBusinesses.length + pois.length;
-        addToast({ type: 'success', title: 'Search complete', message: `${total} places found.` });
+        addToast({ type: 'success', title: 'Done', message: `${total} places.` });
       }
     } catch (e) {
       console.error(e);
-      if (showToast) addToast({ type: 'error', title: 'Search failed', message: 'Could not load places. Please retry.' });
+      if (showToast) addToast({ type: 'error', title: 'Search failed', message: 'Retry.' });
     } finally {
       setIsSearching(false);
     }
@@ -429,11 +538,22 @@ export default function Explorer() {
   }, [categorySearch]);
 
   useEffect(() => {
+    const params = new URLSearchParams(location.search || '');
+    const focusLat = Number(params.get('focusLat'));
+    const focusLng = Number(params.get('focusLng'));
+    if (!Number.isFinite(focusLat) || !Number.isFinite(focusLng)) return;
+    setActiveTab('map');
+    setMapCenter({ lat: focusLat, lng: focusLng });
+    setConciergePanTo({ lat: focusLat, lng: focusLng, panKey: Date.now() });
+    setHighlightedPoiLatLng({ lat: focusLat, lng: focusLng });
+  }, [location.search]);
+
+  useEffect(() => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (p) => {
           applyGpsFix(p.coords, { recenter: true, force: true });
-          addToast({ type: 'success', title: 'Location accessed', message: 'Using your GPS location.' });
+          addToast({ type: 'success', title: 'Location on', message: 'GPS.' });
         },
         async () => {
           try {
@@ -442,12 +562,12 @@ export default function Explorer() {
             setMapCenter(data);
             setLocationError(true);
             setLocationAccuracy(null);
-            addToast({ type: 'info', title: 'Location accessed', message: 'GPS denied/unavailable. Using approximate IP location.' });
+            addToast({ type: 'info', title: 'Approx location', message: 'IP-based.' });
           } catch {
             setUserLocation(DEFAULT_CENTER);
             setMapCenter(DEFAULT_CENTER);
             setLocationError(true);
-            addToast({ type: 'error', title: 'Location not available', message: 'Unable to get location. Using default area.' });
+            addToast({ type: 'error', title: 'No location', message: 'Using default area.' });
           }
         },
         GEO_OPTIONS
@@ -456,12 +576,14 @@ export default function Explorer() {
       setUserLocation(DEFAULT_CENTER);
       setMapCenter(DEFAULT_CENTER);
       setLocationError(true);
-      addToast({ type: 'error', title: 'Location not supported', message: 'Geolocation is not available in this browser.' });
+      addToast({ type: 'error', title: 'No geolocation', message: 'Browser blocked it.' });
     }
   }, [addToast, applyGpsFix]);
 
   const useMyLocation = () => {
     if (!navigator.geolocation) return;
+    setCitySwitcherEnabled(false);
+    setCityLookup('');
     setLocationPinnedByUser(false);
     shouldAutoSearchAfterLocationUpdateRef.current = true;
     hasPreciseFixRef.current = false;
@@ -469,11 +591,12 @@ export default function Explorer() {
     navigator.geolocation.getCurrentPosition(
       (p) => {
         applyGpsFix(p.coords, { recenter: true, force: true });
+        setMapZoom(DEFAULT_MAP_ZOOM);
         const acc = Number.isFinite(p.coords?.accuracy) ? Math.round(p.coords.accuracy) : null;
         addToast({
           type: 'success',
-          title: 'Location updated',
-          message: acc ? `GPS lock acquired (accuracy ~${acc}m).` : 'GPS lock acquired.'
+          title: 'Updated',
+          message: acc ? `GPS ~${acc}m` : 'GPS locked.'
         });
       },
       () => {
@@ -481,14 +604,105 @@ export default function Explorer() {
           shouldAutoSearchAfterLocationUpdateRef.current = true;
           setUserLocation(data);
           setMapCenter(data);
+          setMapZoom(DEFAULT_MAP_ZOOM);
           setLocationError(true);
           setLocationAccuracy(null);
-          addToast({ type: 'info', title: 'Location updated', message: 'Using approximate IP location.' });
+          addToast({ type: 'info', title: 'Approx', message: 'IP location.' });
         }).catch(() => setLocationError(true));
       },
       GEO_OPTIONS
     );
   };
+
+  const toggleCitySwitcher = useCallback(async () => {
+    if (!citySwitcherEnabled) {
+      setCitySwitcherEnabled(true);
+      addToast({ type: 'info', title: 'City switcher', message: 'Type city → Switch.' });
+      return;
+    }
+    setCitySwitcherEnabled(false);
+    setCityLookup('');
+    setCityLookupLoading(false);
+    setHiddenPoiKey(null);
+    setHighlightedPoiLatLng(null);
+    setConciergePanTo(null);
+    const base = userLocationRef.current;
+    if (base && Number.isFinite(base.lat) && Number.isFinite(base.lng)) {
+      setMapCenter({ lat: Number(base.lat), lng: Number(base.lng) });
+      setMapZoom(DEFAULT_MAP_ZOOM);
+      await fetchCityName(Number(base.lat), Number(base.lng));
+      addToast({ type: 'success', title: 'City off', message: 'Back to you.' });
+      return;
+    }
+    useMyLocation();
+  }, [citySwitcherEnabled, addToast, fetchCityName, useMyLocation]);
+
+  const switchToCity = useCallback(async () => {
+    if (!citySwitcherEnabled) {
+      addToast({ type: 'info', title: 'Switcher off', message: 'Turn it on first.' });
+      return;
+    }
+    const q = cityLookup.trim();
+    if (q.length < 2) {
+      addToast({ type: 'info', title: 'City?', message: 'Type a name.' });
+      return;
+    }
+    setCityLookupLoading(true);
+    try {
+      const { data } = await api.get('/geocode/search', { params: { q } });
+      const countryCode = String(data?.countryCode || '').toUpperCase();
+      const inIndia = data?.inIndia === true || countryCode === 'IN';
+      if (!inIndia) {
+        addToast({
+          type: 'error',
+          title: 'India only',
+          message: 'Pick a place in India.'
+        });
+        return;
+      }
+      const lat = Number(data?.lat);
+      const lng = Number(data?.lng);
+      const suggestedRadiusMeters = Math.max(12000, Math.min(220000, Number(data?.suggestedRadiusMeters) || 50000));
+      const suggestedZoom = Math.max(5, Math.min(16, Number(data?.suggestedZoom) || (suggestedRadiusMeters >= 120000 ? 7 : suggestedRadiusMeters >= 60000 ? 9 : 11)));
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        addToast({ type: 'error', title: 'Not found', message: 'Try another name.' });
+        return;
+      }
+      const resolved = await fetchCityName(lat, lng);
+      const cityName = (String(data?.label || '').trim() || resolved || q).slice(0, 80);
+      setMapCenter({ lat, lng });
+      setMapZoom(suggestedZoom);
+      setCurrentCity(cityName);
+      lastCityLatLngRef.current = { lat, lng, city: cityName };
+      // Do not carry over previous place keyword (e.g. "cafe") into a newly switched city.
+      setCategorySearch('');
+      setHiddenPoiKey(null);
+      setHighlightedPoiLatLng(null);
+      // Do not trigger concierge pan (it enforces close zoom); keep area zoom for city/state view.
+      setConciergePanTo(null);
+      setDirectionsRoutes([]);
+      setSelectedDirectionsRouteIndex(0);
+      setDestinationPoint(null);
+      setLiveTrackingPoint(null);
+      setCompareRouteOverlays([]);
+      setCompareVersus(null);
+      setGreenEcoRoute(null);
+      setGreenRouteBundle(null);
+      addToast({
+        type: 'success',
+        title: 'Switched',
+        message: `${cityName}. Search here.`
+      });
+      // Wait for user's place query in this city; do not auto-load place pins.
+      setBusinesses([]);
+      setPoiResults([]);
+      setOffers([]);
+    } catch {
+      addToast({ type: 'error', title: 'Switch failed', message: 'Try again.' });
+    } finally {
+      setCityLookupLoading(false);
+    }
+  }, [citySwitcherEnabled, cityLookup, addToast, fetchCityName]);
 
   const haversineMeters = useCallback((la1, lo1, la2, lo2) => {
     const R = 6371e3;
@@ -507,23 +721,52 @@ export default function Explorer() {
   }, []);
 
   const loadRouteTo = useCallback(
-    async ({ lat, lng, label, profile = 'walking', kind = 'poi', businessId = '' }) => {
+    async ({ lat, lng, label, profile = 'walking', kind = 'poi', businessId = '', preferGreenMode = false }) => {
       const origin = userLocationRef.current;
       if (!origin || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
       setCompareRouteOverlays([]);
       setCompareVersus(null);
-      setGreenEcoRoute(null);
+      if (!preferGreenMode) {
+        setGreenEcoRoute(null);
+        setGreenRouteBundle(null);
+      }
       setDirectionsLoading(true);
       try {
-        const { data } = await api.post('/directions/route', {
-          origin,
-          destination: { lat, lng },
-          profile,
-          alternatives: true
-        });
         const destination = { lat, lng };
-        const routesRaw = Array.isArray(data?.routes) ? data.routes : [];
-        const routes = routesRaw.map((r) => ensureRouteEndsAtDestination(r, destination));
+        let routes = [];
+        let selectedProfile = profile || 'walking';
+        if (preferGreenMode) {
+          const greenResp = await api.post('/directions/green-bundle', {
+            origin,
+            destination,
+            destinationName: label || 'destination'
+          });
+          const bundle = greenResp?.data || null;
+          setGreenRouteBundle(bundle);
+          const recommended = bundle?.recommended;
+          if (recommended?.geometryLatLng?.length) {
+            setGreenEcoRoute({
+              geometryLatLng: recommended.geometryLatLng,
+              co2SavedGrams: Number(recommended.co2SavedVsCarGrams || 0),
+              modeLabel: recommended.mode || 'walking'
+            });
+            routes = [ensureRouteEndsAtDestination(recommended, destination)];
+            selectedProfile =
+              recommended.mode === 'cycling' ? 'cycling' :
+              recommended.mode === 'driving' ? 'driving' :
+              'walking';
+          }
+        }
+        if (!routes.length) {
+          const { data } = await api.post('/directions/route', {
+            origin,
+            destination,
+            profile,
+            alternatives: true
+          });
+          const routesRaw = Array.isArray(data?.routes) ? data.routes : [];
+          routes = routesRaw.map((r) => ensureRouteEndsAtDestination(r, destination));
+        }
         setDirectionsDestinationLabel(label || '');
         setDirectionsRoutes(routes);
         setSelectedDirectionsRouteIndex(0);
@@ -539,14 +782,17 @@ export default function Explorer() {
         setHasReachedDestination(false);
         setPendingArrivalConfirm(false);
         setArrivalEcoImpact(null);
+      setArrivalRepromptUntilTs(0);
+      lastArrivalPromptAtRef.current = 0;
         setLiveTrackingEnabled(true);
+      setActiveRouteProfile(selectedProfile);
         const startMeters = haversineMeters(origin.lat, origin.lng, lat, lng);
         setInitialDistanceToDestination(startMeters);
         setDistanceToDestination(startMeters);
         return { startDistanceMeters: startMeters };
       } catch (err) {
         console.error(err);
-        addToast({ type: 'error', title: 'Directions failed', message: 'Could not compute route. Please try again.' });
+        addToast({ type: 'error', title: 'No route', message: 'Try again.' });
         return null;
       } finally {
         setDirectionsLoading(false);
@@ -591,8 +837,8 @@ export default function Explorer() {
         const distanceText = routeInfo?.startDistanceMeters ? ` · ${formatDistanceLabel(routeInfo.startDistanceMeters)}` : '';
         addToast({
           type: 'success',
-          title: 'Route ready',
-          message: label ? `Route to ${label}${distanceText}` : `Directions loaded${distanceText} — see Map tab.`
+          title: 'Route',
+          message: label ? `${label}${distanceText}` : `Ready${distanceText}`
         });
       } catch (e) {
 
@@ -608,8 +854,8 @@ export default function Explorer() {
       if (!origin || !Number.isFinite(origin.lat) || !Number.isFinite(origin.lng)) {
         addToast({
           type: 'error',
-          title: 'Location needed',
-          message: 'Allow location (or wait for GPS) so we can draw a route from you to this place.'
+          title: 'Need location',
+          message: 'Allow GPS or wait for fix.'
         });
         return;
       }
@@ -629,18 +875,19 @@ export default function Explorer() {
         label: label || 'Place',
         profile: 'walking',
         kind: kind === 'local' ? 'local' : 'poi',
-        businessId: id || ''
+        businessId: id || '',
+        preferGreenMode: activeTab === 'green'
       });
       if (routeInfo?.startDistanceMeters != null) {
         const distanceText = ` · ${formatDistanceLabel(routeInfo.startDistanceMeters)}`;
         addToast({
           type: 'success',
-          title: 'Walking route',
-          message: `${label ? `To ${label}` : 'Route on map'}${distanceText}.`
+          title: 'Route',
+          message: `${label || 'Map'}${distanceText}`
         });
       }
     },
-    [loadRouteTo, addToast, formatDistanceLabel]
+    [loadRouteTo, addToast, formatDistanceLabel, activeTab]
   );
 
   useEffect(() => {
@@ -654,10 +901,10 @@ export default function Explorer() {
       if (!businessId) return;
       addToast({
         type: 'info',
-        title: 'Flash deal nearby',
+        title: 'Flash deal',
         message: mapBudgetRef.current != null ?
-          'A Red Pin flash deal went live — refreshing the map; it may now fit your budget cap.' :
-          'A nearby merchant just activated an instant deal.'
+          'Deal live — map refreshed.' :
+          'Nearby deal just dropped.'
       });
       const q = categorySearchRef.current.trim();
       if (q.length >= MIN_SEARCH_LEN) {
@@ -702,9 +949,17 @@ export default function Explorer() {
           try {
             const kind = goBtn.getAttribute('data-kind') || 'poi';
             const businessId = goBtn.getAttribute('data-business-id') || '';
-            const routeInfo = await loadRouteTo({ lat, lng, label, profile: 'walking', kind, businessId });
+            const routeInfo = await loadRouteTo({
+              lat,
+              lng,
+              label,
+              profile: 'walking',
+              kind,
+              businessId,
+              preferGreenMode: activeTab === 'green'
+            });
             const distanceText = routeInfo?.startDistanceMeters ? ` · ${formatDistanceLabel(routeInfo.startDistanceMeters)}` : '';
-            addToast({ type: 'success', title: 'Walking route', message: label ? `Route to ${label}${distanceText}` : `Directions loaded${distanceText}.` });
+            addToast({ type: 'success', title: 'Route', message: label ? `${label}${distanceText}` : `Ready${distanceText}` });
           } catch (err) {
             console.error(err);
           }
@@ -722,7 +977,7 @@ export default function Explorer() {
     };
     document.addEventListener('click', handler);
     return () => document.removeEventListener('click', handler);
-  }, [addToast, loadRouteTo, formatDistanceLabel]);
+  }, [addToast, loadRouteTo, formatDistanceLabel, activeTab]);
 
   useVisitMonitor(businesses, visiblePois, userLocation, true, { comparatorBusinessIdsRef });
 
@@ -735,8 +990,8 @@ export default function Explorer() {
     setLocationError(false);
     addToast({
       type: 'success',
-      title: 'Exact pin set',
-      message: 'Using your selected pin until you tap "Use my location" again.'
+      title: 'Pin set',
+      message: 'Tap Use my location to reset.'
     });
   };
 
@@ -753,32 +1008,78 @@ export default function Explorer() {
     setHasReachedDestination(false);
     setPendingArrivalConfirm(false);
     setArrivalEcoImpact(null);
+    setArrivalRepromptUntilTs(0);
+    lastArrivalPromptAtRef.current = 0;
     setSavingEcoImpact(false);
     setLiveTrackingEnabled(false);
     setCompareRouteOverlays([]);
     setCompareVersus(null);
     setGreenEcoRoute(null);
-    addToast({ type: 'info', title: 'Route cancelled', message: 'Navigation route removed from map.' });
+    setGreenRouteBundle(null);
+    addToast({ type: 'info', title: 'Route off', message: 'Cleared.' });
   };
 
   useEffect(() => {
     if (!destinationPoint || !navigator.geolocation) return undefined;
     const watchId = navigator.geolocation.watchPosition(
       (p) => {
+        const now = Date.now();
         const current = { lat: p.coords.latitude, lng: p.coords.longitude };
         setLiveTrackingPoint(current);
         if (liveTrackingEnabled) {
           setUserLocation(current);
         }
+        const selectedRoute = Array.isArray(directionsRoutes) ? directionsRoutes[selectedDirectionsRouteIndex] : null;
+        const routeLatLng = Array.isArray(selectedRoute?.geometryLatLng) ? selectedRoute.geometryLatLng : [];
+        if (
+          liveTrackingEnabled &&
+          routeLatLng.length > 2 &&
+          !rerouteInFlightRef.current &&
+          now - lastRerouteAtRef.current >= OFF_ROUTE_REROUTE_COOLDOWN_MS
+        ) {
+          let minRouteDistanceM = Number.POSITIVE_INFINITY;
+          for (let i = 0; i < routeLatLng.length; i += 1) {
+            const pt = routeLatLng[i];
+            const la = Number(Array.isArray(pt) ? pt[0] : pt?.lat);
+            const lo = Number(Array.isArray(pt) ? pt[1] : pt?.lng);
+            if (!Number.isFinite(la) || !Number.isFinite(lo)) continue;
+            const d = haversineMeters(current.lat, current.lng, la, lo);
+            if (d < minRouteDistanceM) minRouteDistanceM = d;
+          }
+          if (Number.isFinite(minRouteDistanceM) && minRouteDistanceM > OFF_ROUTE_REROUTE_M) {
+            rerouteInFlightRef.current = true;
+            lastRerouteAtRef.current = now;
+            api.post('/directions/route', {
+              origin: current,
+              destination: { lat: destinationPoint.lat, lng: destinationPoint.lng },
+              profile: activeRouteProfile || 'walking',
+              alternatives: true
+            }).then(({ data }) => {
+              const routesRaw = Array.isArray(data?.routes) ? data.routes : [];
+              if (!routesRaw.length) return;
+              const nextRoutes = routesRaw.map((r) => ensureRouteEndsAtDestination(r, destinationPoint));
+              setDirectionsRoutes(nextRoutes);
+              setSelectedDirectionsRouteIndex(0);
+              addToast({
+                type: 'info',
+                title: 'Rerouted',
+                message: 'You went off-route—we updated.'
+              });
+            }).catch(() => {}).finally(() => {
+              rerouteInFlightRef.current = false;
+            });
+          }
+        }
         const meters = haversineMeters(current.lat, current.lng, destinationPoint.lat, destinationPoint.lng);
         setDistanceToDestination(meters);
-        if (meters <= ARRIVAL_THRESHOLD_M && !hasReachedDestination && !pendingArrivalConfirm) {
-          setPendingArrivalConfirm(true);
-          addToast({
-            type: 'info',
-            title: 'Near destination',
-            message: 'Confirm arrival to log this visit.'
-          });
+        const inArrivalZone = meters <= ARRIVAL_THRESHOLD_M * 2;
+        if (inArrivalZone && !hasReachedDestination && !pendingArrivalConfirm) {
+          const windowUntil = arrivalRepromptUntilTs > now ? arrivalRepromptUntilTs : now + ARRIVAL_REPROMPT_WINDOW_MS;
+          if (now <= windowUntil && now - lastArrivalPromptAtRef.current >= ARRIVAL_REPROMPT_INTERVAL_MS) {
+            setArrivalRepromptUntilTs(windowUntil);
+            setPendingArrivalConfirm(true);
+            lastArrivalPromptAtRef.current = now;
+          }
         }
       },
       () => {},
@@ -786,18 +1087,33 @@ export default function Explorer() {
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [destinationPoint, hasReachedDestination, haversineMeters, addToast, directionsDestinationLabel, liveTrackingEnabled, locationPinnedByUser, pendingArrivalConfirm]);
+  }, [
+    destinationPoint,
+    hasReachedDestination,
+    haversineMeters,
+    addToast,
+    directionsDestinationLabel,
+    liveTrackingEnabled,
+    locationPinnedByUser,
+    pendingArrivalConfirm,
+    directionsRoutes,
+    selectedDirectionsRouteIndex,
+    activeRouteProfile,
+    arrivalRepromptUntilTs
+  ]);
 
-  const confirmArrival = useCallback(async () => {
+  const confirmArrival = useCallback(async ({ autoSave = false } = {}) => {
     const current = userLocationRef.current;
     if (!destinationPoint || !current) return;
     const meters = haversineMeters(current.lat, current.lng, destinationPoint.lat, destinationPoint.lng);
     if (!Number.isFinite(meters) || meters > ARRIVAL_THRESHOLD_M * 2) {
-      addToast({ type: 'error', title: 'Not at place yet', message: 'Move closer to the destination and try again.' });
+      addToast({ type: 'error', title: 'Too far', message: 'Get closer, then confirm.' });
       return;
     }
     setHasReachedDestination(true);
     setPendingArrivalConfirm(false);
+    setArrivalRepromptUntilTs(0);
+    lastArrivalPromptAtRef.current = 0;
     const walkedMeters = Math.max(0, initialDistanceToDestination ? Number(initialDistanceToDestination) - Number(meters) : 0);
     const isLocal = destinationPoint?.kind === 'local' && destinationPoint?.businessId;
     if (isLocal) {
@@ -809,7 +1125,7 @@ export default function Explorer() {
         businessId: isLocal ? String(destinationPoint.businessId) : '',
         fromComparator: Boolean(isLocal)
       });
-      setArrivalEcoImpact({
+      const impactModel = {
         distanceWalked: Number(data?.distanceWalked || walkedMeters || 0),
         carCO2SavedGrams: Number(data?.carCO2SavedGrams || 0),
         bikeCO2SavedGrams: Number(data?.bikeCO2SavedGrams || 0),
@@ -827,12 +1143,33 @@ export default function Explorer() {
           null,
         lat: Number(current.lat),
         lng: Number(current.lng),
-        decision: 'pending'
-      });
+        decision: autoSave ? 'saved' : 'pending'
+      };
+      setArrivalEcoImpact(impactModel);
+      if (autoSave) {
+        const payload = {
+          lat: Number(impactModel.lat),
+          lng: Number(impactModel.lng),
+          distanceWalked: Number(impactModel.distanceWalked || 0),
+          fromComparator: Boolean(impactModel.placeKind === 'local' && impactModel.businessId),
+          ecoComparisonSaved: true
+        };
+        if (impactModel.placeKind === 'local' && impactModel.businessId) {
+          payload.businessId = String(impactModel.businessId);
+        } else {
+          payload.publicPlace = {
+            name: impactModel.place?.name || directionsDestinationLabel || 'Public place',
+            category: impactModel.place?.category || 'public',
+            lat: Number(impactModel.place?.lat),
+            lng: Number(impactModel.place?.lng)
+          };
+        }
+        await api.post('/visits/record', payload);
+      }
       addToast({
         type: 'success',
         title: 'Reached',
-        message: 'Arrival verified. Review eco impact and choose Save or Not now.'
+        message: `You've reached ${destinationPoint?.label || 'this'} place, enjoy.`
       });
     } catch {
       setArrivalEcoImpact({
@@ -853,11 +1190,21 @@ export default function Explorer() {
           null,
         lat: Number(current.lat),
         lng: Number(current.lng),
-        decision: 'pending'
+        decision: autoSave ? 'saved' : 'pending'
       });
-      addToast({ type: 'success', title: 'Reached', message: 'Arrival confirmed.' });
+      addToast({
+        type: autoSave ? 'info' : 'success',
+        title: 'Here',
+        message: autoSave ? 'Impact below.' : 'Confirmed.'
+      });
     }
-  }, [destinationPoint, haversineMeters, addToast, initialDistanceToDestination]);
+  }, [destinationPoint, haversineMeters, addToast, initialDistanceToDestination, directionsDestinationLabel]);
+
+  useEffect(() => {
+    if (!pendingArrivalConfirm || hasReachedDestination) return;
+    // Auto-confirm arrival once user is within destination radius.
+    confirmArrival({ autoSave: true });
+  }, [pendingArrivalConfirm, hasReachedDestination, confirmArrival]);
 
   const saveArrivalEcoComparison = useCallback(async () => {
     if (!arrivalEcoImpact || savingEcoImpact) return;
@@ -884,14 +1231,14 @@ export default function Explorer() {
       setArrivalEcoImpact((prev) => (prev ? { ...prev, decision: 'saved' } : prev));
       addToast({
         type: 'success',
-        title: 'Eco comparison saved',
-        message: 'Saved with calories, carbon credits, and walked distance.'
+        title: 'Saved',
+        message: 'Trip logged.'
       });
     } catch (err) {
       addToast({
         type: 'error',
-        title: 'Could not save',
-        message: err?.response?.data?.error || 'Failed to save this eco comparison.'
+        title: 'Save failed',
+        message: err?.response?.data?.error || 'Try again.'
       });
     } finally {
       setSavingEcoImpact(false);
@@ -905,13 +1252,35 @@ export default function Explorer() {
   { id: 'green', label: 'Green' }];
 
   const mapUserLocation = userLocation || mapCenter || DEFAULT_CENTER;
+  const isLiveTrackingActive = Boolean(
+    destinationPoint &&
+    liveTrackingEnabled &&
+    Number.isFinite(Number(userLocation?.lat)) &&
+    Number.isFinite(Number(userLocation?.lng))
+  );
+  const conciergeLocation =
+    citySwitcherEnabled &&
+    mapCenter &&
+    Number.isFinite(Number(mapCenter.lat)) &&
+    Number.isFinite(Number(mapCenter.lng))
+      ? { lat: Number(mapCenter.lat), lng: Number(mapCenter.lng) }
+      : userLocation;
 
 
   return (
     <div className="space-y-6 goout-animate-in relative">
+      {isLiveTrackingActive && (
+        <span
+          className="goout-safety-dot"
+          role="status"
+          aria-live="polite"
+          aria-label="Live tracking is active"
+          title="Live tracking is active"
+        />
+      )}
       <ExplorerSectionErrorBoundary>
         <CityConciergeChat
-          userLocation={userLocation}
+          userLocation={conciergeLocation}
           userDisplayName={user?.name}
           // explorationRadiusM removed, now relying on city constraint
           greenMode={activeTab === 'green'}
@@ -922,7 +1291,7 @@ export default function Explorer() {
               addToast({
                 type: 'info',
                 title: 'Concierge',
-                message: 'Zero-spend intent detected — map budget overlay set to ₹0 to highlight free-friendly pins.'
+                message: '₹0 mode — free pins pop.'
               });
             }
           }}
@@ -941,20 +1310,24 @@ export default function Explorer() {
       </ExplorerSectionErrorBoundary>
       {locationError &&
       <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-sm">
-          <strong>Using approximate location (IP).</strong> Tap &quot;Use my location&quot; with GPS enabled for accurate results.
+          <strong>Approx location (IP).</strong> Tap Use my location for GPS.
         </div>
       }
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="font-display font-bold text-2xl md:text-3xl bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent">
           Explore
         </h1>
-        <div className="flex gap-2 flex-wrap p-1 rounded-2xl bg-white/50 border border-slate-200/60 backdrop-blur-sm shadow-sm">
+        <div className="flex gap-2 flex-wrap">
           {tabs.map((t) =>
           <button
             key={t.id}
             type="button"
             onClick={() => setActiveTab(t.id)}
-            className={`goout-tab-pill ${activeTab === t.id ? 'goout-tab-pill-active' : ''}`}>
+            className={`goout-tab-pill ${
+              activeTab === t.id
+                ? 'bg-slate-900 border-slate-900 text-white shadow-sm'
+                : ''
+            }`}>
             {t.label}
           </button>
           )}
@@ -964,20 +1337,6 @@ export default function Explorer() {
       <div className="space-y-4">
         {activeTab === 'map' && (
           <>
-            <p className="text-slate-600 text-sm">
-              Enter what you want (e.g. quiet cafe, park, pottery) and click <strong className="text-slate-800">Apply</strong> — GoOut merchants and public places load after you search, not before.
-            </p>
-            {userLocation &&
-            <div className={`rounded-lg border px-3 py-2 text-xs ${
-            locationAccuracy != null && locationAccuracy <= TARGET_PRECISE_ACCURACY_M ?
-            'border-green-200 bg-green-50 text-green-800' :
-            'border-amber-200 bg-amber-50 text-amber-800'}`
-            }>
-                GPS: {locationAccuracy != null ? `~${locationAccuracy}m accuracy` : 'acquiring lock...'}
-                {locationAccuracy != null && locationAccuracy > TARGET_PRECISE_ACCURACY_M && ' (move to open sky for higher precision)'}
-                {locationError && ' (approximate fallback)'}
-              </div>
-            }
             <div className="flex gap-2 flex-wrap items-center">
               {mapBudgetInr != null &&
               <button
@@ -987,7 +1346,7 @@ export default function Explorer() {
                   setBudgetPathLatLngs(null);
                 }}
                 className="px-3 py-2 rounded-lg text-sm font-medium border border-slate-300 text-slate-700 hover:bg-slate-50 shrink-0">
-                Clear budget overlay
+                Clear budget
               </button>
               }
               <button type="button" onClick={useMyLocation} className="goout-btn-primary py-2 px-4 text-sm shrink-0">
@@ -995,39 +1354,68 @@ export default function Explorer() {
               </button>
               {currentCity && (
                 <div className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-sm font-medium shrink-0">
-                  📍 Showing places in {currentCity}
+                  <LocationPinIcon className="h-4 w-4" />
+                  <span>In {currentCity}</span>
                 </div>
               )}
-              <input
-              type="text"
-              value={categorySearch}
-              onChange={(e) => setCategorySearch(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && applySearch()}
-              placeholder="Search vibe or place (e.g. quiet cafe to work, pottery, park with view)"
-              className="flex-1 min-w-[200px] px-4 py-2 border border-cyan-200/60 rounded-lg focus:ring-2 focus:ring-goout-green focus:border-transparent" />
-            
               <button
                 type="button"
-                onClick={applySearch}
-                className="goout-btn-ghost py-2 px-4 text-sm border-slate-200 hover:border-emerald-300/50">
-                Apply
+                onClick={toggleCitySwitcher}
+                className={`px-3 py-2 rounded-lg text-sm font-medium border shrink-0 transition ${
+                  citySwitcherEnabled
+                    ? 'border-indigo-300 bg-indigo-50 text-indigo-800'
+                    : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                }`}>
+                City switcher: {citySwitcherEnabled ? 'ON' : 'OFF'}
               </button>
-              {categorySearch.trim() &&
-            <button
-                  onClick={() => {
-                    setCategorySearch('');
-                    setHiddenPoiKey(null);
-                    setConciergeHighlightBusinessId(null);
-                    setConciergePanTo(null);
-                  }}
-                  className="px-4 py-2 text-slate-600 hover:text-slate-900 text-sm">
-                  Clear filter
-                </button>
-            }
+              {citySwitcherEnabled && (
+                <div className="flex items-center gap-2 min-w-[220px] flex-1 sm:flex-none">
+                  <input
+                    type="text"
+                    value={cityLookup}
+                    onChange={(e) => setCityLookup(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && switchToCity()}
+                    placeholder="City (e.g. Mumbai)"
+                    className="w-full sm:w-[250px] px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-goout-green focus:border-transparent"
+                  />
+                  <button
+                    type="button"
+                    onClick={switchToCity}
+                    disabled={cityLookupLoading || cityLookup.trim().length < 2}
+                    className="goout-btn-ghost py-2 px-3 text-sm disabled:opacity-60 shrink-0">
+                    {cityLookupLoading ? 'Switching...' : 'Switch city'}
+                  </button>
+                </div>
+              )}
+              <div className="relative flex-1 min-w-[200px] goout-ai-live">
+                <input
+                  type="text"
+                  value={categorySearch}
+                  onChange={(e) => setCategorySearch(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && applySearch()}
+                  placeholder="Vibe or place — Enter"
+                  className="w-full pr-10 px-4 py-2 border border-transparent rounded-lg bg-transparent text-slate-100 placeholder:text-emerald-200/75 focus:ring-2 focus:ring-goout-green focus:border-transparent"
+                />
+                {categorySearch.trim() && (
+                  <button
+                    type="button"
+                    aria-label="Clear search query"
+                    onClick={() => {
+                      setCategorySearch('');
+                      setHiddenPoiKey(null);
+                      setConciergeHighlightBusinessId(null);
+                      setConciergePanTo(null);
+                    }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
             </div>
             {isSearching &&
           <div className="text-sm text-goout-dark bg-goout-light px-3 py-2 rounded-lg border border-goout-green/30">
-                Searching places... fetching latest results
+                Loading…
               </div>
           }
             {!isSearching && categorySearch.trim() && businesses.length === 0 && poiResults.length === 0 &&
@@ -1038,10 +1426,10 @@ export default function Explorer() {
               </div>
           }
             {!userLocation &&
-          <div className="rounded-2xl border border-cyan-200/60 bg-white/80 backdrop-blur p-12 flex flex-col items-center justify-center h-[500px]">
+          <div className="rounded-2xl border border-slate-200 bg-white p-12 flex flex-col items-center justify-center h-[500px]">
                 <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-goout-green mb-4" />
-                <p className="text-slate-600 font-medium">Getting your location…</p>
-                <p className="text-slate-500 text-sm mt-2">Location is required. Results are based on where you are; local registered businesses appear first.</p>
+                <p className="text-slate-600 font-medium">Finding you…</p>
+                <p className="text-slate-500 text-sm mt-2">Need location. Locals first.</p>
               </div>
           }
           </>
@@ -1051,6 +1439,7 @@ export default function Explorer() {
           <DiscoveryMap
               userLocation={mapUserLocation}
               mapCenter={mapCenter || mapUserLocation}
+              mapZoom={mapZoom}
               businesses={businesses}
               offers={offers}
               pois={visiblePois}
@@ -1077,9 +1466,10 @@ export default function Explorer() {
               compareVersus={compareVersus}
               mapVisualTheme={activeTab === 'green' || greenEcoRoute ? 'green' : 'default'}
               greenEcoRoute={greenEcoRoute}
+              onCancelRoute={cancelRoute}
           />
           {activeTab !== 'map' && (
-              <div className="absolute inset-0 z-20 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50/98 shadow-inner backdrop-blur-sm p-4 md:p-6">
+              <div className="absolute inset-0 z-20 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 shadow-inner p-4 md:p-6">
                 <ExplorerSectionErrorBoundary>
                   {activeTab === 'budget' && (
                     <BudgetPlanner
@@ -1095,6 +1485,8 @@ export default function Explorer() {
                       userLocation={userLocation}
                       businesses={businesses}
                       offers={offers}
+                      destinationPoint={destinationPoint}
+                      distanceToDestination={distanceToDestination}
                       hasReachedDestination={hasReachedDestination}
                       arrivedBusinessId={arrivedBusinessId}
                       onComparatorTargets={(ids) => {
@@ -1111,6 +1503,7 @@ export default function Explorer() {
                         setCompareRouteOverlays(overlays || []);
                         setCompareVersus(versus || null);
                         setGreenEcoRoute(null);
+                        setGreenRouteBundle(null);
                       }}
                       onClearCompareMap={() => {
                         setCompareRouteOverlays([]);
@@ -1147,6 +1540,8 @@ export default function Explorer() {
             userLocation={userLocation}
             businesses={businesses}
             offers={offers}
+            destinationPoint={destinationPoint}
+            distanceToDestination={distanceToDestination}
                     hasReachedDestination={hasReachedDestination}
                     arrivedBusinessId={arrivedBusinessId}
             onComparatorTargets={(ids) => {
@@ -1163,6 +1558,7 @@ export default function Explorer() {
               setCompareRouteOverlays(overlays || []);
               setCompareVersus(versus || null);
               setGreenEcoRoute(null);
+              setGreenRouteBundle(null);
             }}
             onClearCompareMap={() => {
               setCompareRouteOverlays([]);
@@ -1180,30 +1576,44 @@ export default function Explorer() {
             onRequestMapTab={() => setActiveTab('map')}
           />
         )}
-
         {activeTab === 'map' && userLocation && (
           <>
             {pendingArrivalConfirm && (
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 flex items-center justify-between gap-3">
-                <span>Did you reach {directionsDestinationLabel || 'the place'}?</span>
+                <span>At {directionsDestinationLabel || 'the spot'}?</span>
                 <div className="flex gap-2">
-                  <button type="button" className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white" onClick={confirmArrival}>Yes</button>
-                  <button type="button" className="px-3 py-1.5 rounded-lg border border-emerald-300" onClick={() => setPendingArrivalConfirm(false)}>Not yet</button>
+                  <button type="button" className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white" onClick={() => confirmArrival({ autoSave: true })}>Yes</button>
+                  <button
+                    type="button"
+                    className="px-3 py-1.5 rounded-lg border border-emerald-300"
+                    onClick={() => {
+                      setPendingArrivalConfirm(false);
+                      const now = Date.now();
+                      const windowUntil = arrivalRepromptUntilTs > now ? arrivalRepromptUntilTs : now + ARRIVAL_REPROMPT_WINDOW_MS;
+                      setArrivalRepromptUntilTs(windowUntil);
+                      lastArrivalPromptAtRef.current = now;
+                    }}
+                  >
+                    Not yet
+                  </button>
                 </div>
               </div>
             )}
             {arrivalEcoImpact && (
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 space-y-3">
-                <p className="font-semibold">Eco-friendly routing comparison</p>
+                <p className="font-semibold">Trip impact</p>
                 <p>
                   Distance walked: {formatDistanceLabel(Number(arrivalEcoImpact.distanceWalked || 0)) || '0 m'} ·
                   Calories burned: {Math.round(Number(arrivalEcoImpact.caloriesBurned || 0))} kcal ·
                   Carbon credits: {Number(arrivalEcoImpact.carbonCreditsEarned || 0).toFixed(1)}
                 </p>
+                {Number.isFinite(Number(user?.weight)) &&
+                <p className="text-xs text-emerald-800">
+                  Calories use your weight ({Number(user.weight)} kg).
+                </p>
+                }
                 <p>
-                  If you used car: {Math.round(Number(arrivalEcoImpact.carCO2SavedGrams || 0))} g CO2 emitted.
-                  If you used bike: {Math.round(Number(arrivalEcoImpact.bikeCO2SavedGrams || 0))} g CO2 emitted.
-                  You avoided both by walking.
+                  Car: {Math.round(Number(arrivalEcoImpact.carCO2SavedGrams || 0))} g CO2 · Bike: {Math.round(Number(arrivalEcoImpact.bikeCO2SavedGrams || 0))} g · You walked.
                 </p>
                 {arrivalEcoImpact?.decision === 'pending' && (
                   <div className="flex gap-2">
@@ -1212,7 +1622,7 @@ export default function Explorer() {
                       onClick={saveArrivalEcoComparison}
                       disabled={savingEcoImpact}
                       className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-60">
-                      {savingEcoImpact ? 'Saving...' : 'Save comparison'}
+                      {savingEcoImpact ? 'Saving...' : 'Save'}
                     </button>
                     <button
                       type="button"
@@ -1220,8 +1630,8 @@ export default function Explorer() {
                         setArrivalEcoImpact((prev) => (prev ? { ...prev, decision: 'skipped' } : prev));
                         addToast({
                           type: 'info',
-                          title: 'Not saved',
-                          message: 'Showing calories, carbon credits, and walked distance without saving.'
+                          title: 'Skipped',
+                          message: 'Not logged.'
                         });
                       }}
                       className="px-3 py-1.5 rounded-lg border border-emerald-300">
@@ -1230,30 +1640,30 @@ export default function Explorer() {
                   </div>
                 )}
                 {arrivalEcoImpact?.decision === 'saved' && (
-                  <p className="text-xs font-medium text-emerald-800">Saved to your visit history.</p>
+                  <p className="text-xs font-medium text-emerald-800">Logged.</p>
                 )}
                 {arrivalEcoImpact?.decision === 'skipped' && (
-                  <p className="text-xs font-medium text-emerald-800">Not saved. Metrics shown for this trip only.</p>
+                  <p className="text-xs font-medium text-emerald-800">Preview only.</p>
                 )}
               </div>
             )}
             {directionsLoading &&
             <div className="goout-soft-card goout-neon-panel rounded-2xl p-4">
-              <h3 className="font-display font-semibold">Computing directions...</h3>
+              <h3 className="font-display font-semibold">Routing…</h3>
             </div>
             }
             {directionsRoutes.length > 0 && !directionsLoading &&
             <div className="goout-soft-card goout-neon-panel rounded-2xl p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h3 className="font-display font-semibold">Routes to {directionsDestinationLabel || 'destination'}</h3>
-                  <p className="text-xs text-slate-500 mt-1">Select a route to preview on the map.</p>
+                  <h3 className="font-display font-semibold">To {directionsDestinationLabel || 'destination'}</h3>
+                  <p className="text-xs text-slate-500 mt-1">Pick one — map updates.</p>
                 </div>
                 <button
                   type="button"
                   onClick={cancelRoute}
                   className="px-3 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
-                  Cancel route
+                  Clear
                 </button>
               </div>
               <div className="flex gap-2 flex-wrap mt-3">
@@ -1268,27 +1678,41 @@ export default function Explorer() {
                   'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`
                   }>
                   Route {idx + 1}: {Math.round((r.durationSeconds || 0) / 60)} min · {(r.distanceMeters ? r.distanceMeters / 1000 : 0).toFixed(1)} km
+                  {r?.usesHighway === true ? ' · Highway' : r?.localPreferred ? ' · Local preferred' : ''}
                 </button>
                 )}
               </div>
               {initialDistanceToDestination != null &&
               <div className="mt-3 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-800">
-                Start distance: {formatDistanceLabel(initialDistanceToDestination)}
+                Started {formatDistanceLabel(initialDistanceToDestination)} away
               </div>
               }
               {distanceToDestination != null &&
               <div className="mt-3 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-sm text-slate-700">
                 {hasReachedDestination ?
-                'Reached destination' :
-                `Distance to destination: ${distanceToDestination < 1000 ? `${Math.round(distanceToDestination)} m` : `${(distanceToDestination / 1000).toFixed(2)} km`}`}
-                {liveTrackingEnabled && !hasReachedDestination ? ' · Live tracking ON' : ''}
+                'Here' :
+                `${distanceToDestination < 1000 ? `${Math.round(distanceToDestination)} m` : `${(distanceToDestination / 1000).toFixed(2)} km`} left`}
+                {liveTrackingEnabled && !hasReachedDestination ? ' · Live' : ''}
               </div>
               }
             </div>
             }
+            {greenRouteBundle?.recommended &&
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-900">
+              <p className="font-semibold">Green pick</p>
+              <p className="mt-1">
+                <span className="capitalize">{greenRouteBundle.recommended.mode}</span> ·{' '}
+                {formatDistanceLabel(Number(greenRouteBundle.recommended.distanceMeters || 0)) || '0 m'} ·{' '}
+                {Math.round(Number(greenRouteBundle.recommended.durationSeconds || 0) / 60)} min
+              </p>
+              <p className="mt-1">
+                Car CO2: {Math.round(Number(greenRouteBundle.drivingBaseline?.co2GramsTrip || 0))} g · Bike: {Math.round(Number(greenRouteBundle.candidates?.find((c) => c.mode === 'cycling')?.co2GramsTrip || 0))} g · ~{Math.round(Number(greenRouteBundle.recommended.co2SavedVsCarGrams || 0))} g saved vs car
+              </p>
+            </div>
+            }
             {offers.length > 0 &&
             <div className="goout-soft-card goout-neon-panel rounded-2xl p-4">
-              <h3 className="font-display font-semibold mb-3">Live Flash Deals Nearby</h3>
+              <h3 className="font-display font-semibold mb-3">Flash deals</h3>
               <div className="flex gap-3 overflow-x-auto pb-2">
                 {offers.map((o) =>
                 <div key={o._id} className="flex-shrink-0 w-56 p-3 bg-red-50 border border-red-100 rounded-xl">
@@ -1300,7 +1724,7 @@ export default function Explorer() {
                       type="button"
                       onClick={() => api.post(`/offers/${o._id}/click`).catch(() => {})}
                       className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-white border border-slate-200 hover:bg-slate-50">
-                      Save click
+                      Log
                     </button>
                     <button
                       type="button"
@@ -1308,7 +1732,7 @@ export default function Explorer() {
                         const lat = o?.businessId?.location?.coordinates?.[1];
                         const lng = o?.businessId?.location?.coordinates?.[0];
                         if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-                          addToast({ type: 'error', title: 'Route unavailable', message: 'This merchant location is missing.' });
+                          addToast({ type: 'error', title: 'No pin', message: 'Missing coords.' });
                           return;
                         }
                         await loadRouteTo({
@@ -1319,7 +1743,7 @@ export default function Explorer() {
                           kind: 'local',
                           businessId: o?.businessId?._id || ''
                         });
-                        addToast({ type: 'success', title: 'Walking route', message: `Route to ${o?.businessId?.name || 'merchant'} loaded.` });
+                        addToast({ type: 'success', title: 'Route', message: `${o?.businessId?.name || 'Spot'}` });
                       }}
                       className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-goout-green text-white hover:bg-goout-accent">
                       Go

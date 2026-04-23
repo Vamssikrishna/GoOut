@@ -2,7 +2,9 @@ import express from 'express';
 
 const router = express.Router();
 const DEFAULT_CENTER = { lat: 28.6139, lng: 77.2090 };
-const MAP_PROVIDER_MODE = (process.env.MAP_PROVIDER_MODE || 'osm').toLowerCase();
+const MAP_PROVIDER_MODE = (process.env.MAP_PROVIDER_MODE || 'hybrid').toLowerCase();
+const FAST_POI_RESPONSE_BUDGET_MS = 5500;
+const MAX_PARALLEL_SEARCH_TERMS = 4;
 
 
 
@@ -40,13 +42,33 @@ const OVERPASS_CATEGORY_TAGS = {
   cafe: ['amenity=cafe'],
   mall: ['shop=mall', 'shop=supermarket', 'shop=department_store'],
   hotel: ['tourism=hotel', 'tourism=hostel', 'tourism=guest_house'],
-  park: ['leisure=park', 'leisure=garden', 'leisure=playground']
+  park: ['leisure=park', 'leisure=garden', 'leisure=playground'],
+  theatre: ['amenity=theatre', 'amenity=cinema', 'building=theatre'],
+  theater: ['amenity=theatre', 'amenity=cinema', 'building=theatre'],
+  cinema: ['amenity=cinema', 'amenity=theatre'],
+  movie: ['amenity=cinema', 'amenity=theatre']
 };
 
 function getSearchTerms(term) {
-  const base = (term || '').toLowerCase().trim();
+  const base = (term || '').toLowerCase().trim().replace(/\s+/g, ' ');
   if (!base) return [];
-  return [base];
+  const terms = new Set([base]);
+  const withoutCityTail = base.replace(/\s+\bin\s+[a-z0-9\s-]{2,}$/i, '').trim();
+  if (withoutCityTail && withoutCityTail !== base) {
+    terms.add(withoutCityTail);
+  }
+  if (/\b(theatre|theater|cinema|movie|film|imax)\b/.test(base)) {
+    terms.add('movie theater');
+    terms.add('cinema');
+    terms.add('performing arts theater');
+    terms.add('theatre');
+    terms.add('theater');
+  }
+  if (/\b(park|garden|playground|outdoor)\b/.test(base)) {
+    terms.add('public park');
+    terms.add('botanical garden');
+  }
+  return Array.from(terms).slice(0, 6);
 }
 
 function getCategoryTagFilters(term) {
@@ -124,7 +146,7 @@ async function fetchGooglePlacesText({
       },
       body: JSON.stringify({
         textQuery: searchTerm,
-        maxResultCount: 20,
+        maxResultCount: 15,
         languageCode: 'en',
         locationBias: {
           circle: {
@@ -134,7 +156,7 @@ async function fetchGooglePlacesText({
         }
       })
     },
-    9000
+    4500
   );
 
   if (!resp.ok) return [];
@@ -156,6 +178,28 @@ async function fetchGooglePlacesText({
   filter(Boolean);
 }
 
+async function fetchGooglePlacesTextBatch({
+  searchTerms,
+  latNum,
+  lngNum,
+  radiusMeters,
+  maxResults = 120
+}) {
+  const merged = new Map();
+  const list = Array.isArray(searchTerms) ? searchTerms.filter(Boolean).slice(0, MAX_PARALLEL_SEARCH_TERMS) : [];
+  const settled = await Promise.allSettled(
+    list.map((term) => fetchGooglePlacesText({ searchTerm: term, latNum, lngNum, radiusMeters }))
+  );
+  settled.forEach((entry) => {
+    const rows = entry.status === 'fulfilled' && Array.isArray(entry.value) ? entry.value : [];
+    rows.forEach((p) => {
+      const k = `${String(p.name || '').toLowerCase().slice(0, 64)}|${Number(p.lat).toFixed(5)}|${Number(p.lng).toFixed(5)}`;
+      if (!merged.has(k)) merged.set(k, p);
+    });
+  });
+  return Array.from(merged.values()).slice(0, maxResults);
+}
+
 router.get('/ip-location', async (req, res) => {
   try {
     const resp = await fetch('https://ip-api.com/json/?fields=lat,lon,status');
@@ -170,13 +214,126 @@ router.get('/ip-location', async (req, res) => {
 router.get('/search', async (req, res) => {
   try {
     const { q } = req.query;
-    if (!q?.trim()) return res.status(400).json({ error: 'Query required' });
-    const resp = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`
+    const query = String(q || '').trim();
+    if (!query) return res.status(400).json({ error: 'Query required' });
+
+    const zoomFromRadius = (radiusMeters) => {
+      const r = Number(radiusMeters) || 0;
+      if (r >= 180000) return 6;
+      if (r >= 120000) return 7;
+      if (r >= 80000) return 8;
+      if (r >= 45000) return 9;
+      if (r >= 25000) return 10;
+      if (r >= 12000) return 11;
+      return 12;
+    };
+
+    const googleKey = process.env.GOOGLE_MAPS_API_KEY || '';
+    if (googleKey) {
+      try {
+        const gResp = await fetchWithTimeout(
+          `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&key=${encodeURIComponent(googleKey)}`,
+          { method: 'GET' },
+          10000
+        );
+        if (gResp.ok) {
+          const gData = await gResp.json();
+          if (String(gData?.status || '') === 'OK' && Array.isArray(gData?.results) && gData.results.length > 0) {
+            const cityLike = gData.results.find((r) =>
+              Array.isArray(r?.types) && (
+                r.types.includes('locality') ||
+                r.types.includes('administrative_area_level_1') ||
+                r.types.includes('administrative_area_level_2')
+              )
+            ) || gData.results[0];
+            const lat = Number(cityLike?.geometry?.location?.lat);
+            const lng = Number(cityLike?.geometry?.location?.lng);
+            if (Number.isFinite(lat) && Number.isFinite(lng)) {
+              const neLat = Number(cityLike?.geometry?.viewport?.northeast?.lat);
+              const neLng = Number(cityLike?.geometry?.viewport?.northeast?.lng);
+              const swLat = Number(cityLike?.geometry?.viewport?.southwest?.lat);
+              const swLng = Number(cityLike?.geometry?.viewport?.southwest?.lng);
+              const hasViewport = [neLat, neLng, swLat, swLng].every((n) => Number.isFinite(n));
+              const viewportRadius = hasViewport ?
+                Math.max(
+                  haversineMeters(lat, lng, neLat, neLng),
+                  haversineMeters(lat, lng, swLat, swLng)
+                ) :
+                50000;
+              const suggestedRadiusMeters = Math.max(12000, Math.min(220000, Math.round(viewportRadius)));
+              const types = Array.isArray(cityLike?.types) ? cityLike.types : [];
+              const scope = types.includes('administrative_area_level_1') ?
+                'state' :
+                types.includes('administrative_area_level_2') ?
+                  'region' :
+                  'city';
+              const label =
+                String(cityLike?.formatted_address || '').split(',')[0].trim() ||
+                query;
+              const countryComp = (Array.isArray(cityLike?.address_components) ? cityLike.address_components : [])
+                .find((c) => Array.isArray(c?.types) && c.types.includes('country'));
+              const countryCode = String(countryComp?.short_name || '').toUpperCase();
+              return res.json({
+                lat,
+                lng,
+                source: 'google_geocode',
+                label,
+                scope,
+                countryCode,
+                inIndia: countryCode === 'IN',
+                suggestedRadiusMeters,
+                suggestedZoom: zoomFromRadius(suggestedRadiusMeters)
+              });
+            }
+          }
+        }
+      } catch {
+        // fall through to OSM fallback
+      }
+    }
+
+    const resp = await fetchWithTimeout(
+      `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`,
+      { method: 'GET', headers: { 'User-Agent': 'GoOut/1.0 (Local Development)' } },
+      10000
     );
+    if (!resp.ok) return res.status(502).json({ error: 'Geocode provider unavailable' });
     const data = await resp.json();
-    if (data?.[0]) {
-      return res.json({ lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) });
+    const rows = Array.isArray(data) ? data : [];
+    const cityLike =
+      rows.find((r) => ['city', 'town', 'village', 'municipality', 'administrative'].includes(String(r?.type || '').toLowerCase())) ||
+      rows[0];
+    if (cityLike) {
+      const lat = Number(cityLike.lat);
+      const lng = Number(cityLike.lon);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        const bbox = Array.isArray(cityLike?.boundingbox) ? cityLike.boundingbox.map(Number) : [];
+        const hasBbox = bbox.length >= 4 && bbox.every((n) => Number.isFinite(n));
+        const [south, north, west, east] = hasBbox ? bbox : [NaN, NaN, NaN, NaN];
+        const bboxRadius = hasBbox ?
+          Math.max(
+            haversineMeters(lat, lng, north, east),
+            haversineMeters(lat, lng, south, west)
+          ) :
+          50000;
+        const suggestedRadiusMeters = Math.max(12000, Math.min(220000, Math.round(bboxRadius)));
+        const t = String(cityLike?.type || '').toLowerCase();
+        const scope =
+          t === 'administrative' ? 'state' :
+            t === 'city' || t === 'town' || t === 'village' || t === 'municipality' ? 'city' :
+              'region';
+        return res.json({
+          lat,
+          lng,
+          source: 'nominatim',
+          label: String(cityLike?.display_name || query).split(',')[0].trim() || query,
+          scope,
+          countryCode: String(cityLike?.address?.country_code || '').toUpperCase(),
+          inIndia: String(cityLike?.address?.country_code || '').toUpperCase() === 'IN',
+          suggestedRadiusMeters,
+          suggestedZoom: zoomFromRadius(suggestedRadiusMeters)
+        });
+      }
     }
   } catch (e) {}
   res.status(404).json({ error: 'Location not found' });
@@ -220,6 +377,8 @@ router.get('/reverse-city', async (req, res) => {
 
 router.get('/poi', async (req, res) => {
   try {
+    const startedAt = Date.now();
+    const hasResponseBudget = () => Date.now() - startedAt <= FAST_POI_RESPONSE_BUDGET_MS;
     const { lat, lng, q, city, radius = 50000 } = req.query;
     const latNum = parseFloat(lat);
     const lngNum = parseFloat(lng);
@@ -236,7 +395,7 @@ router.get('/poi', async (req, res) => {
     const r = Math.min(Math.max(Number(radius) || 50000, 200), 50000);
 
     const safeTerm = term.replace(/"/g, '');
-    const relatedTerms = getSearchTerms(safeTerm);
+    const relatedTerms = getSearchTerms(safeTerm).slice(0, MAX_PARALLEL_SEARCH_TERMS);
     const categoryTagFilters = getCategoryTagFilters(safeTerm);
 
     const key = cacheKey(latNum, lngNum, safeTerm || '', r);
@@ -246,11 +405,12 @@ router.get('/poi', async (req, res) => {
 
     if (safeTerm && (MAP_PROVIDER_MODE === 'google' || MAP_PROVIDER_MODE === 'hybrid')) {
       try {
-        const googlePlaces = await fetchGooglePlacesText({
-          searchTerm: safeTerm,
+        const googlePlaces = await fetchGooglePlacesTextBatch({
+          searchTerms: relatedTerms,
           latNum,
           lngNum,
-          radiusMeters: r
+          radiusMeters: r,
+          maxResults: 150
         });
 
         const strictlyRelated = googlePlaces.
@@ -296,39 +456,38 @@ router.get('/poi', async (req, res) => {
       if (!merged.has(key)) merged.set(key, p);
     };
 
-    if (safeTerm) {
-      for (const searchTerm of relatedTerms) {
-        try {
+    if (safeTerm && hasResponseBudget()) {
+      const nominatimSettled = await Promise.allSettled(
+        relatedTerms.map(async (searchTerm) => {
           const nominatimUrl = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(
             searchTerm
-          )}&limit=80&addressdetails=0&namedetails=0&bounded=1&viewbox=${left},${top},${right},${bottom}`;
-
+          )}&limit=40&addressdetails=0&namedetails=0&bounded=1&viewbox=${left},${top},${right},${bottom}`;
           const nominatimResp = await fetchWithRetryOn429(
             nominatimUrl,
             { headers: { 'User-Agent': 'GoOut/1.0 (Local Development)' } },
-            8000,
-            3
+            3200,
+            2
           );
-          if (!nominatimResp.ok) continue;
-
+          if (!nominatimResp.ok) return [];
           const nomData = await nominatimResp.json();
-          const arr = Array.isArray(nomData) ? nomData : [];
-          arr.forEach((item) => {
-            const la = parseFloat(item.lat);
-            const lo = parseFloat(item.lon);
-            if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
-            addPlace({
-              id: item.place_id || `${item.lat},${item.lon}`,
-              name: item.display_name?.split(',')?.[0] || item.name || 'Unnamed place',
-              category: item.type || item.class || 'place',
-              lat: la,
-              lng: lo
-            });
+          return Array.isArray(nomData) ? nomData : [];
+        })
+      );
+      nominatimSettled.forEach((entry) => {
+        if (entry.status !== 'fulfilled') return;
+        entry.value.forEach((item) => {
+          const la = parseFloat(item.lat);
+          const lo = parseFloat(item.lon);
+          if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
+          addPlace({
+            id: item.place_id || `${item.lat},${item.lon}`,
+            name: item.display_name?.split(',')?.[0] || item.name || 'Unnamed place',
+            category: item.type || item.class || 'place',
+            lat: la,
+            lng: lo
           });
-        } catch (e) {
-
-        }
-      }
+        });
+      });
     }
 
     const categorySpecificFilters = categoryTagFilters.
@@ -373,7 +532,7 @@ router.get('/poi', async (req, res) => {
       `;
 
     try {
-      const overpassQuery = `[out:json][timeout:10];(${filters});out center tags;`;
+      const overpassQuery = `[out:json][timeout:7];(${filters});out center tags;`;
       const overpassResp = await fetchWithTimeout(
         'https://overpass-api.de/api/interpreter',
         {
@@ -381,7 +540,7 @@ router.get('/poi', async (req, res) => {
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams({ data: overpassQuery }).toString()
         },
-        9000
+        4000
       );
 
       if (overpassResp.ok) {
@@ -414,39 +573,27 @@ router.get('/poi', async (req, res) => {
       return filtered;
     };
 
-    if (safeTerm && (MAP_PROVIDER_MODE === 'google' || MAP_PROVIDER_MODE === 'hybrid')) {
-      try {
-        const googlePlaces = await fetchGooglePlacesText({
-          searchTerm: safeTerm,
-          latNum,
-          lngNum,
-          radiusMeters: r
-        });
-        googlePlaces.forEach((p) => addPlace(p));
-      } catch (e) {
-
-      }
-    }
-
     let filtered = getFiltered();
-    if (safeTerm && filtered.length < 8) {
-
-      for (const searchTerm of relatedTerms) {
-        const fallbackUrl = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(
-          searchTerm
-        )}&limit=100&addressdetails=0&namedetails=0`;
-
-        const fallbackResp = await fetchWithRetryOn429(
-          fallbackUrl,
-          { headers: { 'User-Agent': 'GoOut/1.0 (Local Development)' } },
-          8000,
-          3
-        );
-        if (!fallbackResp.ok) continue;
-
-        const fallbackData = await fallbackResp.json();
-        const fallbackArr = Array.isArray(fallbackData) ? fallbackData : [];
-        fallbackArr.forEach((item) => {
+    if (safeTerm && filtered.length < 8 && hasResponseBudget()) {
+      const fallbackSettled = await Promise.allSettled(
+        relatedTerms.map(async (searchTerm) => {
+          const fallbackUrl = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(
+            searchTerm
+          )}&limit=50&addressdetails=0&namedetails=0`;
+          const fallbackResp = await fetchWithRetryOn429(
+            fallbackUrl,
+            { headers: { 'User-Agent': 'GoOut/1.0 (Local Development)' } },
+            2800,
+            2
+          );
+          if (!fallbackResp.ok) return [];
+          const fallbackData = await fallbackResp.json();
+          return Array.isArray(fallbackData) ? fallbackData : [];
+        })
+      );
+      fallbackSettled.forEach((entry) => {
+        if (entry.status !== 'fulfilled') return;
+        entry.value.forEach((item) => {
           const la = parseFloat(item.lat);
           const lo = parseFloat(item.lon);
           if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
@@ -458,19 +605,19 @@ router.get('/poi', async (req, res) => {
             lng: lo
           });
         });
-      }
+      });
     }
     filtered = getFiltered();
 
 
-    if (safeTerm) {
+    if (safeTerm && hasResponseBudget()) {
       const interim = getFiltered();
       if (interim.filter((p) => p.distanceMeters <= r * 1.15).length < 12) {
         try {
           const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(
             safeTerm
           )}&lat=${latNum}&lon=${lngNum}&limit=80`;
-          const photonResp = await fetchWithTimeout(photonUrl, { method: 'GET' }, 8000);
+          const photonResp = await fetchWithTimeout(photonUrl, { method: 'GET' }, 2500);
           if (photonResp.ok) {
             const photonData = await photonResp.json();
             const features = Array.isArray(photonData?.features) ? photonData.features : [];
@@ -499,7 +646,7 @@ router.get('/poi', async (req, res) => {
 
 
 
-    if (safeTerm && filtered.length === 0) {
+    if (safeTerm && filtered.length === 0 && hasResponseBudget()) {
       const genericOverpass = `[out:json][timeout:10];
         (
           node(around:${r},${latNum},${lngNum})[amenity];
@@ -519,7 +666,7 @@ router.get('/poi', async (req, res) => {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: new URLSearchParams({ data: genericOverpass }).toString()
           },
-          9000
+          3500
         );
 
         if (genericResp.ok) {

@@ -7,10 +7,12 @@ import { protect } from '../middleware/auth.js';
 import {
   sendPasswordResetEmail,
   sendLoginOtpEmail,
+  sendPasswordChangedEmail,
   isEmailConfigured } from
 '../utils/email.js';
 
 const router = express.Router();
+const LOGIN_OTP_WINDOW_MS = 30 * 1000;
 
 const generateToken = (user) =>
 jwt.sign(
@@ -49,6 +51,19 @@ const userPublicFields = (user) => ({
   businessId: user.businessId || null
 });
 
+function normalizeTags(input, max = 24, maxLen = 120) {
+  if (!Array.isArray(input)) return [];
+  return [...new Set(input.map((s) => String(s || '').trim().slice(0, maxLen)).filter(Boolean))].slice(0, max);
+}
+
+function normalizeDiscoveryPreferencesBody(body) {
+  return {
+    prefer: normalizeTags(body?.prefer, 24, 120),
+    avoid: normalizeTags(body?.avoid, 24, 120),
+    notes: String(body?.notes || '').slice(0, 800)
+  };
+}
+
 router.post('/register', [
 body('name').trim().notEmpty(),
 body('email').isEmail(),
@@ -58,12 +73,25 @@ async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     const { name, email, password, role } = req.body;
+    const nextRole = role || 'explorer';
+    const interests = normalizeTags(req.body?.interests, 32, 80);
+    const discoveryPreferences = normalizeDiscoveryPreferencesBody(req.body || {});
+    if (nextRole === 'explorer' && discoveryPreferences.prefer.length === 0) {
+      return res.status(400).json({ error: 'Explorer preferences are required during registration.' });
+    }
     const exists = await User.findOne({ email });
     if (exists) return res.status(400).json({ error: 'Email already registered' });
-    const user = await User.create({ name, email, password, role: role || 'explorer' });
+    const user = await User.create({
+      name,
+      email,
+      password,
+      role: nextRole,
+      ...(nextRole === 'explorer' ? { interests, discoveryPreferences } : {})
+    });
     res.status(201).json({
       user: userPublicFields(user),
-      token: generateToken(user)
+      requiresSignIn: true,
+      message: 'Account created. Sign in to continue.'
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -94,18 +122,19 @@ async (req, res) => {
 
     const otp = String(crypto.randomInt(100000, 999999));
     user.loginOtpHash = hashLoginOtp(email, otp);
-    user.loginOtpExpires = new Date(Date.now() + 10 * 60 * 1000);
+    user.loginOtpExpires = new Date(Date.now() + LOGIN_OTP_WINDOW_MS);
     await user.save();
 
     if (!isEmailConfigured()) {
       console.warn('[auth] Login OTP (configure SMTP to send email):', otp, 'for', email);
     }
-    await sendLoginOtpEmail(user.email, otp);
-
     res.json({
       requiresOtp: true,
       email: user.email,
-      message: 'We sent a sign-in code to your email.'
+      message: 'We sent a sign-in code to your email. It expires in 30 seconds.'
+    });
+    sendLoginOtpEmail(user.email, otp).catch((e) => {
+      console.warn('[auth] Failed to send login OTP email:', e?.message || e);
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -193,6 +222,9 @@ async (req, res) => {
     user.passwordResetToken = undefined;
     user.passwordResetExpires = undefined;
     await user.save();
+    sendPasswordChangedEmail(user.email).catch((e) => {
+      console.warn('[auth] Failed to send password-changed email:', e?.message || e);
+    });
     res.json({ message: 'Password updated. You can sign in now.' });
   } catch (err) {
     res.status(500).json({ error: err.message });

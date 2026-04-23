@@ -16,6 +16,7 @@ const userSchema = new mongoose.Schema({
   socialPoints: { type: Number, default: 0 },
   carbonCredits: { type: Number, default: 0 },
   emergencyContact: { type: String, default: '' },
+  emergencyEmails: [{ type: String, lowercase: true, trim: true }],
   weight: { type: Number, default: 65 },
   verified: { type: Boolean, default: false },
   businessId: { type: mongoose.Schema.Types.ObjectId, ref: 'Business' },

@@ -36,7 +36,7 @@ function buildWelcomeContent(displayName) {
       displayName.trim().split(/\s+/)[0] :
       '';
   const hi = first ? `Hi ${first}! ` : 'Hi! ';
-  return `${hi}I am your GoOut City Concierge. Ask what is near you — I read your GPS, budget ($ / ₹), and vibe (e.g. quiet) from plain English. I blend Red Pin merchants, public parks, and live flash deals from your map. Logged in? Try: save preference prefer: quiet cafes  or  save preference avoid: loud clubs  to personalize picks.`;
+  return `${hi}What's near? I use your pin, budget, vibe. Merchants, parks, deals. Logged in? Try: save preference prefer: quiet cafes`;
 }
 
 function buildMapContextPayload(mc) {
@@ -88,6 +88,26 @@ function MapPinGoIcon({ className = '' }) {
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M12 21s-7-4.35-7-11a7 7 0 1 1 14 0c0 6.65-7 11-7 11z" />
       <circle cx="12" cy="10" r="2" fill="white" fillOpacity="0.95" stroke="white" strokeWidth="1" />
+    </svg>
+  );
+}
+
+function ChatBubbleIcon({ className = '' }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 3.5c-4.9 0-8.9 3.4-8.9 7.7 0 2.5 1.3 4.7 3.4 6.1l-.9 3.3 3.5-1.6c.9.2 1.9.4 2.9.4 4.9 0 8.9-3.4 8.9-7.7S16.9 3.5 12 3.5z" />
+      <circle cx="9.1" cy="11.2" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="11.2" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="14.9" cy="11.2" r="1.1" fill="currentColor" stroke="none" />
+      <path d="M9.2 14.7c.8.6 1.7.9 2.8.9s2.1-.3 2.8-.9" />
+    </svg>
+  );
+}
+
+function CloseIcon({ className = '' }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M6 6l12 12M18 6L6 18" />
     </svg>
   );
 }
@@ -396,7 +416,7 @@ export default function CityConciergeChat({
                 tab === 'public' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-800 border-slate-200 hover:border-slate-400'
               } ${nPublic === 0 ? 'opacity-40 cursor-not-allowed' : ''}`}
             >
-              Public & search · {nPublic}
+              Public · {nPublic}
             </button>
           </div>
           {tab === 'local' && <PlaceRows items={nearby.local} kind="local" onPickPlace={pickPlace} onGoRoute={goRouteFromRow} />}
@@ -409,52 +429,66 @@ export default function CityConciergeChat({
   };
 
   /** Portal to body so position:fixed is viewport-relative (Layout route animation uses transform, which traps fixed descendants). */
+  const panelTransition =
+    'transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.34,1.2,0.64,1)] motion-reduce:transition-none motion-reduce:duration-0';
+
   return createPortal(
     <div
-      className={`fixed z-[10050] flex flex-col items-end gap-2 bottom-[max(1rem,env(safe-area-inset-bottom,0px))] right-[max(1rem,env(safe-area-inset-right,0px))] sm:bottom-[max(1.5rem,env(safe-area-inset-bottom,0px))] sm:right-[max(1.5rem,env(safe-area-inset-right,0px))] ${className}`}>
-      {open && (
-        <div className="w-[min(100vw-2rem,400px)] max-h-[min(78vh,520px)] flex flex-col rounded-2xl border border-cyan-200/60 bg-white/80 backdrop-blur shadow-xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-100 bg-goout-mint/80 flex items-center justify-between gap-2">
+      className={`fixed z-[10050] bottom-[max(1rem,env(safe-area-inset-bottom,0px))] right-[max(1rem,env(safe-area-inset-right,0px))] sm:bottom-[max(1.5rem,env(safe-area-inset-bottom,0px))] sm:right-[max(1.5rem,env(safe-area-inset-right,0px))] ${className}`}>
+      <div className="relative flex flex-col items-end">
+        <div
+          className={`
+            absolute bottom-full right-0 mb-2 w-[min(100vw-2rem,400px)] max-h-[min(78vh,520px)] flex flex-col rounded-2xl border border-slate-200 bg-white shadow-xl overflow-hidden origin-bottom-right goout-ai-live
+            ${panelTransition}
+            ${open ?
+              'z-[10051] translate-y-0 scale-100 opacity-100 pointer-events-auto' :
+              'z-0 translate-y-3 scale-[0.96] opacity-0 pointer-events-none'}
+          `}
+          style={{ willChange: open ? 'opacity, transform' : 'auto' }}
+          aria-hidden={!open}
+          inert={!open ? true : undefined}
+        >
+          <div className="px-4 py-3 border-b border-slate-100 bg-emerald-50/70 flex items-center justify-between gap-2">
             <div>
               <p className="font-display font-semibold text-goout-dark text-sm">City Concierge</p>
-              <p className="text-[11px] text-slate-600">Local merchants + public spaces near your pin</p>
+              <p className="text-[11px] text-slate-600">Locals + public spots near you</p>
             </div>
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="text-slate-500 hover:text-slate-800 p-1 rounded-lg hover:bg-white/60 text-lg leading-none"
+              className="text-slate-500 hover:text-slate-800 p-1 rounded-lg hover:bg-white text-lg leading-none transition-colors duration-200"
               aria-label="Close concierge"
             >
-              ×
+              <CloseIcon className="h-4 w-4" />
             </button>
           </div>
           <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 text-sm">
             {messages.map((m, i) => (
               <div
                 key={m.id || `${i}`}
-                className={`rounded-xl px-3 py-2 max-w-[98%] ${m.role === 'user' ? 'bg-goout-green text-white ml-auto' : 'bg-slate-50 text-slate-800 border border-slate-100'}`}
+                className={`rounded-xl px-3 py-2 max-w-[98%] ${m.role === 'user' ? 'bg-goout-green text-white ml-auto' : 'bg-emerald-50/80 text-slate-800 border border-emerald-200/70'}`}
               >
                 <div className="whitespace-pre-wrap text-sm">{m.content}</div>
                 {m.role === 'assistant' && renderAssistantExtras(m)}
               </div>
             ))}
             {loading && (
-              <div className="rounded-xl px-3 py-2 bg-violet-50 border border-violet-100 text-violet-900 text-sm animate-pulse">
-                The Concierge is thinking… one smart reply with nearby options.
+              <div className="rounded-xl px-3 py-2 bg-slate-100 border border-slate-200 text-slate-800 text-sm animate-pulse">
+                Thinking…
               </div>
             )}
             <div ref={bottomRef} />
           </div>
           {error && <p className="px-3 text-xs text-red-600">{error}</p>}
-          <div className="p-2 border-t border-slate-100 flex gap-2">
+          <div className={`p-2 border-t border-slate-100 flex gap-2 goout-ai-live ${loading ? 'goout-ai-thinking' : ''}`}>
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && send()}
-              placeholder="e.g. what's near me? · one café + a park"
+              placeholder="Near me? Café + park"
               disabled={loading}
-              className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-goout-green focus:border-transparent"
+              className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-emerald-200/70 text-sm focus:ring-2 focus:ring-goout-green focus:border-transparent"
             />
             <button
               type="button"
@@ -466,16 +500,26 @@ export default function CityConciergeChat({
             </button>
           </div>
         </div>
-      )}
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="h-14 w-14 rounded-full bg-goout-green text-white shadow-lg border-2 border-white flex items-center justify-center font-display font-bold text-lg hover:bg-goout-accent transition"
-        aria-expanded={open}
-        aria-label={open ? 'Close concierge chat' : 'Open city concierge chat'}
-      >
-        {open ? '×' : '💬'}
-      </button>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="group relative z-[10052] h-14 w-14 rounded-full bg-gradient-to-br from-emerald-500 via-goout-green to-teal-600 text-white shadow-[0_12px_28px_rgba(16,185,129,0.45)] border-2 border-white/95 flex items-center justify-center font-display font-bold text-lg hover:shadow-[0_16px_34px_rgba(16,185,129,0.52)] hover:scale-105 active:scale-95 transition-all duration-300 ease-out motion-reduce:transition-none motion-reduce:hover:scale-100"
+          aria-expanded={open}
+          aria-label={open ? 'Close concierge chat' : 'Open city concierge chat'}
+        >
+          {!open && (
+            <>
+              <span className="pointer-events-none absolute inset-0 rounded-full bg-white/12" />
+              <span className="pointer-events-none absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full bg-lime-300 ring-2 ring-white/90 shadow-sm" />
+            </>
+          )}
+          {open ? (
+            <CloseIcon className="h-5 w-5 transition-transform duration-200 ease-out" />
+          ) : (
+            <ChatBubbleIcon className="h-6 w-6 transition-transform duration-200 ease-out group-hover:scale-110 group-hover:-translate-y-0.5" />
+          )}
+        </button>
+      </div>
     </div>,
     document.body
   );

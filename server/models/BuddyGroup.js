@@ -22,6 +22,8 @@ const buddyGroupSchema = new mongoose.Schema({
     safetyNote: { type: String, default: '' }
   },
   inviteTargetUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  invitedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  declinedInvites: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   scheduledAt: { type: Date, required: true },
   chatExpiresAt: { type: Date, default: null },
   maxMembers: { type: Number, default: 3 },
@@ -37,12 +39,33 @@ const buddyGroupSchema = new mongoose.Schema({
     walkedThere: { type: Boolean, default: false },
     at: { type: Date, default: Date.now }
   }],
-  carbonMeetupBonusAwarded: { type: Boolean, default: false }
+  carbonMeetupBonusAwarded: { type: Boolean, default: false },
+  callSettings: {
+    voiceApprovedForAll: { type: Boolean, default: false },
+    videoApprovedForAll: { type: Boolean, default: false }
+  },
+  pendingCallRequest: {
+    callType: { type: String, enum: ['voice', 'video'], default: null },
+    requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    createdAt: { type: Date, default: null },
+    votes: [{
+      userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+      response: { type: String, enum: ['yes', 'no'], required: true },
+      at: { type: Date, default: Date.now }
+    }]
+  },
+  /** Users who already received the 10-minute meetup reminder. */
+  reminder10mSentTo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  /** Users who already received the 1-day meetup reminder. */
+  reminder1dSentTo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  /** Users who already received the 1-hour meetup reminder. */
+  reminder1hSentTo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
 }, { timestamps: true });
 
 buddyGroupSchema.index({ location: '2dsphere' });
 buddyGroupSchema.index({ interests: 1 });
 buddyGroupSchema.index({ scheduledAt: 1 });
 buddyGroupSchema.index({ inviteTargetUserId: 1, scheduledAt: 1 });
+buddyGroupSchema.index({ invitedUsers: 1, scheduledAt: 1 });
 
 export default mongoose.model('BuddyGroup', buddyGroupSchema);

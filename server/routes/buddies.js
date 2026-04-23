@@ -133,6 +133,71 @@ Rules:
   return base;
 }
 
+function normalizeTokens(values = []) {
+  return [...new Set(
+    (Array.isArray(values) ? values : [values])
+      .flatMap((v) => String(v || '').toLowerCase().split(/[^a-z0-9]+/))
+      .map((t) => t.trim())
+      .filter((t) => t.length >= 3 && t.length <= 28)
+  )];
+}
+
+function buildUserPreferenceTokens(userDoc) {
+  const interests = normalizeTokens(userDoc?.interests || []);
+  const prefer = normalizeTokens(userDoc?.discoveryPreferences?.prefer || []);
+  const avoid = normalizeTokens(userDoc?.discoveryPreferences?.avoid || []);
+  return { interests, prefer, avoid };
+}
+
+function tokenMatchRatio(intentTokens, userTokens) {
+  if (!intentTokens.length || !userTokens.length) return 0;
+  const hits = intentTokens.filter((t) => userTokens.some((u) => u.includes(t) || t.includes(u))).length;
+  return hits / intentTokens.length;
+}
+
+function lastActiveRecencyBoost(lastActive) {
+  const t = new Date(lastActive).getTime();
+  if (!Number.isFinite(t)) return 0;
+  const hours = Math.max(0, (Date.now() - t) / 3600000);
+  if (hours <= 6) return 0.08;
+  if (hours <= 24) return 0.05;
+  if (hours <= 72) return 0.02;
+  return 0;
+}
+
+function scoreInviteCandidate({ intentTokens, creatorTokens, candidateTokens, proximityScore, userDoc }) {
+  const intentInterest = tokenMatchRatio(intentTokens, candidateTokens.interests);
+  const intentPrefer = tokenMatchRatio(intentTokens, candidateTokens.prefer);
+  const creatorToCandidate = jaccard(
+    [...creatorTokens.interests, ...creatorTokens.prefer],
+    [...candidateTokens.interests, ...candidateTokens.prefer]
+  );
+  const avoidPenalty = tokenMatchRatio(intentTokens, candidateTokens.avoid) * 0.55;
+  const base =
+    (intentInterest * 0.46) +
+    (intentPrefer * 0.2) +
+    (creatorToCandidate * 0.22) +
+    (Math.max(0, Math.min(1, proximityScore)) * 0.12);
+  return Math.max(0, Math.min(1, base - avoidPenalty + lastActiveRecencyBoost(userDoc?.lastActive)));
+}
+
+function weightedRandomPick(scored, limit) {
+  const pool = [...scored];
+  const out = [];
+  while (pool.length && out.length < limit) {
+    const total = pool.reduce((s, x) => s + Math.max(0.0001, x.score), 0);
+    let r = Math.random() * total;
+    let idx = 0;
+    for (; idx < pool.length; idx += 1) {
+      r -= Math.max(0.0001, pool[idx].score);
+      if (r <= 0) break;
+    }
+    const chosen = pool.splice(Math.min(idx, pool.length - 1), 1)[0];
+    if (chosen) out.push(chosen);
+  }
+  return out;
+}
+
 router.get('/match', protect, async (req, res) => {
   try {
     const { lng, lat, interests, intent, maxDistance = 5000 } = req.query;
@@ -168,64 +233,62 @@ router.get('/match', protect, async (req, res) => {
   }
 });
 
-/** Buddies with Buddy Mode on, interest overlap, proximity (for AI / manual matchmaking). */
+/** Buddies with Buddy Mode on, matched by intent + profile preferences (no proximity filter). */
 router.get('/groups/suggested-peers', protect, async (req, res) => {
   try {
     if (!req.user.buddyMode) return res.json([]);
-    const { lng, lat, intent, maxDistance = 8000 } = req.query;
-    const lngN = parseFloat(lng) || 0;
-    const latN = parseFloat(lat) || 0;
-    const coords = [lngN, latN];
-    const maxDistanceMeters = Number(maxDistance) || 8000;
-    const me = await User.findById(req.user._id).select('interests location');
-    const myTags = [...(me?.interests || [])].map((x) => String(x).toLowerCase());
+    const { intent } = req.query;
+    const me = await User.findById(req.user._id).select('interests discoveryPreferences');
+    const meTokens = buildUserPreferenceTokens(me);
     const intentWords = await expandBuddyIntentKeywords(intent || '');
+    const myDiscoveryTokens = [...meTokens.interests, ...meTokens.prefer];
 
     const others = await User.find({
       _id: { $ne: req.user._id },
-      buddyMode: true,
-      location: {
-        $nearSphere: {
-          $geometry: { type: 'Point', coordinates: coords },
-          $maxDistance: maxDistanceMeters
-        }
-      }
+      buddyMode: true
     }).
-    limit(40).
-    select('name interests avatar greenStats socialPoints buddyMode lastActive location');
+    limit(80).
+    select('name interests discoveryPreferences avatar greenStats socialPoints buddyMode lastActive');
 
     const scored = others.map((u) => {
-      const their = [...(u.interests || [])].map((x) => String(x).toLowerCase());
-      let sim = jaccard(myTags, their);
-      if (intentWords.length) {
-        const hit = intentWords.filter((w) => their.some((t) => t.includes(w) || w.includes(t))).length;
-        sim += Math.min(0.35, hit * 0.08);
-      }
-      const c = u?.location?.coordinates || [];
-      const uLng = Number(c?.[0]);
-      const uLat = Number(c?.[1]);
-      const dMeters = (Number.isFinite(uLat) && Number.isFinite(uLng)) ?
-        distanceMeters(latN, lngN, uLat, uLng) :
-        maxDistanceMeters;
-      const proximityScore = Math.max(0, Math.min(1, 1 - (dMeters / maxDistanceMeters)));
-      const intentScore = Math.max(0, Math.min(1, sim));
-      const randomJitter = (Math.random() - 0.5) * 0.06;
-      const totalScore = Math.max(0, Math.min(1, intentScore * 0.65 + proximityScore * 0.35 + randomJitter));
+      const candidateTokens = buildUserPreferenceTokens(u);
+      const candidateDiscovery = [...candidateTokens.interests, ...candidateTokens.prefer];
+      const interestAlign = tokenMatchRatio(intentWords, candidateTokens.interests);
+      const preferAlign = tokenMatchRatio(intentWords, candidateTokens.prefer);
+      const preferenceOverlap = jaccard(myDiscoveryTokens, candidateDiscovery);
+      const avoidHitByIntent = tokenMatchRatio(intentWords, candidateTokens.avoid);
+      const avoidConflict = jaccard(meTokens.avoid, candidateDiscovery);
+      const mutualAvoidConflict = jaccard(candidateTokens.avoid, myDiscoveryTokens);
+      const avoidPenalty = Math.min(
+        0.8,
+        (avoidHitByIntent * 0.45) +
+          (avoidConflict * 0.35) +
+          (mutualAvoidConflict * 0.2)
+      );
+      const recency = lastActiveRecencyBoost(u?.lastActive);
+      const rawScore =
+        (interestAlign * 0.38) +
+        (preferAlign * 0.24) +
+        (preferenceOverlap * 0.32) +
+        recency -
+        avoidPenalty;
+      const totalScore = Math.max(0, Math.min(1, rawScore));
       return {
         user: u,
         totalScore,
-        intentPercent: Math.round(intentScore * 100),
-        proximityPercent: Math.round(proximityScore * 100)
+        intentPercent: Math.round(Math.max(interestAlign, preferAlign) * 100),
+        preferencePercent: Math.round(preferenceOverlap * 100),
+        avoidPenaltyPercent: Math.round(avoidPenalty * 100)
       };
     });
     scored.sort((a, b) => b.totalScore - a.totalScore);
-    const out = scored.slice(0, 15).map(({ user: u, totalScore, intentPercent, proximityPercent }) => ({
+    const out = scored.slice(0, 50).map(({ user: u, totalScore, intentPercent, preferencePercent, avoidPenaltyPercent }) => ({
       ...buddyPublicPreview(u),
       similarity: Math.round(totalScore * 100) / 100,
       matchPercent: Math.round(totalScore * 100),
       intentPercent,
-      proximityPercent,
-      distanceHint: 'within your discovery radius'
+      preferencePercent,
+      avoidPenaltyPercent
     }));
     res.json(out);
   } catch (err) {
@@ -290,14 +353,19 @@ router.get('/groups/safe-venues', protect, async (req, res) => {
 router.get('/groups/pending-invites', protect, async (req, res) => {
   try {
     const groups = await BuddyGroup.find({
-      inviteTargetUserId: req.user._id,
-      members: { $nin: [req.user._id] }
+      $or: [
+        { inviteTargetUserId: req.user._id },
+        { invitedUsers: req.user._id }
+      ],
+      members: { $nin: [req.user._id] },
+      creatorId: { $ne: req.user._id }
     }).
     sort({ scheduledAt: 1 }).
     populate('creatorId', 'name interests avatar greenStats socialPoints buddyMode');
 
     const out = groups.map((g) => ({
       ...g.toObject(),
+      inviteType: String(g?.inviteTargetUserId || '') === String(req.user._id) ? 'pair' : 'group',
       creatorBuddyPreview: buddyPublicPreview(g.creatorId)
     }));
     res.json(out);
@@ -309,7 +377,12 @@ router.get('/groups/pending-invites', protect, async (req, res) => {
 router.get('/groups', protect, async (req, res) => {
   try {
     const groups = await BuddyGroup.find({
-      $or: [{ creatorId: req.user._id }, { members: req.user._id }, { pendingRequests: req.user._id }]
+      $or: [
+        { creatorId: req.user._id },
+        { members: req.user._id },
+        { pendingRequests: req.user._id },
+        { invitedUsers: req.user._id }
+      ]
     }).sort({ scheduledAt: 1 }).
     populate('creatorId', 'name avatar verified').
     populate('members', 'name avatar verified').
@@ -337,6 +410,9 @@ router.post('/groups', protect, async (req, res) => {
       intentSnippet
     } = req.body;
     const coords = [parseFloat(lng) || 0, parseFloat(lat) || 0];
+    if (!req.user?.buddyMode) {
+      return res.status(403).json({ error: 'Buddy Mode must be ON to create groups or pair hangouts.' });
+    }
     const scheduled = new Date(scheduledAt);
     const safeVenue = sanitizeSafeVenue(safeVenueBody);
     if (looksLikePrivateAddress(meetingPlace) && !safeVenue) {
@@ -361,20 +437,17 @@ router.post('/groups', protect, async (req, res) => {
       2 :
       (Number.isFinite(parsedMaxMembers) ? Math.max(3, Math.min(20, parsedMaxMembers)) : 3);
     
-    // Auto-generate description from activity if not provided
-    let finalDescription = description;
-    if (!finalDescription && activity) {
-      const aiDescription = await generateGroupDescription(activity, interests || [], meetingPlace || '');
-      if (aiDescription) {
-        finalDescription = aiDescription;
-      }
-    }
-    
+    const finalDescription = String(description || '').trim();
+    const baseIntent = String(intentSnippet || activity || '').trim();
+    const quickIntentTokens = normalizeTokens([
+      ...(Array.isArray(interests) ? interests : []),
+      baseIntent
+    ]);
     const group = await BuddyGroup.create({
       creatorId: req.user._id,
       activity,
       description: finalDescription,
-      interests: interests || [],
+      interests: quickIntentTokens.slice(0, 10),
       intentSnippet: String(intentSnippet || '').trim().slice(0, 500),
       location: { type: 'Point', coordinates: coords },
       meetingPlace,
@@ -385,12 +458,86 @@ router.post('/groups', protect, async (req, res) => {
       inviteTargetUserId: inviteTargetUserId || undefined,
       chatExpiresAt: chatExpiryFromScheduled(scheduled),
       safeBy: safeBy ? new Date(safeBy) : undefined,
-      safeByUserId: safeBy ? req.user._id : undefined
+      safeByUserId: safeBy ? req.user._id : undefined,
+      invitedUsers: [],
+      declinedInvites: []
     });
+
     const populated = await BuddyGroup.findById(group._id).
     populate('creatorId', 'name avatar verified').
     populate('members', 'name avatar verified');
     res.status(201).json(populated);
+
+    // Post-processing in background so group creation returns fast.
+    setImmediate(async () => {
+      try {
+        const nextIntentTokens = await expandBuddyIntentKeywords(baseIntent);
+        if (nextIntentTokens.length) {
+          await BuddyGroup.findByIdAndUpdate(group._id, {
+            $set: { interests: nextIntentTokens.slice(0, 10) }
+          });
+        }
+
+        if (!finalDescription && activity) {
+          const aiDescription = await generateGroupDescription(activity, interests || [], meetingPlace || '');
+          const trimmed = String(aiDescription || '').trim();
+          if (trimmed) {
+            await BuddyGroup.findOneAndUpdate(
+              { _id: group._id, $or: [{ description: { $exists: false } }, { description: '' }] },
+              { $set: { description: trimmed } }
+            );
+          }
+        }
+
+        // Group mode: auto-invite AI-matched users up to max members.
+        if (!inviteTargetUserId && maxM > 1) {
+          const creator = await User.findById(req.user._id).select('interests discoveryPreferences location');
+          const creatorTokens = buildUserPreferenceTokens(creator);
+          const maxDistanceMeters = 12000;
+          const candidates = await User.find({
+            _id: { $ne: req.user._id },
+            buddyMode: true,
+            location: {
+              $nearSphere: {
+                $geometry: { type: 'Point', coordinates: coords },
+                $maxDistance: maxDistanceMeters
+              }
+            }
+          })
+            .select('interests discoveryPreferences lastActive location')
+            .limit(60);
+
+          const scored = candidates.map((u) => {
+            const c = u?.location?.coordinates || [];
+            const uLng = Number(c?.[0]);
+            const uLat = Number(c?.[1]);
+            const dist = (Number.isFinite(uLat) && Number.isFinite(uLng)) ? distanceMeters(coords[1], coords[0], uLat, uLng) : maxDistanceMeters;
+            const proximityScore = Math.max(0, Math.min(1, 1 - (dist / maxDistanceMeters)));
+            const candidateTokens = buildUserPreferenceTokens(u);
+            const score = scoreInviteCandidate({
+              intentTokens: nextIntentTokens.length ? nextIntentTokens : quickIntentTokens,
+              creatorTokens,
+              candidateTokens,
+              proximityScore,
+              userDoc: u
+            });
+            return { userId: u._id, score };
+          })
+            .filter((x) => x.score >= 0.38)
+            .sort((a, b) => b.score - a.score);
+
+          const shortlist = scored.slice(0, 20);
+          const chosen = weightedRandomPick(shortlist, Math.max(0, maxM - 1));
+          if (chosen.length) {
+            await BuddyGroup.findByIdAndUpdate(group._id, {
+              $set: { invitedUsers: chosen.map((c) => c.userId) }
+            });
+          }
+        }
+      } catch (bgErr) {
+        console.warn('[buddies] post-create processing failed:', bgErr?.message || bgErr);
+      }
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -412,6 +559,19 @@ router.post('/groups/:id/join', protect, async (req, res) => {
     return res.status(400).json({ error: 'Already a member' });
     if (group.pendingRequests?.some((m) => m.toString() === req.user._id.toString()))
     return res.status(400).json({ error: 'Request already pending' });
+    if (group.invitedUsers?.some((m) => m.toString() === req.user._id.toString())) {
+      group.invitedUsers = (group.invitedUsers || []).filter((m) => m.toString() !== req.user._id.toString());
+      if (!group.members.some((u) => u.toString() === req.user._id.toString())) {
+        group.members.push(req.user._id);
+      }
+      if (group.members.length >= group.maxMembers) group.status = 'full';
+      await group.save();
+      const populated = await BuddyGroup.findById(group._id).
+        populate('creatorId', 'name avatar verified').
+        populate('members', 'name avatar verified').
+        populate('pendingRequests', 'name avatar verified');
+      return res.json(populated);
+    }
     group.pendingRequests = group.pendingRequests || [];
     group.pendingRequests.push(req.user._id);
     await group.save();
@@ -420,6 +580,52 @@ router.post('/groups/:id/join', protect, async (req, res) => {
     populate('members', 'name avatar verified').
     populate('pendingRequests', 'name avatar verified');
     res.json(populated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/groups/:id/accept-invite', protect, async (req, res) => {
+  try {
+    const group = await BuddyGroup.findById(req.params.id);
+    if (!group) return res.status(404).json({ error: 'Group not found' });
+    const uid = req.user._id.toString();
+    const invited = (group.invitedUsers || []).some((u) => u.toString() === uid);
+    if (!invited) return res.status(403).json({ error: 'You are not invited to this group.' });
+    if (group.members.some((u) => u.toString() === uid)) {
+      return res.status(400).json({ error: 'Already a member.' });
+    }
+    if (group.members.length >= group.maxMembers) {
+      return res.status(400).json({ error: 'Group is full.' });
+    }
+    group.invitedUsers = (group.invitedUsers || []).filter((u) => u.toString() !== uid);
+    group.declinedInvites = (group.declinedInvites || []).filter((u) => u.toString() !== uid);
+    group.members.push(req.user._id);
+    if (group.members.length >= group.maxMembers) group.status = 'full';
+    await group.save();
+    const populated = await BuddyGroup.findById(group._id)
+      .populate('creatorId', 'name avatar verified')
+      .populate('members', 'name avatar verified')
+      .populate('pendingRequests', 'name avatar verified');
+    res.json(populated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/groups/:id/reject-invite', protect, async (req, res) => {
+  try {
+    const group = await BuddyGroup.findById(req.params.id);
+    if (!group) return res.status(404).json({ error: 'Group not found' });
+    const uid = req.user._id.toString();
+    const invited = (group.invitedUsers || []).some((u) => u.toString() === uid);
+    if (!invited) return res.status(403).json({ error: 'You are not invited to this group.' });
+    group.invitedUsers = (group.invitedUsers || []).filter((u) => u.toString() !== uid);
+    if (!group.declinedInvites?.some((u) => u.toString() === uid)) {
+      group.declinedInvites = [...(group.declinedInvites || []), req.user._id];
+    }
+    await group.save();
+    res.json({ removed: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

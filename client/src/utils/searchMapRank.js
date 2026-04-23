@@ -8,12 +8,39 @@ function haversineMeters(la1, lo1, la2, lo2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function tokenize(value) {
+function normalizeSearchText(value) {
   return String(value || '')
     .toLowerCase()
+    .replace(/_/g, ' ')
+    .replace(/\btheatre\b/g, 'theater')
+    .replace(/\bcinemas\b/g, 'cinema');
+}
+
+function tokenize(value) {
+  return normalizeSearchText(value)
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
     .filter((t) => t.length >= 2);
+}
+
+function stemToken(token) {
+  const t = String(token || '');
+  if (t.length <= 3) return t;
+  if (t.endsWith('ies') && t.length > 4) return `${t.slice(0, -3)}y`;
+  if (t.endsWith('es') && t.length > 4) return t.slice(0, -2);
+  if (t.endsWith('s') && t.length > 3) return t.slice(0, -1);
+  return t;
+}
+
+function toTokenStemSet(value) {
+  return new Set(tokenize(value).map(stemToken).filter(Boolean));
+}
+
+function looseTokenHitInBlob(stemmedToken, blob) {
+  if (!stemmedToken || !blob) return false;
+  if (blob.includes(stemmedToken)) return true;
+  const parts = blob.split(' ');
+  return parts.some((p) => p.startsWith(stemmedToken) || (stemmedToken.length >= 4 && stemmedToken.startsWith(p)));
 }
 
 /** Rough max typical spend from price tier when avg is missing. */
@@ -76,7 +103,8 @@ const SIMILAR_QUERY_GROUPS = [
   ['park', 'garden', 'playground', 'plaza'],
   ['library', 'book', 'bookstore', 'reading'],
   ['gym', 'fitness', 'workout', 'yoga', 'sports'],
-  ['market', 'grocery', 'supermarket', 'mart', 'store', 'shop']
+  ['market', 'grocery', 'supermarket', 'mart', 'store', 'shop'],
+  ['theater', 'theatre', 'cinema', 'movie', 'film', 'multiplex', 'imax']
 ];
 
 const INTENT_GROUPS = {
@@ -85,7 +113,8 @@ const INTENT_GROUPS = {
   restaurant: ['restaurant', 'food', 'eatery', 'dining', 'bistro', 'diner', 'kitchen'],
   library: ['library', 'bookstore', 'reading', 'books'],
   gym: ['gym', 'fitness', 'workout', 'yoga', 'sports'],
-  shopping: ['shop', 'store', 'market', 'mall', 'grocery', 'supermarket']
+  shopping: ['shop', 'store', 'market', 'mall', 'grocery', 'supermarket'],
+  entertainment: ['theater', 'cinema', 'movie', 'film', 'multiplex', 'imax']
 };
 
 function detectQueryIntent(query) {
@@ -176,27 +205,39 @@ export function businessMatchesQueryIntent(query, business) {
 }
 
 export function businessMatchesPreciseQuery(query, business) {
-  const q = String(query || '').trim().toLowerCase();
+  const q = normalizeSearchText(String(query || '').trim());
   if (!q) return true;
   const { tokens } = detectQueryIntent(q);
-  if (!tokens.length) return false;
-  const name = String(business?.name || '').toLowerCase();
-  const category = String(business?.category || '').toLowerCase();
-  const tags = Array.isArray(business?.tags) ? business.tags.join(' ').toLowerCase() : '';
-  const desc = String(business?.description || '').toLowerCase();
+  const queryTokens = (tokens || []).map(stemToken).filter(Boolean);
+  if (!queryTokens.length) return false;
+  const name = normalizeSearchText(String(business?.name || ''));
+  const category = normalizeSearchText(String(business?.category || ''));
+  const tags = Array.isArray(business?.tags) ? normalizeSearchText(business.tags.join(' ')) : '';
+  const desc = normalizeSearchText(String(business?.description || ''));
   const blob = `${name} ${category} ${tags} ${desc}`;
-  return tokens.some((t) => blob.includes(t));
+  const hitCount = queryTokens.reduce((n, t) => n + (looseTokenHitInBlob(t, blob) ? 1 : 0), 0);
+  const requiredHits = queryTokens.length <= 2 ? 1 : Math.min(2, queryTokens.length);
+  return hitCount >= requiredHits;
 }
 
 export function poiMatchesPreciseQuery(query, poi) {
-  const q = String(query || '').trim().toLowerCase();
+  const q = normalizeSearchText(String(query || '').trim());
   if (!q) return true;
   const { tokens } = detectQueryIntent(q);
-  if (!tokens.length) return false;
-  const name = String(poi?.name || '').toLowerCase();
-  const category = String(poi?.category || '').toLowerCase();
-  const blob = `${name} ${category}`;
-  return tokens.some((t) => blob.includes(t));
+  const queryTokens = (tokens || []).map(stemToken).filter(Boolean);
+  if (!queryTokens.length) return false;
+  const name = normalizeSearchText(String(poi?.name || ''));
+  const category = normalizeSearchText(String(poi?.category || ''));
+  const address = normalizeSearchText(String(poi?.address || poi?.formattedAddress || poi?.vicinity || ''));
+  const types = Array.isArray(poi?.types) ? normalizeSearchText(poi.types.join(' ')) : '';
+  const blob = `${name} ${category} ${address} ${types}`.trim();
+  const blobStems = toTokenStemSet(blob);
+  const hitCount = queryTokens.reduce(
+    (n, t) => n + (blobStems.has(t) || looseTokenHitInBlob(t, blob) ? 1 : 0),
+    0
+  );
+  const requiredHits = queryTokens.length <= 2 ? 1 : Math.min(2, queryTokens.length);
+  return hitCount >= requiredHits;
 }
 
 /**

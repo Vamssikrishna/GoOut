@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
 export default function Register() {
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -17,43 +17,41 @@ export default function Register() {
   const { register } = useAuth();
   const { addToast } = useToast();
   const navigate = useNavigate();
+  const normalizedEmail = email.trim();
+  const isEmailInvalid = normalizedEmail.length > 0 && !emailPattern.test(normalizedEmail);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setErr('');
     
     if (step === 1) {
+      if (!emailPattern.test(normalizedEmail)) {
+        setErr('Enter a valid email address.');
+        return;
+      }
+      setEmail(normalizedEmail);
       setStep(2);
       return;
     }
 
     try {
-      await register(name, email, password, role);
-      
-      // Save preferences if explorer
-      if (role === 'explorer') {
-        try {
-          await api.put('/users/discovery-preferences', {
-            prefer: preferences.split(',').map((s) => s.trim()).filter(Boolean),
-            avoid: avoid.split(',').map((s) => s.trim()).filter(Boolean),
-            notes: ''
-          });
-        } catch (prefErr) {
-          console.error('Could not save preferences:', prefErr);
-        }
-        
-        // Save interests
-        try {
-          await api.put('/users/profile', {
-            interests: interests.split(',').map((s) => s.trim()).filter(Boolean)
-          });
-        } catch (interestErr) {
-          console.error('Could not save interests:', interestErr);
-        }
+      const preferList = preferences.split(',').map((s) => s.trim()).filter(Boolean);
+      if (role === 'explorer' && preferList.length === 0) {
+        setErr('Please enter at least one preference to continue.');
+        return;
       }
-      
-      addToast({ type: 'success', title: 'Account created', message: 'Welcome to GoOut! Complete your profile to get better matches.' });
-      navigate('/app/profile');
+      await register({
+        name,
+        email: normalizedEmail,
+        password,
+        role,
+        interests: interests.split(',').map((s) => s.trim()).filter(Boolean),
+        prefer: preferList,
+        avoid: avoid.split(',').map((s) => s.trim()).filter(Boolean),
+        notes: ''
+      });
+      addToast({ type: 'success', title: 'Account created', message: 'Now sign in — we will email your OTP code.' });
+      navigate('/login', { state: { prefillEmail: normalizedEmail } });
     } catch (res) {
       setErr(res.response?.data?.error || 'Registration failed');
       addToast({ type: 'error', title: 'Registration failed', message: res.response?.data?.error || 'Please try again.' });
@@ -62,16 +60,23 @@ export default function Register() {
 
   return (
     <div className="min-h-screen goout-auth-shell flex items-center justify-center p-4 relative z-10">
-      <div className="w-full max-w-md goout-animate-in">
+      <div className="w-full max-w-2xl goout-animate-in">
         <Link
           to="/"
           className="block font-display font-extrabold text-3xl mb-8 bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent hover:opacity-90 transition-opacity w-fit">
           GoOut
         </Link>
-        <div className="goout-glass-card goout-neon-panel rounded-2xl p-8 shadow-xl border border-white/60">
-          <h1 className="text-2xl font-bold text-slate-900 mb-6">{step === 1 ? 'Create account' : 'Set your preferences'}</h1>
+        <div className="goout-glass-card goout-neon-panel goout-auth-panel rounded-3xl p-8 sm:p-9 shadow-md border border-slate-200">
+          <div className="flex items-center gap-2 mb-6" aria-hidden>
+            <span className={`h-1.5 flex-1 rounded-full ${step === 1 ? 'bg-gradient-to-r from-emerald-500 to-teal-400' : 'bg-emerald-200'}`} />
+            <span className={`h-1.5 flex-1 rounded-full ${step === 2 ? 'bg-gradient-to-r from-emerald-500 to-teal-500' : 'bg-slate-200'}`} />
+          </div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-600/90 mb-2">Step {step} of 2</p>
+          <h1 className="font-display text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight mb-6">
+            {step === 1 ? 'Create account' : 'Set your preferences'}
+          </h1>
           <form onSubmit={handleSubmit} className="space-y-4">
-            {err && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{err}</div>}
+            {err && <div className="p-3 rounded-lg text-sm border border-red-300/50 bg-red-500/15 text-red-100">{err}</div>}
             
             {step === 1 ? (
               <>
@@ -79,6 +84,7 @@ export default function Register() {
                   className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent goout-neon-input" />
                 <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required
                   className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent goout-neon-input" />
+                {isEmailInvalid && <p className="text-xs text-red-600 -mt-2">Enter a valid email address.</p>}
                 <input type="password" placeholder="Password (min 6 chars)" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6}
                   className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent goout-neon-input" />
                 <div>
@@ -89,14 +95,17 @@ export default function Register() {
                     <option value="merchant">Merchant (local business owner)</option>
                   </select>
                 </div>
-                <button type="submit" className="goout-btn-primary w-full py-3 rounded-xl justify-center">
+                <button
+                  type="submit"
+                  disabled={isEmailInvalid}
+                  className="goout-btn-primary w-full py-3 rounded-xl justify-center disabled:opacity-60">
                   Next
                 </button>
               </>
             ) : role === 'explorer' ? (
               <>
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
-                  <p className="text-xs text-blue-900 font-medium">Tell us about your buddy preferences so we can match you with the right explorers and groups!</p>
+                <div className="rounded-lg border border-emerald-300/40 bg-emerald-500/15 p-3 mb-4">
+                  <p className="text-xs text-emerald-100 font-medium">Tell us about your buddy preferences so we can match you with the right explorers and groups!</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Your interests (comma-separated)</label>
@@ -108,6 +117,7 @@ export default function Register() {
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">What activities do you prefer? (comma-separated)</label>
                   <input type="text" placeholder="outdoor adventures, casual hangouts, learning activities..." value={preferences} onChange={(e) => setPreferences(e.target.value)}
+                    required
                     className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green goout-neon-input"
                     maxLength="300" />
                   <p className="text-xs text-slate-500 mt-1">This helps our AI suggest matching groups and buddies</p>
@@ -120,7 +130,7 @@ export default function Register() {
                   <p className="text-xs text-slate-500 mt-1">We'll filter out activities that don't match your preferences</p>
                 </div>
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => setStep(1)} className="flex-1 px-4 py-3 border border-slate-300 rounded-lg text-slate-700 font-medium hover:bg-slate-50">
+                  <button type="button" onClick={() => setStep(1)} className="flex-1 goout-btn-ghost py-3 rounded-lg">
                     Back
                   </button>
                   <button type="submit" className="flex-1 goout-btn-primary py-3 rounded-lg justify-center">

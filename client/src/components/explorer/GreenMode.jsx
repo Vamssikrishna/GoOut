@@ -20,7 +20,6 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
   const profileWeightKg =
     user != null && user.weight != null && Number.isFinite(Number(user.weight)) ? Number(user.weight) : null;
   const [dashboard, setDashboard] = useState(null);
-  const [leaderboard, setLeaderboard] = useState(null);
   const [dashErr, setDashErr] = useState('');
   const [idDest, setIdDest] = useState('');
   const [bundle, setBundle] = useState(null);
@@ -36,10 +35,9 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
   const loadDashboard = () => {
     setDashErr('');
     api.get('/green/dashboard').
-    then(({ data }) => setDashboard(data)).
+    then(({ data }) => setDashboard(data || null)).
     catch(() => {
-      setDashErr('Could not load green dashboard.');
-      setDashboard(null);
+      setDashErr('Could not load live green stats right now.');
     });
   };
 
@@ -48,21 +46,6 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
     const t = setInterval(loadDashboard, 45000);
     return () => clearInterval(t);
   }, []);
-
-  const loadLeaderboard = () => {
-    const params = {};
-    if (userLocation && Number.isFinite(userLocation.lat) && Number.isFinite(userLocation.lng)) {
-      params.lat = userLocation.lat;
-      params.lng = userLocation.lng;
-    }
-    api.get('/green/leaderboard', { params }).
-    then(({ data }) => setLeaderboard(data)).
-    catch(() => setLeaderboard(null));
-  };
-
-  useEffect(() => {
-    loadLeaderboard();
-  }, [userLocation?.lat, userLocation?.lng]);
 
   const runGreenBundle = async () => {
     setBundleErr('');
@@ -106,12 +89,13 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
     onRequestMapTab?.();
     addToast({
       type: 'success',
-      title: 'Green route on map',
-      message: 'Open the Map tab — animated line shows the suggested low-carbon path.'
+      title: 'Green route',
+      message: 'Map tab: animated low-carbon path.'
     });
   };
 
   const trackingActive = Boolean(userLocation && Number.isFinite(userLocation.lat) && Number.isFinite(userLocation.lng));
+  const walkingRouteActive = String(bundle?.recommended?.mode || '').toLowerCase().includes('walk');
   const visitRollup = dashboard?.visitRollup;
   const profile = dashboard?.profile;
   const community = dashboard?.community;
@@ -121,7 +105,7 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
       <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
         <h2 className="font-display font-semibold text-lg mb-2">Green Mode</h2>
         <p className="text-slate-600 text-sm mb-4">
-          We prioritize walking, cycling, and transit over driving, estimate CO₂ avoided vs a ~192 g/km petrol baseline, and boost credits when you reach sustainability-minded Red Pin merchants on foot. City Concierge (Green tab on chat) ranks eco fields higher and can nudge reusables when the weather is nice.
+          Walk, bike, or transit first. CO₂ vs ~192 g/km car baseline. Credits for verified walks—especially green Red Pins.
         </p>
         <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-sm">
           <p className="font-medium text-emerald-900">
@@ -129,15 +113,15 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
           </p>
           <p className="text-emerald-800 mt-1">
             {trackingActive ?
-              'Walk to a pinned merchant or public place — verified visits add avoided CO₂ to your profile and may earn carbon credits + badges.' :
-              'Enable GPS so we can plan eco routes from you to a merchant.'}
+              'Walk to a pin—verified visits stack CO₂, credits, badges.' :
+              'Turn on GPS for eco routes.'}
           </p>
         </div>
         <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 text-sm">
           <p className="font-medium text-slate-800">Body weight (from profile)</p>
           {!user ?
             <p className="text-slate-600 mt-1">
-              Sign in to use the weight saved on your profile for calorie-related green stats.
+              Sign in to use profile weight for calories.
             </p> :
             profileWeightKg != null ?
               <p className="text-slate-700 mt-1">
@@ -146,24 +130,23 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
                 {isExplorer &&
                   <span className="text-slate-600">
                     {' '}
-                    — edit on{' '}
+                    {' '}
                     <Link to="/app/profile" className="text-goout-green font-semibold underline underline-offset-2 hover:text-goout-accent">
-                      Profile
+                      Edit
                     </Link>
-                    .
                   </span>
                 }
               </p> :
               <p className="text-slate-600 mt-1">
                 {isExplorer ?
                   <>
-                    Not set yet. Add your weight under{' '}
+                    Add weight in{' '}
                     <Link to="/app/profile" className="text-goout-green font-semibold underline underline-offset-2 hover:text-goout-accent">
-                      Profile → Account &amp; safety
-                    </Link>{' '}
-                    so visits and estimates can use it.
+                      Profile
+                    </Link>
+                    .
                   </> :
-                  'Explorer accounts can set body weight in Profile for calorie estimates.'}
+                  'Set weight in Profile for calories.'}
               </p>
           }
         </div>
@@ -173,8 +156,8 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
             <p className="text-2xl font-bold text-goout-green">{visitRollup?.caloriesBurned ?? '—'}</p>
             <p className="text-sm text-slate-600">Calories (visits)</p>
           </div>
-          <div className="p-4 bg-goout-mint rounded-xl">
-            <p className="text-2xl font-bold text-goout-green">{profile?.carbonCredits ?? '—'}</p>
+          <div className={`p-4 bg-goout-mint rounded-xl ${walkingRouteActive ? 'goout-carbon-live' : ''}`}>
+            <p className="text-2xl font-bold text-goout-green font-mono">{profile?.carbonCredits ?? '—'}</p>
             <p className="text-sm text-slate-600">Carbon credits</p>
           </div>
           <div className="p-4 bg-slate-50 rounded-xl col-span-2">
@@ -187,9 +170,9 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
               {profile?.greenStats?.totalCO2Saved != null ? `${profile.greenStats.totalCO2Saved} g` : '—'}
             </p>
             <p className="mt-1">
-              <strong className="text-slate-800">Community:</strong>{' '}
+              <strong className="text-slate-800">Community</strong>{' '}
               {community ?
-                `~${community.totalCo2Kg} kg CO₂ logged across ${community.explorerCount} explorers (${community.totalWalks} green trips).` :
+                `~${community.totalCo2Kg} kg CO₂ · ${community.explorerCount} explorers · ${community.totalWalks} trips` :
                 '—'}
             </p>
           </div>
@@ -199,10 +182,10 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
       <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
         <h3 className="font-display font-semibold text-lg mb-2">Eco-friendly routing</h3>
         <p className="text-slate-600 text-sm mb-3">
-          Compares walking, cycling, and transit (when Google Directions supports it) to driving. &quot;Green path&quot; score bumps routes whose steps mention parks, plazas, or pedestrian ways — not live tree or pollution sensors.
+          Walk, bike, transit vs drive. Green path = parks &amp; pedestrian-friendly steps (heuristic).
         </p>
         {withCoords.length === 0 ?
-        <p className="text-sm text-amber-800">Search the Map tab for merchants first.</p> :
+        <p className="text-sm text-amber-800">Search Map for pins first.</p> :
 
         <div className="space-y-3">
             <label className="block text-sm">
@@ -210,7 +193,7 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
               <select
               value={idDest}
               onChange={(e) => setIdDest(e.target.value)}
-              className="mt-1 w-full px-3 py-2 border border-cyan-200/60 rounded-lg text-sm">
+              className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm">
 
                 {withCoords.map((b) =>
               <option key={b._id} value={b._id}>{b.mapDisplayName || b.name}</option>
@@ -267,47 +250,33 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
 
       <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
         <h3 className="font-display font-semibold text-lg mb-3">Badges</h3>
-        <ul className="space-y-2">
+        <ul className="grid gap-3 sm:grid-cols-2">
           {(dashboard?.badges || []).map((b) =>
           <li
             key={b.id}
-            className={`flex justify-between items-center text-sm px-3 py-2 rounded-lg border ${
-            b.earned ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`
+            className={`rounded-xl border p-3 text-sm shadow-sm transition ${
+            b.earned ? 'border-emerald-300 bg-gradient-to-br from-emerald-50 to-lime-50' : 'border-slate-200 bg-slate-50'}`
             }>
-            
-              <span>{b.label}</span>
-              {b.earned ?
-            <span className="text-emerald-700 font-medium">Earned</span> :
-
-            <span className="text-slate-500">{b.progress != null ? `${b.progress}%` : ''}</span>
-            }
+              <div className="flex items-start justify-between gap-3">
+                <span className="font-medium text-slate-800">{b.label}</span>
+                {b.earned ?
+                  <span className="inline-flex rounded-full bg-emerald-600 px-2 py-0.5 text-[11px] font-semibold text-white">Unlocked</span> :
+                  <span className="inline-flex rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-700">In progress</span>
+                }
+              </div>
+              {b.earned ? (
+                <p className="mt-2 text-xs text-emerald-700">Completed</p>
+              ) : (
+                <div className="mt-2">
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+                    <div className="h-full rounded-full bg-sky-500" style={{ width: `${Math.max(0, Math.min(100, Number(b.progress) || 0))}%` }} />
+                  </div>
+                  <p className="mt-1 text-xs text-slate-600">{b.progress != null ? `${b.progress}% complete` : 'Progress pending'}</p>
+                </div>
+              )}
             </li>
           )}
         </ul>
-      </div>
-
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-        <h3 className="font-display font-semibold text-lg mb-3">Neighborhood leaderboard</h3>
-        <p className="text-xs text-slate-500 mb-2">Ranked by combined green activity (carbon credits + logged CO₂). Requires explorers who saved a map location.</p>
-        {leaderboard?.you &&
-        <p className="text-sm text-slate-700 mb-2">
-            Your score: <strong>{Math.round(leaderboard.you.score)}</strong> · CO₂ logged:{' '}
-            {leaderboard.you.co2SavedGrams} g
-          </p>
-        }
-        <ul className="space-y-2">
-          {(leaderboard?.leaderboard || []).slice(0, 12).map((row, i) =>
-          <li key={row.id || i} className="flex justify-between text-sm py-2 border-b border-slate-100 last:border-0">
-              <span className="font-medium text-slate-800 truncate pr-2">
-                {i + 1}. {row.name}
-              </span>
-              <span className="text-emerald-700 shrink-0">{Math.round(row.score)}</span>
-            </li>
-          )}
-        </ul>
-        {!leaderboard?.leaderboard?.length &&
-        <p className="text-sm text-slate-500">No ranked explorers yet — be the first to log walks.</p>
-        }
       </div>
     </div>);
 

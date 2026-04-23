@@ -3,10 +3,24 @@ import User from '../models/User.js';
 import { protect } from '../middleware/auth.js';
 
 const router = express.Router();
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i;
+
+function normalizeEmergencyEmails(input) {
+  const raw = Array.isArray(input) ?
+    input :
+    String(input || '')
+      .split(/[,\n;]/)
+      .map((s) => s.trim());
+  return [...new Set(
+    raw
+      .map((s) => String(s || '').trim().toLowerCase())
+      .filter(Boolean)
+  )];
+}
 
 router.put('/profile', protect, async (req, res) => {
   try {
-    const { name, interests, location, weight, emergencyContact, buddyMode } = req.body;
+    const { name, interests, location, weight, emergencyContact, emergencyEmails, buddyMode } = req.body;
     const update = { lastActive: new Date() };
     if (name !== undefined) update.name = name;
     if (interests !== undefined) update.interests = interests;
@@ -14,6 +28,16 @@ router.put('/profile', protect, async (req, res) => {
     if (location !== undefined) update.location = location;
     if (weight !== undefined) update.weight = weight;
     if (emergencyContact !== undefined) update.emergencyContact = emergencyContact;
+    if (emergencyEmails !== undefined) {
+      const normalized = normalizeEmergencyEmails(emergencyEmails);
+      if (normalized.length < 1 || normalized.length > 3) {
+        return res.status(400).json({ error: 'Add at least 1 and at most 3 emergency emails.' });
+      }
+      if (normalized.some((email) => !EMAIL_RE.test(email))) {
+        return res.status(400).json({ error: 'Please enter valid emergency email addresses.' });
+      }
+      update.emergencyEmails = normalized;
+    }
     const user = await User.findByIdAndUpdate(req.user._id, update, { new: true }).
     select('-password').
     populate('businessId', 'name category address');
