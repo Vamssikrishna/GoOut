@@ -6,9 +6,20 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': 'http://127.0.0.1:5000',
-      '/uploads': 'http://127.0.0.1:5000',
-      '/socket.io': { target: 'http://127.0.0.1:5000', ws: true }
+      '/api': {
+        target: 'http://127.0.0.1:5000',
+        changeOrigin: true
+      },
+      '/uploads': {
+        target: 'http://127.0.0.1:5000',
+        changeOrigin: true
+      },
+      // Use stable HTTP long-polling proxy in dev to avoid noisy WS resets during backend restarts.
+      '/socket.io': {
+        target: 'http://127.0.0.1:5000',
+        changeOrigin: true,
+        ws: false
+      }
     }
   }
 });

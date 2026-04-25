@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
  * Override with GEMINI_MODEL in server/.env.
  */
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+export const GEMINI_UNAVAILABLE_MESSAGE = 'This function is currently not available.';
 
 export const GEMINI_KEY_SCOPES = Object.freeze({
   CHATBOT: 'chatbot',
@@ -126,15 +127,16 @@ export function isLikelyGeminiError(err) {
   );
 }
 
-export function formatGeminiUserMessage(err, fallback = 'AI is busy right now. Please try again in a moment.') {
+export function formatGeminiUserMessage(err, fallback = GEMINI_UNAVAILABLE_MESSAGE) {
+  const generic = GEMINI_UNAVAILABLE_MESSAGE;
   const kind = classifyGeminiError(err);
   if (kind === 'quota' || kind === 'transient') {
-    return 'AI is busy right now. Please try again in a moment.';
+    return generic;
   }
   if (kind === 'model') {
-    return 'AI service is temporarily unavailable. Please try again shortly.';
+    return generic;
   }
-  return fallback;
+  return fallback || generic;
 }
 
 export async function sleepMs(ms) {

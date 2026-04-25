@@ -2,8 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { GoogleMap, useLoadScript } from '@react-google-maps/api';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import { estimateMerchantSpendInr, businessIsStrongGreen, poiMatchesPreciseQuery } from '../../utils/searchMapRank';
+import api from '../../api/client';
 
 const DEFAULT_ZOOM = 17;
+const PIN_COLORS = Object.freeze({
+  LOCAL_RED: '#ef4444',
+  LOCAL_RED_DEAL: '#dc2626',
+  EXACT_BLUE: '#2563eb',
+  MAYBE_GREY: '#6b7280'
+});
 
 /** Rich green map style for modern themed experience. */
 const GREEN_MAP_STYLES = [
@@ -61,12 +68,25 @@ function buildUserLocationMarkerIcon(google, size = 22) {
 
 function buildMapPinIcon(google, { fill = '#ef4444', stroke = '#ffffff', dot = '#ffffff', size = 34, pulse = false } = {}) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28">
+    <defs>
+      <filter id="gooutPinShadow" x="-30%" y="-30%" width="160%" height="160%">
+        <feDropShadow dx="0" dy="1.4" stdDeviation="1.2" flood-color="#0f172a" flood-opacity="0.28"/>
+      </filter>
+      <linearGradient id="gooutPinGloss" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28"/>
+        <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
     ${pulse ? `<circle cx="14" cy="12.2" r="4.4" fill="none" stroke="${fill}" stroke-opacity="0.62" stroke-width="1.4">
       <animate attributeName="r" values="4.4;9.6;4.4" dur="1.8s" repeatCount="indefinite" />
       <animate attributeName="stroke-opacity" values="0.62;0;0.62" dur="1.8s" repeatCount="indefinite" />
     </circle>` : ''}
-    <path d="M14 26s-8-5.1-8-13a8 8 0 1 1 16 0c0 7.9-8 13-8 13z" fill="${fill}" stroke="${stroke}" stroke-width="1.35"/>
-    <circle cx="14" cy="12.2" r="3.2" fill="${dot}" />
+    <g filter="url(#gooutPinShadow)">
+      <path d="M14 26s-8-5.1-8-13a8 8 0 1 1 16 0c0 7.9-8 13-8 13z" fill="${fill}" stroke="${stroke}" stroke-width="1.35"/>
+      <path d="M14 6.1a6.2 6.2 0 0 1 6.2 6.2c0 5.2-4.5 9.2-6.2 10.5-1.7-1.3-6.2-5.3-6.2-10.5A6.2 6.2 0 0 1 14 6.1z" fill="url(#gooutPinGloss)"/>
+      <circle cx="14" cy="12.2" r="3.3" fill="${dot}" stroke="#ffffff" stroke-opacity="0.85" stroke-width="0.55"/>
+      <circle cx="14" cy="12.2" r="1.3" fill="#ffffff" fill-opacity="0.75"/>
+    </g>
   </svg>`;
   const url = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
   const anchor = Math.round(size / 2);
@@ -268,6 +288,14 @@ function summarizeReviewText(text, maxLen = 180) {
   if (!t) return '';
   if (t.length <= maxLen) return t;
   return `${t.slice(0, maxLen).trim()}…`;
+}
+
+function toAssetUrl(pathLike) {
+  const s = String(pathLike || '').trim();
+  if (!s) return '';
+  if (s.startsWith('http://') || s.startsWith('https://')) return s;
+  if (typeof window !== 'undefined' && s.startsWith('/')) return `${window.location.origin}${s}`;
+  return s;
 }
 
 function poiGoogleLikePopupHtml(p, details, { isSearchPrimary, isExactSearchMatch, isMayMatch } = {}) {
@@ -557,6 +585,10 @@ function DiscoveryMap({
   const [activeLocalPanel, setActiveLocalPanel] = useState(null);
   const [activePoiPanelLoading, setActivePoiPanelLoading] = useState(false);
   const [activePoiPhotoIndex, setActivePoiPhotoIndex] = useState(0);
+  const [placePhotosByKey, setPlacePhotosByKey] = useState({});
+  const [photoUploadBusy, setPhotoUploadBusy] = useState(false);
+  const [photoUploadError, setPhotoUploadError] = useState('');
+  const [photoUploadTarget, setPhotoUploadTarget] = useState(null);
 
   const activeMapStyles = useMemo(() => {
     if (isDarkMode) return DARK_MAP_STYLES;
@@ -625,11 +657,21 @@ function DiscoveryMap({
   const poiCount = (pois || []).length;
   const panelDetails = activePoiPanel?.details || null;
   const panelPoi = activePoiPanel?.poi || null;
+  const localPhotoInputRef = useRef(null);
+  const publicPhotoInputRef = useRef(null);
   const panelPhotoUrls = useMemo(() => {
     const urls = Array.isArray(panelDetails?.photoUrls) ? panelDetails.photoUrls.filter(Boolean) : [];
     if (urls.length) return urls;
+    const publicKey =
+      panelPoi && Number.isFinite(Number(panelPoi.lat)) && Number.isFinite(Number(panelPoi.lng)) ?
+        `public:${Number(panelPoi.lat).toFixed(5)},${Number(panelPoi.lng).toFixed(5)}:${String(panelPoi.name || '').toLowerCase().slice(0, 80)}` :
+        '';
+    const fromStore = Array.isArray(placePhotosByKey[publicKey]) ? placePhotosByKey[publicKey] : [];
+    if (fromStore.length > 0) {
+      return fromStore.map((p) => toAssetUrl(p.imageUrl)).filter(Boolean);
+    }
     return panelDetails?.photoUrl ? [panelDetails.photoUrl] : [];
-  }, [panelDetails]);
+  }, [panelDetails, panelPoi, placePhotosByKey]);
   const panelPhotoCount = panelPhotoUrls.length;
   const clampedPhotoIndex = panelPhotoCount ? Math.max(0, Math.min(activePoiPhotoIndex, panelPhotoCount - 1)) : 0;
   const activePanelPhotoUrl = panelPhotoCount ? panelPhotoUrls[clampedPhotoIndex] : '';
@@ -741,6 +783,136 @@ function DiscoveryMap({
   const localPanelCrowdNum = Math.max(0, Math.min(100, Number(localPanelBusiness?.crowdLevel) || 0));
   const localPanelIsRedPin = Boolean(localPanelBusiness?.localVerification?.redPin);
   const localPanelHasLiveDeal = Boolean(activeLocalPanel?.hasLiveDeal);
+  const localPrimaryPhoto = useMemo(() => {
+    const key = localPanelBusiness?._id ? `local:${String(localPanelBusiness._id)}` : '';
+    const fromStore = key && Array.isArray(placePhotosByKey[key]) ? placePhotosByKey[key] : [];
+    if (fromStore.length > 0) return toAssetUrl(fromStore[0].imageUrl);
+    const firstBusinessImage = Array.isArray(localPanelBusiness?.images) ? localPanelBusiness.images.find((x) => String(x || '').trim()) : '';
+    return toAssetUrl(firstBusinessImage);
+  }, [localPanelBusiness, placePhotosByKey]);
+
+  const localPlaceKey = localPanelBusiness?._id ? `local:${String(localPanelBusiness._id)}` : '';
+  const publicPlaceKey =
+    panelPoi && Number.isFinite(Number(panelPoi.lat)) && Number.isFinite(Number(panelPoi.lng)) ?
+      `public:${Number(panelPoi.lat).toFixed(5)},${Number(panelPoi.lng).toFixed(5)}:${String(panelPoi.name || '').toLowerCase().slice(0, 80)}` :
+      '';
+  const activeLocalPhotos = localPlaceKey && Array.isArray(placePhotosByKey[localPlaceKey]) ? placePhotosByKey[localPlaceKey] : [];
+  const activePublicPhotos = publicPlaceKey && Array.isArray(placePhotosByKey[publicPlaceKey]) ? placePhotosByKey[publicPlaceKey] : [];
+  const localPrimaryPhotoRow = activeLocalPhotos[0] || null;
+  const publicPrimaryPhotoRow = activePublicPhotos[0] || null;
+  const myLocalUploads = activeLocalPhotos.filter((p) => p?.isMine);
+  const myPublicUploads = activePublicPhotos.filter((p) => p?.isMine);
+  const removableLocalRow =
+    localPrimaryPhotoRow?.isMine ? localPrimaryPhotoRow : myLocalUploads[0] || null;
+  const removablePublicRow =
+    publicPrimaryPhotoRow?.isMine ? publicPrimaryPhotoRow : myPublicUploads[0] || null;
+
+  useEffect(() => {
+    const bid = String(localPanelBusiness?._id || '').trim();
+    if (!bid) return;
+    const key = `local:${bid}`;
+    api.get('/place-photos', {
+      params: { placeType: 'local', businessId: bid }
+    }).then(({ data }) => {
+      const rows = Array.isArray(data) ? data : [];
+      setPlacePhotosByKey((prev) => ({ ...prev, [key]: rows }));
+    }).catch(() => {});
+  }, [localPanelBusiness?._id]);
+
+  useEffect(() => {
+    const lat = Number(panelPoi?.lat);
+    const lng = Number(panelPoi?.lng);
+    const placeName = String(panelPoi?.name || '').trim();
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    const key = `public:${lat.toFixed(5)},${lng.toFixed(5)}:${placeName.toLowerCase().slice(0, 80)}`;
+    api.get('/place-photos', {
+      params: { placeType: 'public', lat, lng, placeName }
+    }).then(({ data }) => {
+      const rows = Array.isArray(data) ? data : [];
+      setPlacePhotosByKey((prev) => ({ ...prev, [key]: rows }));
+    }).catch(() => {});
+  }, [panelPoi?.lat, panelPoi?.lng, panelPoi?.name]);
+
+  const triggerUploadPicker = (kind, visibility) => {
+    setPhotoUploadError('');
+    if (kind === 'local') {
+      const bid = String(localPanelBusiness?._id || '').trim();
+      if (!bid) return;
+      setPhotoUploadTarget({ kind: 'local', key: `local:${bid}`, visibility: visibility === 'public' ? 'public' : 'private' });
+      localPhotoInputRef.current?.click?.();
+      return;
+    }
+    const pla = Number(panelPoi?.lat);
+    const plo = Number(panelPoi?.lng);
+    if (!Number.isFinite(pla) || !Number.isFinite(plo)) return;
+    const k = `public:${pla.toFixed(5)},${plo.toFixed(5)}:${String(panelPoi?.name || '').toLowerCase().slice(0, 80)}`;
+    setPhotoUploadTarget({ kind: 'public', key: k, visibility: visibility === 'public' ? 'public' : 'private' });
+    publicPhotoInputRef.current?.click?.();
+  };
+
+  const onPlacePhotoFileSelected = async (e) => {
+    const file = e?.target?.files?.[0];
+    e.target.value = '';
+    if (!file || !photoUploadTarget?.key) return;
+    setPhotoUploadBusy(true);
+    setPhotoUploadError('');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const { data } = await api.post('/uploads/chat-media', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      const uploadPath = String(data?.url || '').trim();
+      const url = toAssetUrl(uploadPath);
+      if (!url) throw new Error('No uploaded image URL returned');
+      const payload =
+        photoUploadTarget.kind === 'local' ?
+          {
+            placeType: 'local',
+            businessId: String(localPanelBusiness?._id || ''),
+            placeName: localPanelName,
+            imageUrl: uploadPath || url,
+            visibility: photoUploadTarget.visibility || 'private'
+          } :
+          {
+            placeType: 'public',
+            placeName: String(panelPoi?.name || 'Public place'),
+            lat: Number(panelPoi?.lat),
+            lng: Number(panelPoi?.lng),
+            imageUrl: uploadPath || url,
+            visibility: photoUploadTarget.visibility || 'private'
+          };
+      const created = await api.post('/place-photos', payload);
+      const createdRow = created?.data || null;
+      if (createdRow?._id) {
+        setPlacePhotosByKey((prev) => {
+          const rows = Array.isArray(prev[photoUploadTarget.key]) ? prev[photoUploadTarget.key] : [];
+          return { ...prev, [photoUploadTarget.key]: [createdRow, ...rows] };
+        });
+      }
+    } catch (err) {
+      setPhotoUploadError(err?.response?.data?.error || 'Could not upload photo right now.');
+    } finally {
+      setPhotoUploadBusy(false);
+    }
+  };
+
+  const removeUploadedPhoto = async (photoRow, key) => {
+    if (!photoRow?._id || !key) return;
+    setPhotoUploadBusy(true);
+    setPhotoUploadError('');
+    try {
+      await api.delete(`/place-photos/${photoRow._id}`);
+      setPlacePhotosByKey((prev) => {
+        const rows = Array.isArray(prev[key]) ? prev[key] : [];
+        return { ...prev, [key]: rows.filter((x) => String(x?._id) !== String(photoRow._id)) };
+      });
+    } catch (err) {
+      setPhotoUploadError(err?.response?.data?.error || 'Could not remove photo.');
+    } finally {
+      setPhotoUploadBusy(false);
+    }
+  };
 
 
   useEffect(() => {
@@ -880,7 +1052,7 @@ function DiscoveryMap({
 
       // Local shops must always be red (single local pin color policy).
       const icon = buildMapPinIcon(google, {
-        fill: hasLiveDeal ? '#dc2626' : '#ef4444',
+        fill: hasLiveDeal ? PIN_COLORS.LOCAL_RED_DEAL : PIN_COLORS.LOCAL_RED,
         dot: hasLiveDeal ? '#fee2e2' : '#ffffff',
         size: isHighlighted ? 44 : 40,
         pulse: true
@@ -922,11 +1094,13 @@ function DiscoveryMap({
       const isMayMatch = q ? !isExactSearchMatch : false;
       const isSearchPrimary = Boolean(highlightedPoiLatLng && poiLatLngMatch(p, highlightedPoiLatLng));
       const isPerfectMatch = isSearchPrimary || isExactSearchMatch;
+      const poiFill = isPerfectMatch ? PIN_COLORS.EXACT_BLUE : PIN_COLORS.MAYBE_GREY;
+      const poiDot = isPerfectMatch ? '#dbeafe' : '#e5e7eb';
       const marker = new google.maps.Marker({
         position: { lat: p.lat, lng: p.lng },
         icon: buildMapPinIcon(google, {
-          fill: isPerfectMatch ? '#1e3a8a' : isMayMatch ? '#6b7280' : '#334155',
-          dot: isPerfectMatch ? '#bfdbfe' : isMayMatch ? '#e5e7eb' : '#cbd5e1',
+          fill: poiFill,
+          dot: poiDot,
           size: 38
         }),
         zIndex: isPerfectMatch ? 560 : 420
@@ -1508,6 +1682,40 @@ function DiscoveryMap({
               </button>
             </div>
             <div className="max-h-[calc(100%-3.6rem)] overflow-y-auto p-4 space-y-3 text-sm">
+              {localPrimaryPhoto ? (
+                <div className="relative overflow-hidden rounded-xl border border-rose-400/30 bg-[#3b1515]">
+                  <img src={localPrimaryPhoto} alt={localPanelName} className="h-44 w-full object-cover" />
+                  {removableLocalRow &&
+                  <button
+                    type="button"
+                    onClick={() => removeUploadedPhoto(removableLocalRow, localPlaceKey)}
+                    disabled={photoUploadBusy}
+                    className="absolute right-2 top-2 rounded-md border border-rose-200 bg-white/90 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-white disabled:opacity-60">
+                      Remove
+                    </button>
+                  }
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-rose-300/50 bg-[#3b1515] px-3 py-4 text-xs text-rose-100/90">
+                  <p>No photo yet for this local place.</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => triggerUploadPicker('local', 'private')}
+                      disabled={photoUploadBusy}
+                      className="rounded-lg border border-rose-300/45 bg-rose-900/30 px-2.5 py-1.5 text-xs font-semibold hover:bg-rose-900/45 disabled:opacity-60">
+                      Save for yourself
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => triggerUploadPicker('local', 'public')}
+                      disabled={photoUploadBusy}
+                      className="rounded-lg border border-rose-300/45 bg-rose-900/30 px-2.5 py-1.5 text-xs font-semibold hover:bg-rose-900/45 disabled:opacity-60">
+                      Save for all
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="rounded-xl border border-rose-400/30 bg-[#3b1515] p-3">
                 <p>⭐ {Number.isFinite(localPanelRating) ? localPanelRating.toFixed(1) : 'N/A'} · {localPanelDistanceLabel}</p>
                 {localPanelHasLiveDeal && <p className="mt-1 text-xs font-medium text-rose-200">Flash deal live</p>}
@@ -1565,6 +1773,17 @@ function DiscoveryMap({
                   </span>
                 )}
               </div>
+              {photoUploadError && <p className="text-xs text-rose-200">{photoUploadError}</p>}
+              {removableLocalRow &&
+              <div className="rounded-xl border border-rose-400/30 bg-[#3b1515] p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-rose-200/80">Your uploads</p>
+                  <div className="mt-2 rounded-lg border border-rose-400/20 bg-[#2f1212] px-2.5 py-2">
+                    <span className="text-[11px] text-rose-100">
+                      {removableLocalRow.visibility === 'public' ? 'Saved for all' : 'Saved for yourself'}
+                    </span>
+                  </div>
+                </div>
+              }
             </div>
           </aside>
         )}
@@ -1615,8 +1834,48 @@ function DiscoveryMap({
               ) : (
                 <div className="rounded-xl border border-emerald-500/30 bg-[#102f24] px-3 py-6 text-center text-xs text-emerald-200/80">
                   No photos available for this place.
+                  <div className="mt-2">
+                    <div className="flex flex-wrap items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => triggerUploadPicker('public', 'private')}
+                        disabled={photoUploadBusy}
+                        className="rounded-lg border border-emerald-400/40 bg-emerald-900/35 px-2.5 py-1.5 text-xs font-semibold text-emerald-100 hover:bg-emerald-900/50 disabled:opacity-60">
+                        Save for yourself
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => triggerUploadPicker('public', 'public')}
+                        disabled={photoUploadBusy}
+                        className="rounded-lg border border-emerald-400/40 bg-emerald-900/35 px-2.5 py-1.5 text-xs font-semibold text-emerald-100 hover:bg-emerald-900/50 disabled:opacity-60">
+                        Save for all
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
+              {activePanelPhotoUrl && removablePublicRow &&
+              <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => removeUploadedPhoto(removablePublicRow, publicPlaceKey)}
+                    disabled={photoUploadBusy}
+                    className="rounded-md border border-emerald-300/60 bg-emerald-950/30 px-2 py-1 text-[11px] font-semibold text-emerald-100 hover:bg-emerald-950/50 disabled:opacity-60">
+                    Remove your photo
+                  </button>
+                </div>
+              }
+              {photoUploadError && <p className="text-xs text-emerald-200">{photoUploadError}</p>}
+              {removablePublicRow &&
+              <div className="rounded-xl border border-emerald-500/30 bg-[#123627] p-3 text-sm">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-200/80">Your uploads</p>
+                  <div className="mt-2 rounded-lg border border-emerald-500/25 bg-[#0f2f24] px-2.5 py-2">
+                    <span className="text-[11px] text-emerald-100">
+                      {removablePublicRow.visibility === 'public' ? 'Saved for all' : 'Saved for yourself'}
+                    </span>
+                  </div>
+                </div>
+              }
 
               <div className="rounded-xl border border-emerald-500/30 bg-[#123627] p-3 text-sm">
                 <p>⭐ {panelStars}{panelRatingsCount > 0 ? ` (${panelRatingsCount.toLocaleString()} reviews)` : ''}{panelPriceText ? ` · ${panelPriceText}` : ''}</p>
@@ -1721,6 +1980,20 @@ function DiscoveryMap({
           </div>
         }
       </div>
+      <input
+        ref={localPhotoInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={onPlacePhotoFileSelected}
+      />
+      <input
+        ref={publicPhotoInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={onPlacePhotoFileSelected}
+      />
       <div className="p-4 bg-slate-50 border-t flex flex-col gap-1 text-sm">
         <span><strong>You:</strong> {userLocationText}</span>
         <span><strong>Public:</strong> {q ? poiCount : 0}</span>
@@ -1747,6 +2020,11 @@ function DiscoveryMap({
         {mapVisualTheme === 'green' &&
         <span className="text-xs text-emerald-800">
             Green: softer map + animated eco route (Green tab).
+          </span>
+        }
+        {q &&
+        <span className="text-xs text-slate-600">
+            Search pins: blue = exact match, grey = may match, red = local business.
           </span>
         }
       </div>

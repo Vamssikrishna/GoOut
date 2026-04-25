@@ -99,15 +99,20 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
   const visitRollup = dashboard?.visitRollup;
   const profile = dashboard?.profile;
   const community = dashboard?.community;
+  const savedDistance = Number(visitRollup?.totalDistanceMeters || 0);
+  const savedCalories = Number(visitRollup?.caloriesBurned || 0);
+  const savedCredits = Number(profile?.carbonCredits || visitRollup?.carbonCreditsEarned || 0);
+  const savedCo2 = Number(visitRollup?.co2SavedGrams || profile?.greenStats?.totalCO2Saved || 0);
+  const streakDays = Number(visitRollup?.streakDays || 0);
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-        <h2 className="font-display font-semibold text-lg mb-2">Green Mode</h2>
+      <div className="rounded-3xl border border-emerald-200/70 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 p-6 shadow-sm">
+        <h2 className="font-display font-semibold text-xl mb-2 tracking-tight">Green Mode Live</h2>
         <p className="text-slate-600 text-sm mb-4">
-          Walk, bike, or transit first. CO₂ vs ~192 g/km car baseline. Credits for verified walks—especially green Red Pins.
+          Go to a shop, keep tracking on, and when arrival is verified the trip is permanently logged with real distance, calories by your weight, and carbon credits.
         </p>
-        <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-sm">
+        <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-sm backdrop-blur">
           <p className="font-medium text-emerald-900">
             {trackingActive ? 'Location: active' : 'Location: waiting'}
           </p>
@@ -152,22 +157,25 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
         </div>
         {dashErr && <p className="text-sm text-amber-700 mb-2">{dashErr}</p>}
         <div className="grid grid-cols-2 gap-4">
-          <div className="p-4 bg-goout-mint rounded-xl">
-            <p className="text-2xl font-bold text-goout-green">{visitRollup?.caloriesBurned ?? '—'}</p>
-            <p className="text-sm text-slate-600">Calories (visits)</p>
+          <div className="p-4 rounded-xl border border-emerald-200 bg-white/80 shadow-sm">
+            <p className="text-2xl font-bold text-emerald-700 tabular-nums">{savedCalories || 0}</p>
+            <p className="text-sm text-slate-600">Calories burned (cumulative)</p>
           </div>
-          <div className={`p-4 bg-goout-mint rounded-xl ${walkingRouteActive ? 'goout-carbon-live' : ''}`}>
-            <p className="text-2xl font-bold text-goout-green font-mono">{profile?.carbonCredits ?? '—'}</p>
-            <p className="text-sm text-slate-600">Carbon credits</p>
+          <div className={`p-4 rounded-xl border border-emerald-200 bg-white/80 shadow-sm ${walkingRouteActive ? 'goout-carbon-live' : ''}`}>
+            <p className="text-2xl font-bold text-emerald-700 font-mono tabular-nums">{savedCredits.toFixed(1)}</p>
+            <p className="text-sm text-slate-600">Carbon credits (wallet)</p>
           </div>
-          <div className="p-4 bg-slate-50 rounded-xl col-span-2">
-            <p className="text-2xl font-bold text-slate-800">{visitRollup?.totalDistanceMeters ?? 0} m</p>
-            <p className="text-sm text-slate-600">Distance logged on visits</p>
+          <div className="p-4 rounded-xl border border-emerald-200 bg-white/80 shadow-sm col-span-2">
+            <p className="text-2xl font-bold text-slate-900 tabular-nums">{savedDistance} m</p>
+            <p className="text-sm text-slate-600">Verified walk distance (cumulative)</p>
           </div>
-          <div className="p-4 bg-slate-50 rounded-xl col-span-2 text-xs text-slate-600">
+          <div className="p-4 rounded-xl border border-emerald-200 bg-white/80 shadow-sm col-span-2 text-xs text-slate-600">
             <p>
               <strong className="text-slate-800">Profile CO₂ avoided (cumulative):</strong>{' '}
-              {profile?.greenStats?.totalCO2Saved != null ? `${profile.greenStats.totalCO2Saved} g` : '—'}
+              {`${savedCo2} g`}
+            </p>
+            <p className="mt-1">
+              <strong className="text-slate-800">Current streak:</strong> {streakDays} day(s)
             </p>
             <p className="mt-1">
               <strong className="text-slate-800">Community</strong>{' '}
@@ -248,8 +256,8 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
         }
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-        <h3 className="font-display font-semibold text-lg mb-3">Badges</h3>
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h3 className="font-display font-semibold text-lg mb-3">Badges & milestones</h3>
         <ul className="grid gap-3 sm:grid-cols-2">
           {(dashboard?.badges || []).map((b) =>
           <li
@@ -265,7 +273,7 @@ export default function GreenMode({ userLocation, businesses = [], onGreenEcoRou
                 }
               </div>
               {b.earned ? (
-                <p className="mt-2 text-xs text-emerald-700">Completed</p>
+                <p className="mt-2 text-xs text-emerald-700">Completed and active</p>
               ) : (
                 <div className="mt-2">
                   <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">

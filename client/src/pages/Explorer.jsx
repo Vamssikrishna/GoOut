@@ -157,6 +157,24 @@ function LocationPinIcon({ className = '' }) {
   );
 }
 
+function SearchIcon({ className = '' }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="11" cy="11" r="7" />
+      <line x1="16.65" y1="16.65" x2="21" y2="21" />
+    </svg>
+  );
+}
+
 export default function Explorer() {
   const location = useLocation();
   const [userLocation, setUserLocation] = useState(() => readCachedUserLocation());
@@ -213,6 +231,8 @@ export default function Explorer() {
   const rerouteInFlightRef = useRef(false);
   const lastRerouteAtRef = useRef(0);
   const lastArrivalPromptAtRef = useRef(0);
+  const routeTrackedDistanceRef = useRef(0);
+  const routeLastTrackPointRef = useRef(null);
 
   const fetchCityName = useCallback(async (lat, lng) => {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return '';
@@ -785,6 +805,8 @@ export default function Explorer() {
       setArrivalRepromptUntilTs(0);
       lastArrivalPromptAtRef.current = 0;
         setLiveTrackingEnabled(true);
+        routeTrackedDistanceRef.current = 0;
+        routeLastTrackPointRef.current = { lat: origin.lat, lng: origin.lng, accuracy: 0 };
       setActiveRouteProfile(selectedProfile);
         const startMeters = haversineMeters(origin.lat, origin.lng, lat, lng);
         setInitialDistanceToDestination(startMeters);
@@ -1012,6 +1034,8 @@ export default function Explorer() {
     lastArrivalPromptAtRef.current = 0;
     setSavingEcoImpact(false);
     setLiveTrackingEnabled(false);
+    routeTrackedDistanceRef.current = 0;
+    routeLastTrackPointRef.current = null;
     setCompareRouteOverlays([]);
     setCompareVersus(null);
     setGreenEcoRoute(null);
@@ -1025,9 +1049,26 @@ export default function Explorer() {
       (p) => {
         const now = Date.now();
         const current = { lat: p.coords.latitude, lng: p.coords.longitude };
+        const accuracy = Number(p.coords?.accuracy);
         setLiveTrackingPoint(current);
         if (liveTrackingEnabled) {
           setUserLocation(current);
+        }
+        if (liveTrackingEnabled && destinationPoint && !hasReachedDestination) {
+          const prev = routeLastTrackPointRef.current;
+          const accOk = Number.isFinite(accuracy) ? accuracy <= 60 : true;
+          if (prev && accOk) {
+            const prevAcc = Number(prev.accuracy);
+            const prevAccOk = Number.isFinite(prevAcc) ? prevAcc <= 60 : true;
+            if (prevAccOk) {
+              const stepMeters = haversineMeters(prev.lat, prev.lng, current.lat, current.lng);
+              // Filter GPS jitter and impossible jumps while preserving walking motion.
+              if (stepMeters > 1.5 && stepMeters < 80) {
+                routeTrackedDistanceRef.current += stepMeters;
+              }
+            }
+          }
+          routeLastTrackPointRef.current = { lat: current.lat, lng: current.lng, accuracy };
         }
         const selectedRoute = Array.isArray(directionsRoutes) ? directionsRoutes[selectedDirectionsRouteIndex] : null;
         const routeLatLng = Array.isArray(selectedRoute?.geometryLatLng) ? selectedRoute.geometryLatLng : [];
@@ -1114,7 +1155,12 @@ export default function Explorer() {
     setPendingArrivalConfirm(false);
     setArrivalRepromptUntilTs(0);
     lastArrivalPromptAtRef.current = 0;
-    const walkedMeters = Math.max(0, initialDistanceToDestination ? Number(initialDistanceToDestination) - Number(meters) : 0);
+    const straightLineProgress = Math.max(
+      0,
+      initialDistanceToDestination ? Number(initialDistanceToDestination) - Number(meters) : 0
+    );
+    const trackedWalk = Math.max(0, Number(routeTrackedDistanceRef.current || 0));
+    const walkedMeters = Math.max(trackedWalk, straightLineProgress);
     const isLocal = destinationPoint?.kind === 'local' && destinationPoint?.businessId;
     if (isLocal) {
       setArrivedBusinessId(String(destinationPoint.businessId));
@@ -1387,14 +1433,15 @@ export default function Explorer() {
                   </button>
                 </div>
               )}
-              <div className="relative flex-1 min-w-[200px] goout-ai-live">
+              <div className="relative flex-1 min-w-[220px] goout-ai-live rounded-xl overflow-hidden">
+                <SearchIcon className="pointer-events-none absolute left-3 top-1/2 z-[1] h-4 w-4 -translate-y-1/2 text-emerald-200/90" />
                 <input
                   type="text"
                   value={categorySearch}
                   onChange={(e) => setCategorySearch(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && applySearch()}
                   placeholder="Vibe or place — Enter"
-                  className="w-full pr-10 px-4 py-2 border border-transparent rounded-lg bg-transparent text-slate-100 placeholder:text-emerald-200/75 focus:ring-2 focus:ring-goout-green focus:border-transparent"
+                  className="w-full rounded-xl border border-transparent bg-transparent py-2.5 pl-10 pr-12 text-sm font-medium text-slate-100 placeholder:text-emerald-200/70 focus:border-transparent focus:ring-2 focus:ring-emerald-400/70"
                 />
                 {categorySearch.trim() && (
                   <button
@@ -1406,7 +1453,7 @@ export default function Explorer() {
                       setConciergeHighlightBusinessId(null);
                       setConciergePanTo(null);
                     }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition"
+                    className="absolute right-2 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-emerald-300/20 bg-emerald-100/10 text-emerald-100/80 transition hover:border-emerald-300/40 hover:bg-emerald-100/20 hover:text-emerald-50"
                   >
                     ×
                   </button>

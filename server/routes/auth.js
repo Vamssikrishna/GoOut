@@ -13,6 +13,8 @@ import {
 
 const router = express.Router();
 const LOGIN_OTP_WINDOW_MS = 30 * 1000;
+const PASSWORD_POLICY_REGEX = /^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{6,}$/;
+const PASSWORD_POLICY_MESSAGE = 'Password must include at least 6 characters, 1 uppercase letter, 1 number, and 1 special symbol.';
 
 const generateToken = (user) =>
 jwt.sign(
@@ -64,14 +66,26 @@ function normalizeDiscoveryPreferencesBody(body) {
   };
 }
 
+function isStrongPassword(password) {
+  return PASSWORD_POLICY_REGEX.test(String(password || ''));
+}
+
 router.post('/register', [
 body('name').trim().notEmpty(),
 body('email').isEmail(),
-body('password').isLength({ min: 6 })],
+body('password').custom((value) => {
+  if (!isStrongPassword(value)) throw new Error(PASSWORD_POLICY_MESSAGE);
+  return true;
+})],
 async (req, res) => {
   try {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        error: errors.array()[0]?.msg || 'Invalid registration details.',
+        details: errors.array()
+      });
+    }
     const { name, email, password, role } = req.body;
     const nextRole = role || 'explorer';
     const interests = normalizeTags(req.body?.interests, 32, 80);
@@ -202,12 +216,15 @@ router.post('/forgot-password', [body('email').isEmail()], async (req, res) => {
 
 router.post('/reset-password', [
 body('token').notEmpty(),
-body('password').isLength({ min: 6 })],
+body('password').custom((value) => {
+  if (!isStrongPassword(value)) throw new Error(PASSWORD_POLICY_MESSAGE);
+  return true;
+})],
 async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({ error: 'Use a token and a password of at least 6 characters.' });
+      return res.status(400).json({ error: errors.array()[0]?.msg || PASSWORD_POLICY_MESSAGE });
     }
     const { token, password } = req.body;
     const hashed = hashToken(token);

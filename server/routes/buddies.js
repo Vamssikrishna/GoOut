@@ -10,7 +10,9 @@ import {
   getGenerativeModelForModelId,
   DEFAULT_GEMINI_MODEL,
   buildGeminiCandidateModels,
-  GEMINI_KEY_SCOPES
+  GEMINI_KEY_SCOPES,
+  isLikelyGeminiError,
+  formatGeminiUserMessage
 } from '../config/geminiConfig.js';
 
 const router = express.Router();
@@ -819,11 +821,14 @@ router.post('/generate-description', protect, async (req, res) => {
     const description = await generateGroupDescription(activity_trimmed, interests, meetingPlace);
     
     if (!description) {
-      return res.status(500).json({ error: 'Could not generate description. Please try again.' });
+      return res.status(503).json({ error: formatGeminiUserMessage(null) });
     }
     
     res.json({ description });
   } catch (err) {
+    if (isLikelyGeminiError(err)) {
+      return res.status(503).json({ error: formatGeminiUserMessage(err) });
+    }
     res.status(500).json({ error: err.message });
   }
 });
@@ -841,11 +846,14 @@ router.post('/generate-descriptions-preview', protect, async (req, res) => {
     const descriptions = await generateMultipleDescriptions(activity_trimmed, interests, meetingPlace, 3);
     
     if (!descriptions || descriptions.length === 0) {
-      return res.status(500).json({ error: 'Could not generate descriptions. Please try again.' });
+      return res.status(503).json({ error: formatGeminiUserMessage(null) });
     }
     
     res.json({ descriptions });
   } catch (err) {
+    if (isLikelyGeminiError(err)) {
+      return res.status(503).json({ error: formatGeminiUserMessage(err) });
+    }
     res.status(500).json({ error: err.message });
   }
 });

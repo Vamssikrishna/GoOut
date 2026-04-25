@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 const WEEK_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -105,6 +105,28 @@ export default function ExplorerCalendar({
       return !Number.isNaN(dt.getTime()) && dt.getFullYear() === year && dt.getMonth() === month;
     }).length;
   }, [plans, monthCursor]);
+
+  useEffect(() => {
+    if (!Array.isArray(plans) || plans.length === 0) return;
+    const upcomingOrFirst = [...plans]
+      .map((p) => {
+        const ts = new Date(p?.scheduledAt).getTime();
+        return Number.isFinite(ts) ? { p, ts } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.ts - b.ts);
+    if (!upcomingOrFirst.length) return;
+
+    const now = Date.now();
+    const target =
+      upcomingOrFirst.find((entry) => entry.ts >= now) ||
+      upcomingOrFirst[0];
+    const targetDate = new Date(target.ts);
+    const targetKey = toDateKey(targetDate);
+
+    setMonthCursor(new Date(targetDate.getFullYear(), targetDate.getMonth(), 1));
+    setSelectedDateKey(targetKey);
+  }, [plans]);
 
   return (
     <div className="space-y-4">

@@ -15,17 +15,21 @@ router.post('/chat', optionalProtect, async (req, res) => {
     let userInterests = [];
     let userDisplayName = null;
     let userActivitySnapshot = null;
+    let userProfileSnapshot = null;
+    let userVisitsSnapshot = [];
     if (req.user?._id) {
       const [u, visits] = await Promise.all([
         User.findById(req.user._id).
-          select('discoveryPreferences interests name greenStats carbonCredits weight socialPoints verified').
+          select('-password -passwordResetToken -passwordResetExpires -loginOtpHash -loginOtpExpires').
           lean(),
-        Visit.find({ userId: req.user._id }).select('distanceWalked').lean()
+        Visit.find({ userId: req.user._id }).lean()
       ]);
       discoveryPreferences = u?.discoveryPreferences || null;
       userInterests = Array.isArray(u?.interests) ? u.interests.map((s) => String(s || '').trim()).filter(Boolean).slice(0, 32) : [];
       const rawName = typeof u?.name === 'string' ? u.name.trim() : '';
       userDisplayName = rawName ? rawName.slice(0, 120) : null;
+      userProfileSnapshot = u || null;
+      userVisitsSnapshot = Array.isArray(visits) ? visits : [];
       const totalWalkM = (visits || []).reduce((s, v) => s + (Number(v?.distanceWalked) || 0), 0);
       const wKg = Number(u?.weight);
       userActivitySnapshot = {
@@ -51,7 +55,9 @@ router.post('/chat', optionalProtect, async (req, res) => {
       userInterests,
       userDisplayName,
       explorationRadiusM: Number(explorationRadiusM),
-      userActivitySnapshot
+      userActivitySnapshot,
+      userProfileSnapshot,
+      userVisitsSnapshot
     });
 
     if (result.error) {

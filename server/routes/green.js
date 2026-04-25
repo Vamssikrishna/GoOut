@@ -15,22 +15,74 @@ function businessEcoStrengthFromVisit(b) {
   return n;
 }
 
-function computeBadges({ totalDistanceM, localVisitsWithGreen, greenStats, carbonCredits }) {
-  const badges = [];
+function progressPct(current, target) {
+  const c = Math.max(0, Number(current) || 0);
+  const t = Math.max(1, Number(target) || 1);
+  return Math.min(100, Math.round(c / t * 100));
+}
+
+function computeVisitStreakDays(visits = []) {
+  const dayKeys = [...new Set(
+    (visits || [])
+      .map((v) => new Date(v.visitedAt || v.createdAt || Date.now()).toISOString().slice(0, 10))
+      .filter(Boolean)
+  )].sort();
+  if (!dayKeys.length) return 0;
+  let streak = 1;
+  for (let i = dayKeys.length - 1; i > 0; i -= 1) {
+    const curr = new Date(`${dayKeys[i]}T00:00:00Z`).getTime();
+    const prev = new Date(`${dayKeys[i - 1]}T00:00:00Z`).getTime();
+    const diffDays = Math.round((curr - prev) / (24 * 60 * 60 * 1000));
+    if (diffDays === 1) streak += 1;
+    else break;
+  }
+  return streak;
+}
+
+function computeBadges({ totalDistanceM, localVisitsWithGreen, totalCo2SavedGrams, carbonCredits, totalCalories, streakDays }) {
   const km = (Number(totalDistanceM) || 0) / 1000;
-  if (km >= 10) badges.push({ id: 'walk_10km', label: '10 km walked', earned: true });
-  else badges.push({ id: 'walk_10km', label: '10 km walked', earned: false, progress: Math.min(100, Math.round((km / 10) * 100)) });
-
-  if (localVisitsWithGreen >= 5) badges.push({ id: 'green_shops_5', label: '5 green local shops', earned: true });
-  else badges.push({ id: 'green_shops_5', label: '5 green local shops', earned: false, progress: Math.min(100, Math.round((localVisitsWithGreen / 5) * 100)) });
-
-  const co2g = Number(greenStats?.totalCO2Saved || 0);
-  if (co2g >= 5000) badges.push({ id: 'co2_5kg', label: '5 kg CO₂ avoided (cumulative)', earned: true });
-  else badges.push({ id: 'co2_5kg', label: '5 kg CO₂ avoided (cumulative)', earned: false, progress: Math.min(100, Math.round((co2g / 5000) * 100)) });
-
-  if (Number(carbonCredits || 0) >= 50) badges.push({ id: 'credits_50', label: '50+ carbon credits', earned: true });
-
-  return badges;
+  const credits = Number(carbonCredits || 0);
+  const co2g = Number(totalCo2SavedGrams || 0);
+  const kcal = Number(totalCalories || 0);
+  const streak = Number(streakDays || 0);
+  return [
+    {
+      id: 'walk_10km',
+      label: 'Trail Blazer · 10 km walked',
+      earned: km >= 10,
+      progress: progressPct(km, 10)
+    },
+    {
+      id: 'green_shops_5',
+      label: 'Local Green Hero · 5 eco local visits',
+      earned: Number(localVisitsWithGreen || 0) >= 5,
+      progress: progressPct(localVisitsWithGreen, 5)
+    },
+    {
+      id: 'co2_5kg',
+      label: 'CO2 Saver · 5 kg avoided',
+      earned: co2g >= 5000,
+      progress: progressPct(co2g, 5000)
+    },
+    {
+      id: 'credits_50',
+      label: 'Carbon Wallet · 50 credits',
+      earned: credits >= 50,
+      progress: progressPct(credits, 50)
+    },
+    {
+      id: 'burn_1500',
+      label: 'Active Explorer · 1500 kcal burned',
+      earned: kcal >= 1500,
+      progress: progressPct(kcal, 1500)
+    },
+    {
+      id: 'streak_7',
+      label: 'Consistency Streak · 7 days',
+      earned: streak >= 7,
+      progress: progressPct(streak, 7)
+    }
+  ];
 }
 
 /** Nearby explorers ranked by green activity (requires stored user locations). */
@@ -128,10 +180,17 @@ router.get('/dashboard', protect, async (req, res) => {
       populate('businessId', 'greenInitiatives ecoOptions').
       lean();
     const localVisits = visits.filter((v) => v.placeType !== 'public' && v.businessId);
-    const totalDistance = visits.reduce((s, v) => s + (v.distanceWalked || 0), 0);
+    const savedOnly = visits.filter((v) => v.ecoComparisonSaved);
+    const totalDistance = savedOnly.reduce((s, v) => s + Math.max(0, Number(v.distanceWalked || 0)), 0);
     const weight = user?.weight || 65;
-    const caloriesBurned = Math.round(totalDistance / 1000 * 0.75 * weight);
+    const caloriesBurned =
+      Math.round(savedOnly.reduce((s, v) => s + Math.max(0, Number(v.caloriesBurned || 0)), 0)) ||
+      Math.round(totalDistance / 1000 * 0.75 * weight);
+    const totalCo2SavedGrams = Math.round(savedOnly.reduce((s, v) => s + Math.max(0, Number(v.carCO2SavedGrams || 0)), 0));
+    const totalBikeCo2SavedGrams = Math.round(savedOnly.reduce((s, v) => s + Math.max(0, Number(v.bikeCO2SavedGrams || 0)), 0));
+    const totalCarbonCreditsEarned = Math.round(savedOnly.reduce((s, v) => s + Math.max(0, Number(v.carbonCreditsEarned || 0)), 0) * 10) / 10;
     const localGreenVisits = localVisits.filter((v) => businessEcoStrengthFromVisit(v.businessId) >= 4).length;
+    const streakDays = computeVisitStreakDays(savedOnly);
 
     const [community] = await Promise.all([
       User.aggregate([
@@ -150,22 +209,27 @@ router.get('/dashboard', protect, async (req, res) => {
     const badges = computeBadges({
       totalDistanceM: totalDistance,
       localVisitsWithGreen: localGreenVisits,
-      greenStats: user?.greenStats,
-      carbonCredits: user?.carbonCredits
+      totalCo2SavedGrams,
+      carbonCredits: user?.carbonCredits || totalCarbonCreditsEarned,
+      totalCalories: caloriesBurned,
+      streakDays
     });
 
     res.json({
       profile: {
         greenStats: user?.greenStats || {},
-        carbonCredits: user?.carbonCredits || 0,
+        carbonCredits: Math.max(Number(user?.carbonCredits || 0), totalCarbonCreditsEarned),
         weight
       },
       visitRollup: {
-        totalVisits: visits.length,
+        totalVisits: savedOnly.length,
         localVisits: localVisits.length,
         totalDistanceMeters: totalDistance,
         caloriesBurned,
-        co2WalkProxyKg: Math.round(totalDistance / 1000 * 0.1 * 100) / 100
+        co2SavedGrams: totalCo2SavedGrams,
+        bikeCo2SavedGrams: totalBikeCo2SavedGrams,
+        carbonCreditsEarned: totalCarbonCreditsEarned,
+        streakDays
       },
       badges,
       community: {

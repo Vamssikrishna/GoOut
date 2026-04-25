@@ -7,10 +7,12 @@ export default function ForgotPassword() {
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
   const { addToast } = useToast();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setErr('');
     setBusy(true);
     try {
       await api.post('/auth/forgot-password', { email });
@@ -21,10 +23,12 @@ export default function ForgotPassword() {
         message: 'If that email is registered, we sent reset instructions.'
       });
     } catch (res) {
+      const message = res.response?.data?.error || 'Try again later.';
+      setErr(message);
       addToast({
         type: 'error',
         title: 'Something went wrong',
-        message: res.response?.data?.error || 'Try again later.'
+        message
       });
     } finally {
       setBusy(false);
@@ -44,6 +48,11 @@ export default function ForgotPassword() {
           <p className="text-slate-600 text-sm mb-6">
             Enter your account email. If it&apos;s registered, we&apos;ll send a link to choose a new password.
           </p>
+          {err && (
+            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm font-medium leading-relaxed text-red-700 break-words">
+              {err}
+            </div>
+          )}
           {sent ?
           <p className="text-slate-700 text-sm">
               If <span className="font-medium">{email}</span> is registered, look for an email with a reset link. It

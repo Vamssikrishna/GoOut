@@ -1,4 +1,4 @@
-import { Outlet, NavLink } from 'react-router-dom';
+import { Outlet, NavLink, useLocation, useOutlet } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
@@ -9,6 +9,8 @@ function navPillClass({ isActive }) {
 }
 
 export default function Layout() {
+  const location = useLocation();
+  const outlet = useOutlet();
   const { user, logout } = useAuth();
   const { addToast } = useToast();
   const [darkMode, setDarkMode] = useState(() => {
@@ -52,6 +54,19 @@ export default function Layout() {
 
     return () => socket.disconnect();
   }, [addToast]);
+
+  const [cachedRoutes, setCachedRoutes] = useState([]);
+
+  useEffect(() => {
+    const key = location.pathname;
+    if (!outlet) return;
+    setCachedRoutes((prev) => {
+      if (prev.some((r) => r.key === key)) return prev;
+      const next = [...prev, { key, element: outlet }];
+      // Keep cache bounded to avoid unbounded memory growth.
+      return next.slice(-12);
+    });
+  }, [location.pathname, outlet]);
 
   return (
     <div className="goout-page-shell goout-app-mesh relative min-h-screen">
@@ -100,8 +115,15 @@ export default function Layout() {
       </header>
       <main className="relative z-10 w-full px-4 py-8 sm:px-6 lg:px-8 goout-grid-overlay motion-safe:goout-animate-in">
         <div className="mx-auto w-full max-w-[1240px]">
-          {/* No key={pathname} here — that remounted the entire outlet and destroyed the map on every nav. */}
-          <Outlet />
+          {cachedRoutes.map((route) =>
+          <section
+            key={route.key}
+            className={route.key === location.pathname ? 'block' : 'hidden'}
+            aria-hidden={route.key !== location.pathname}>
+              {route.element}
+            </section>
+          )}
+          {!cachedRoutes.length && <Outlet />}
         </div>
       </main>
     </div>);

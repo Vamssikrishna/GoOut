@@ -113,6 +113,274 @@ function normalizeInterests(interests) {
     .slice(0, 32);
 }
 
+function tokenizePreferenceText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 3 && !STOPWORDS.has(t));
+}
+
+function scoreTokenHits(textBlob, tokens = [], weight = 1) {
+  if (!textBlob || !tokens.length) return 0;
+  let score = 0;
+  for (const t of tokens) {
+    if (textBlob.includes(t)) score += weight;
+  }
+  return score;
+}
+
+function buildProfileAwareOrdering({
+  merchants = [],
+  publicRows = [],
+  mapPois = [],
+  discoveryPreferences = null,
+  userInterests = [],
+  rawMessage = '',
+  searchHint = ''
+}) {
+  const dp = normalizeDiscoveryPreferences(discoveryPreferences);
+  const interests = normalizeInterests(userInterests);
+  const preferTokens = [...new Set(dp.prefer.flatMap((x) => tokenizePreferenceText(x)).slice(0, 80))];
+  const avoidTokens = [...new Set(dp.avoid.flatMap((x) => tokenizePreferenceText(x)).slice(0, 80))];
+  const interestTokens = [...new Set(interests.flatMap((x) => tokenizePreferenceText(x)).slice(0, 100))];
+  const noteTokens = [...new Set(tokenizePreferenceText(dp.notes).slice(0, 120))];
+  const queryTokens = [...new Set(tokenizePreferenceText(`${rawMessage} ${searchHint}`).slice(0, 80))];
+
+  if (
+    preferTokens.length === 0 &&
+    avoidTokens.length === 0 &&
+    interestTokens.length === 0 &&
+    noteTokens.length === 0 &&
+    queryTokens.length === 0
+  ) {
+    return { merchants, publicRows, mapPois };
+  }
+
+  const scoreMerchant = (row) => {
+    const blob = [
+      row?.name,
+      row?.category,
+      row?.address,
+      row?.descriptionSnippet,
+      ...(Array.isArray(row?.tags) ? row.tags : []),
+      ...(Array.isArray(row?.greenInitiatives) ? row.greenInitiatives : [])
+    ]
+      .map((x) => String(x || '').toLowerCase())
+      .join(' ');
+
+    let score = 0;
+    score += scoreTokenHits(blob, preferTokens, 14);
+    score += scoreTokenHits(blob, interestTokens, 10);
+    score += scoreTokenHits(blob, noteTokens, 6);
+    score += scoreTokenHits(blob, queryTokens, 7);
+    score -= scoreTokenHits(blob, avoidTokens, 16);
+    if (row?.redPin) score += 6;
+    if (Number.isFinite(Number(row?.distanceMeters))) {
+      const d = Number(row.distanceMeters);
+      if (d <= 1200) score += 5;
+      else if (d <= 3500) score += 2;
+    }
+    return score;
+  };
+
+  const scorePublic = (row) => {
+    const blob = [
+      row?.name,
+      row?.category,
+      row?.address,
+      row?.descriptionSnippet
+    ]
+      .map((x) => String(x || '').toLowerCase())
+      .join(' ');
+
+    let score = 0;
+    score += scoreTokenHits(blob, preferTokens, 9);
+    score += scoreTokenHits(blob, interestTokens, 8);
+    score += scoreTokenHits(blob, noteTokens, 5);
+    score += scoreTokenHits(blob, queryTokens, 6);
+    score -= scoreTokenHits(blob, avoidTokens, 12);
+    if (Number.isFinite(Number(row?.distanceMeters))) {
+      const d = Number(row.distanceMeters);
+      if (d <= 1600) score += 3;
+    }
+    return score;
+  };
+
+  const merchantOrdered = [...merchants].sort((a, b) => {
+    const as = scoreMerchant(a);
+    const bs = scoreMerchant(b);
+    if (as !== bs) return bs - as;
+    const ad = Number.isFinite(Number(a?.distanceMeters)) ? Number(a.distanceMeters) : 1e9;
+    const bd = Number.isFinite(Number(b?.distanceMeters)) ? Number(b.distanceMeters) : 1e9;
+    return ad - bd;
+  });
+
+  const byPublicScore = (a, b) => {
+    const as = scorePublic(a);
+    const bs = scorePublic(b);
+    if (as !== bs) return bs - as;
+    const ad = Number.isFinite(Number(a?.distanceMeters)) ? Number(a.distanceMeters) : 1e9;
+    const bd = Number.isFinite(Number(b?.distanceMeters)) ? Number(b.distanceMeters) : 1e9;
+    return ad - bd;
+  };
+
+  return {
+    merchants: merchantOrdered,
+    publicRows: [...publicRows].sort(byPublicScore),
+    mapPois: [...mapPois].sort(byPublicScore)
+  };
+}
+
+const EMOTION_PATTERNS = Object.freeze({
+  bored: /\b(bored|boring|nothing to do|kill time|pass time|meh|dull)\b/i,
+  sad: /\b(sad|down|upset|depressed|heartbroken|low|feeling bad|not okay)\b/i,
+  happy: /\b(happy|great|awesome|excited|pumped|joyful|good mood|feeling good)\b/i,
+  stressed: /\b(stressed|anxious|overwhelmed|burnt out|burned out|tense)\b/i,
+  tired: /\b(tired|exhausted|drained|sleepy|low energy)\b/i,
+  lonely: /\b(lonely|alone|no one to hang|need company|want company)\b/i,
+  romantic: /\b(romantic|date vibe|cozy date|love vibe)\b/i,
+  flirty: /\b(flirty|hotty|hot|sexy|horny|spicy mood)\b/i,
+  angry: /\b(angry|mad|annoyed|irritated|frustrated)\b/i,
+  calm: /\b(calm|peaceful|chill|relaxed|zen)\b/i
+});
+
+function extractEmotionSignals(rawMessage, history = []) {
+  const current = String(rawMessage || '');
+  const userTurns = (Array.isArray(history) ? history : [])
+    .filter((h) => h?.role === 'user')
+    .map((h) => String(h?.content || ''))
+    .filter(Boolean)
+    .slice(-8);
+  const recent = userTurns.join('\n');
+
+  const currentEmotions = [];
+  const recentEmotions = [];
+  for (const [emotion, re] of Object.entries(EMOTION_PATTERNS)) {
+    if (re.test(current)) currentEmotions.push(emotion);
+    if (re.test(recent)) recentEmotions.push(emotion);
+  }
+
+  const uniqueCurrent = [...new Set(currentEmotions)];
+  const uniqueRecent = [...new Set(recentEmotions)];
+  const primary = uniqueCurrent[0] || uniqueRecent[0] || null;
+  const dynamicShift =
+    uniqueCurrent.length > 0 &&
+    uniqueRecent.length > 0 &&
+    !uniqueCurrent.some((e) => uniqueRecent.includes(e));
+
+  return {
+    current: uniqueCurrent.slice(0, 4),
+    recent: uniqueRecent.slice(0, 6),
+    primary,
+    dynamicShift
+  };
+}
+
+function moodKeywordScore(blob, keywords = []) {
+  if (!blob || !keywords.length) return 0;
+  let score = 0;
+  keywords.forEach((kw) => {
+    if (blob.includes(kw)) score += 1;
+  });
+  return score;
+}
+
+function merchantMoodScore(row, primaryMood) {
+  if (!row || !primaryMood) return 0;
+  const blob = [
+    row.name,
+    row.category,
+    row.descriptionSnippet,
+    ...(Array.isArray(row.tags) ? row.tags : []),
+    ...(Array.isArray(row.greenInitiatives) ? row.greenInitiatives : [])
+  ]
+    .map((x) => String(x || '').toLowerCase())
+    .join(' ');
+
+  switch (primaryMood) {
+    case 'bored':
+      return moodKeywordScore(blob, ['event', 'activity', 'music', 'arcade', 'market', 'hang', 'park']);
+    case 'sad':
+      return moodKeywordScore(blob, ['cozy', 'quiet', 'tea', 'bakery', 'garden', 'book', 'comfort']);
+    case 'happy':
+      return moodKeywordScore(blob, ['fun', 'dessert', 'music', 'park', 'cafe', 'brunch']);
+    case 'stressed':
+    case 'angry':
+      return moodKeywordScore(blob, ['quiet', 'calm', 'garden', 'tea', 'library', 'peace']);
+    case 'tired':
+      return moodKeywordScore(blob, ['coffee', 'tea', 'brunch', 'cozy', 'bakery']);
+    case 'lonely':
+      return moodKeywordScore(blob, ['cafe', 'community', 'group', 'lounge', 'market', 'park']);
+    case 'romantic':
+      return moodKeywordScore(blob, ['cozy', 'date', 'garden', 'sunset', 'dessert', 'lounge']);
+    case 'flirty':
+      return moodKeywordScore(blob, ['lounge', 'dessert', 'coffee', 'cozy', 'rooftop']);
+    case 'calm':
+      return moodKeywordScore(blob, ['quiet', 'tea', 'library', 'garden', 'nature']);
+    default:
+      return 0;
+  }
+}
+
+function publicMoodScore(row, primaryMood) {
+  if (!row || !primaryMood) return 0;
+  const blob = `${String(row.name || '').toLowerCase()} ${String(row.category || '').toLowerCase()}`;
+  switch (primaryMood) {
+    case 'bored':
+      return moodKeywordScore(blob, ['museum', 'monument', 'market', 'plaza', 'park']);
+    case 'sad':
+    case 'stressed':
+    case 'angry':
+    case 'calm':
+      return moodKeywordScore(blob, ['park', 'garden', 'lake', 'library', 'plaza']);
+    case 'happy':
+      return moodKeywordScore(blob, ['park', 'museum', 'plaza', 'landmark']);
+    case 'lonely':
+      return moodKeywordScore(blob, ['plaza', 'park', 'library', 'community']);
+    case 'romantic':
+    case 'flirty':
+      return moodKeywordScore(blob, ['garden', 'lake', 'viewpoint', 'plaza', 'park']);
+    case 'tired':
+      return moodKeywordScore(blob, ['library', 'park', 'plaza']);
+    default:
+      return 0;
+  }
+}
+
+function applyMoodAwareOrdering({ merchants = [], publicRows = [], mapPois = [], emotionSignals = null }) {
+  const primaryMood = String(emotionSignals?.primary || '').toLowerCase();
+  if (!primaryMood) return { merchants, publicRows, mapPois };
+  const moodBoost = emotionSignals?.dynamicShift ? 22 : 14;
+
+  const sortedMerchants = [...merchants].sort((a, b) => {
+    const as = merchantMoodScore(a, primaryMood) * moodBoost;
+    const bs = merchantMoodScore(b, primaryMood) * moodBoost;
+    if (as !== bs) return bs - as;
+    const aRed = a?.redPin ? 1 : 0;
+    const bRed = b?.redPin ? 1 : 0;
+    if (aRed !== bRed) return bRed - aRed;
+    const ad = Number.isFinite(Number(a?.distanceMeters)) ? Number(a.distanceMeters) : 1e9;
+    const bd = Number.isFinite(Number(b?.distanceMeters)) ? Number(b.distanceMeters) : 1e9;
+    return ad - bd;
+  });
+
+  const byPublic = (a, b) => {
+    const as = publicMoodScore(a, primaryMood) * moodBoost;
+    const bs = publicMoodScore(b, primaryMood) * moodBoost;
+    if (as !== bs) return bs - as;
+    const ad = Number.isFinite(Number(a?.distanceMeters)) ? Number(a.distanceMeters) : 1e9;
+    const bd = Number.isFinite(Number(b?.distanceMeters)) ? Number(b.distanceMeters) : 1e9;
+    return ad - bd;
+  };
+
+  return {
+    merchants: sortedMerchants,
+    publicRows: [...publicRows].sort(byPublic),
+    mapPois: [...mapPois].sort(byPublic)
+  };
+}
+
 function parseIntentSummary(rawMessage, budget, searchHint) {
   const t = String(rawMessage || '');
   const tl = t.toLowerCase();
@@ -387,6 +655,73 @@ function isHybridPlaceQuestion(message) {
   return dual || itineraryWords;
 }
 
+const GENERIC_DISCOVERY_WORDS = new Set([
+  'near', 'nearby', 'around', 'here', 'there', 'place', 'places', 'spot', 'spots',
+  'good', 'best', 'top', 'suggest', 'recommend', 'recommendation', 'visit', 'go', 'show',
+  'find', 'looking', 'want', 'need', 'today', 'now', 'area', 'me', 'local', 'public', 'map',
+  'shop', 'shops', 'store', 'stores', 'cafe', 'cafes', 'restaurant', 'restaurants'
+]);
+
+const BUDGET_ONLY_WORDS = new Set([
+  'budget', 'rupee', 'rupees', 'inr', 'rs', 'dollar', 'dollars', 'usd', 'price', 'prices',
+  'cheap', 'cheaper', 'cheapest', 'under', 'below', 'less', 'than', 'max', 'maximum', 'only'
+]);
+
+function extractDynamicQueryNeedles(rawMessage, searchHint) {
+  const base = `${String(rawMessage || '')} ${String(searchHint || '')}`.toLowerCase();
+  const tokens = base
+    .split(/[^a-z0-9]+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .filter((t) => t.length >= 3)
+    .filter((t) => !/^\d+$/.test(t))
+    .filter((t) => !STOPWORDS.has(t))
+    .filter((t) => !BUDGET_ONLY_WORDS.has(t))
+    .filter((t) => !GENERIC_DISCOVERY_WORDS.has(t));
+  return [...new Set(tokens)].slice(0, 8);
+}
+
+function rowMatchesDynamicNeedles(row, needles) {
+  if (!row || !needles?.length) return false;
+  const hay = [
+    row.name,
+    row.category,
+    row.address,
+    row.descriptionSnippet,
+    ...(Array.isArray(row.tags) ? row.tags : []),
+    ...(Array.isArray(row.greenInitiatives) ? row.greenInitiatives : [])
+  ]
+    .map((x) => String(x || '').toLowerCase())
+    .join(' ');
+  return needles.some((n) => hay.includes(n));
+}
+
+function seemsPlaceDiscoveryAsk(rawMessage) {
+  return /\b(find|looking|show|where|any|suggest|recommend|want|need|best|good|near|nearby|place|spot|shop|store|cafe|restaurant|park|library|museum|gym|salon|bar|pub|theater|theatre|mall|pharmacy|hospital|bookstore)\b/i.test(String(rawMessage || ''));
+}
+
+function isBudgetDominantQuery(rawMessage) {
+  const t = String(rawMessage || '').toLowerCase();
+  return /\b(budget|rupees?|inr|rs|dollars?|usd|under|below|less than|max|maximum|cheap|cheapest|price)\b/.test(t) || /\d{2,}/.test(t);
+}
+
+function buildNoExactMatchReply(rawMessage, merchantPayload, publicPayload, mapPoisPayload) {
+  const nearbyPublic = [...(publicPayload || []), ...(mapPoisPayload || [])].slice(0, 3);
+  const nearbyLocal = (merchantPayload || []).slice(0, 3);
+  const hints = [];
+  if (nearbyLocal.length) {
+    hints.push(`Local nearby right now: ${nearbyLocal.map((m) => m.name).join(', ')}.`);
+  }
+  if (nearbyPublic.length) {
+    hints.push(`Public nearby right now: ${nearbyPublic.map((p) => p.name).join(', ')}.`);
+  }
+  return [
+    `I could not find an exact match for "${String(rawMessage || '').trim()}" in your current map listings for this pin.`,
+    hints.join(' '),
+    'Try moving the map center or widening your search, then ask again.'
+  ].filter(Boolean).join(' ');
+}
+
 function haversineMeters(la1, lo1, la2, lo2) {
   const R = 6371e3;
   const phi1 = la1 * Math.PI / 180;
@@ -397,35 +732,76 @@ function haversineMeters(la1, lo1, la2, lo2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-/** If the model fixates on empty public data while we have merchants, prepend concrete picks. */
-function repairReplyIfPublicOnlyApology(reply, merchantPayload) {
-  if (!merchantPayload?.length) return String(reply || '');
-  const r = String(reply || '').trim();
-  if (!r) return r;
-  const mentionsMerchant = merchantPayload.some((m) => m.name && r.includes(m.name));
-  if (mentionsMerchant) return r;
-  const soundsLikePublicOnlySorry =
-    /\b(sorry|apolog|don'?t have|do not have|no public|without public|not have any public|no\s+parks?\s+listed|public\s+places?\s+listed|no\s+public\s+places?)\b/i.test(
-      r
-    ) && !/\b(red pin|merchant|goout|₹|rupee)\b/i.test(r);
-  if (!soundsLikePublicOnlySorry) return r;
-  const picks = merchantPayload
-    .slice(0, 4)
+function buildGroundedQuickPicks(merchantPayload = [], publicPayload = [], mapPoisPayload = []) {
+  const localLines = (merchantPayload || [])
+    .slice(0, 3)
     .map((m) => {
       const bits = [
         `${m.name} (${m.category})`,
         m.redPin ? 'Red Pin' : null,
-        m.distanceMeters != null ? `${Math.round(m.distanceMeters)}m away` : null,
+        Number.isFinite(Number(m.distanceMeters)) ? `${Math.round(Number(m.distanceMeters))}m` : null,
         Number(m.avgPrice) > 0 ? `~₹${m.avgPrice}` : m.isFree ? 'free' : null
       ].filter(Boolean);
       return `• ${bits.join(' · ')}`;
-    })
-    .join('\n');
-  return (
-    `Here are nearby GoOut merchants from your map:\n${picks}\n\n` +
-    `(Park listings did not load for this area — you can still use the pins above, or move the map to refresh.)\n\n` +
-    r
-  ).trim();
+    });
+  const publicRows = [...(publicPayload || []), ...(mapPoisPayload || [])];
+  const publicLines = publicRows
+    .slice(0, 2)
+    .map((p) => {
+      const bits = [
+        `${p.name} (${p.category || 'public'})`,
+        Number.isFinite(Number(p.distanceMeters)) ? `${Math.round(Number(p.distanceMeters))}m` : null
+      ].filter(Boolean);
+      return `• ${bits.join(' · ')}`;
+    });
+  return { localLines, publicLines };
+}
+
+/**
+ * Guardrail: if model claims data is unavailable while rows exist, auto-repair with grounded picks.
+ */
+function repairReplyIfPublicOnlyApology(reply, merchantPayload, publicPayload = [], mapPoisPayload = [], budget = null) {
+  if (!merchantPayload?.length && !(publicPayload?.length || mapPoisPayload?.length)) return String(reply || '');
+  const r = String(reply || '').trim();
+  if (!r) return r;
+  const catalog = [...(merchantPayload || []), ...(publicPayload || []), ...(mapPoisPayload || [])];
+  const mentionsKnownPlace = catalog.some((p) => p?.name && r.toLowerCase().includes(String(p.name).toLowerCase()));
+  const claimsNoLocal =
+    /\b(no|not|don'?t have|do not have|empty|missing).{0,36}(local (merchant|shop|cafe|business|listing|listings|data)|goout merchant)\b/i.test(r) ||
+    /\b(no local listings|no local merchants)\b/i.test(r);
+  const claimsNoPublic =
+    /\b(no|not|don'?t have|do not have|without).{0,30}(public (place|places|listings|data)|parks?)\b/i.test(r);
+  const falseNoLocal = claimsNoLocal && merchantPayload.length > 0;
+  const falseNoPublic = claimsNoPublic && (publicPayload.length > 0 || mapPoisPayload.length > 0);
+  if (!falseNoLocal && !falseNoPublic) return r;
+  if (mentionsKnownPlace && !falseNoLocal && !falseNoPublic) return r;
+
+  const { localLines, publicLines } = buildGroundedQuickPicks(merchantPayload, publicPayload, mapPoisPayload);
+  const blocks = [];
+  if (localLines.length) {
+    blocks.push(`Local nearby (grounded):\n${localLines.join('\n')}`);
+  }
+  if (publicLines.length) {
+    blocks.push(`Public nearby (grounded):\n${publicLines.join('\n')}`);
+  }
+  if (budget?.maxInr != null && budget.maxInr > 0) {
+    blocks.push(`Budget note: shown options are nearby grounded data; prioritize those close to your ₹${budget.maxInr} target.`);
+  }
+  return `${blocks.join('\n\n')}\n\n${r}`.trim();
+}
+
+function ensureDiscoveryReplyContainsGroundedNames(rawMessage, reply, merchantPayload, publicPayload = [], mapPoisPayload = []) {
+  const out = String(reply || '').trim();
+  if (!out) return out;
+  if (!seemsPlaceDiscoveryAsk(rawMessage)) return out;
+  const combined = [...(merchantPayload || []), ...(publicPayload || []), ...(mapPoisPayload || [])];
+  if (!combined.length) return out;
+  const hasKnownPlaceMention = combined.some((p) => p?.name && out.toLowerCase().includes(String(p.name).toLowerCase()));
+  if (hasKnownPlaceMention) return out;
+  const { localLines, publicLines } = buildGroundedQuickPicks(merchantPayload, publicPayload, mapPoisPayload);
+  const grounded = [...localLines, ...publicLines].slice(0, 3);
+  if (!grounded.length) return out;
+  return `${out}\n\nQuick grounded picks:\n${grounded.join('\n')}`.trim();
 }
 
 function formatOpeningHoursLine(b) {
@@ -554,9 +930,9 @@ function serializePublic(p) {
 
 function sanitizeMapContext(raw) {
   if (!raw || typeof raw !== 'object') return null;
-  const businesses = Array.isArray(raw.businesses) ? raw.businesses.slice(0, 45) : [];
-  const pois = Array.isArray(raw.pois) ? raw.pois.slice(0, 30) : [];
-  const offers = Array.isArray(raw.offers) ? raw.offers.slice(0, 18) : [];
+  const businesses = Array.isArray(raw.businesses) ? raw.businesses.slice(0, 1500) : [];
+  const pois = Array.isArray(raw.pois) ? raw.pois.slice(0, 2000) : [];
+  const offers = Array.isArray(raw.offers) ? raw.offers.slice(0, 300) : [];
   if (!businesses.length && !pois.length && !offers.length) return null;
   return { businesses, pois, offers };
 }
@@ -689,7 +1065,7 @@ function mergeMapContextFlashOffers(serverList, mapOffers, merchantPayload) {
  * live deals as the map feed (within the same radius cap).
  */
 async function fetchFlashOffersNear(coords, maxDistanceM) {
-  const d = Number(maxDistance);
+  const d = Number(maxDistanceM);
   if (!Array.isArray(coords) || coords.length < 2 || !Number.isFinite(d) || d < 50) return [];
   const businesses = await Business.find({
     location: {
@@ -859,10 +1235,13 @@ function formatContextForPrompt(
     discoveryPreferences = null,
     userInterests = [],
     parsedIntent = null,
+    emotionSignals = null,
     liveMapSyncLine = '',
     sessionSignals = [],
     explorationRadiusM = null,
-    userActivitySnapshot = null
+    userActivitySnapshot = null,
+    userProfileSnapshot = null,
+    userVisitsSnapshot = []
   }
 ) {
   const lines = [];
@@ -943,6 +1322,16 @@ function formatContextForPrompt(
       lines.push(`Body weight on file (kg): ${act.weightKg} (used for calorie estimates)`);
     }
   }
+  if (userProfileSnapshot && typeof userProfileSnapshot === 'object') {
+    lines.push('');
+    lines.push('FULL_USER_PROFILE_JSON (all available non-secret fields from database):');
+    lines.push(JSON.stringify(userProfileSnapshot));
+  }
+  if (Array.isArray(userVisitsSnapshot) && userVisitsSnapshot.length) {
+    lines.push('');
+    lines.push('FULL_USER_VISITS_JSON (visit records for this user):');
+    lines.push(JSON.stringify(userVisitsSnapshot));
+  }
   if (
     parsedIntent &&
     (parsedIntent.goalSignals?.length ||
@@ -953,6 +1342,15 @@ function formatContextForPrompt(
     lines.push('');
     lines.push(
       `PARSED_INTENT (server extraction — align picks): goals=[${parsedIntent.goalSignals.join(', ')}] vibes=[${parsedIntent.vibeSignals.join(', ')}] times=[${parsedIntent.timeSignals.join(', ')}] currencies=[${parsedIntent.currencyMentions.join(', ')}] zeroSpend=${parsedIntent.zeroSpend} maxInr=${parsedIntent.budgetMaxRupees ?? 'n/a'} anchor=GPS ~${Number.isFinite(Number(explorationRadiusM)) && Number(explorationRadiusM) >= 200 ? Math.round(Number(explorationRadiusM) / 1000) : 12}km`
+    );
+  }
+  if (emotionSignals && (emotionSignals.current?.length || emotionSignals.recent?.length)) {
+    lines.push('');
+    lines.push(
+      `EMOTION_CONTEXT (dynamic user mood): current=[${(emotionSignals.current || []).join(', ')}] recent=[${(emotionSignals.recent || []).join(', ')}] primary=${emotionSignals.primary || 'unknown'} moodShift=${Boolean(emotionSignals.dynamicShift)}`
+    );
+    lines.push(
+      'EMPATHY_RULES: Acknowledge the mood briefly, adapt suggestions to that feeling, and keep responses supportive. If moodShift=true, treat the latest mood as priority while still respecting recent context.'
     );
   }
   if (meetupSafety) {
@@ -1014,6 +1412,17 @@ function formatContextForPrompt(
       const d = p.distanceMeters != null ? ` ~${p.distanceMeters}m` : '';
       lines.push(`${i + 1}. ${p.name} | ${p.category} | ${p.lat},${p.lng}${d}`);
     });
+  }
+  lines.push('');
+  lines.push('FULL_LOCAL_BUSINESSES_JSON (complete local merchant payload in this radius):');
+  lines.push(JSON.stringify(merchants));
+  lines.push('');
+  lines.push('FULL_PUBLIC_PLACES_JSON (complete public place payload near this pin):');
+  lines.push(JSON.stringify(publicPlaces));
+  if (mapPois.length) {
+    lines.push('');
+    lines.push('FULL_MAP_POIS_JSON (all explorer map POI rows from client context):');
+    lines.push(JSON.stringify(mapPois));
   }
   if (walkingAppendix) lines.push(walkingAppendix);
   return lines.join('\n');
@@ -1127,6 +1536,7 @@ VOICE:
 - Keep replies tight: usually 2-5 lines. Skip fluff and repetitive caveats.
 - Be confident but honest. If data is missing, say it once and move to useful picks.
 LANGUAGE_ADAPTATION: Mirror the user's style (simple, casual, Hinglish-like phrases, or formal) while staying clear and respectful. Understand short/slang asks and map them to nearby intents.
+EMOTION_INTELLIGENCE: Read emotional cues from the user text and EMOTION_CONTEXT. Support moods like bored, sad, happy, stressed, lonely, romantic, flirty/"hotty", angry, tired, and mixed moods. Keep tone safe and respectful; avoid explicit sexual content even if user is flirty.
 HYBRID_QUESTIONS: If user asks combinations (e.g. "coffee + park", "shop and monument", "food then walk"), always provide a combined plan with sequence, route hint, and why each stop fits.
 ROUTE_FIRST: When route hints exist (WALKING_ROUTE / HYBRID_ROUTE_HINT), include them naturally in the answer.
 When USER_ACTIVITY appears in context, you may reference that user’s logged walks, calories, CO₂ and carbon credits naturally — never invent numbers beyond what is printed there.
@@ -1181,6 +1591,7 @@ function buildOfflineConciergeParsed({
   mapPoiCount = 0,
   userDisplayName = null
 }) {
+  const offlineNotice = 'This function is currently not available.';
   if (casualGreeting) {
     const first =
       typeof userDisplayName === 'string' && userDisplayName.trim() ?
@@ -1190,8 +1601,8 @@ function buildOfflineConciergeParsed({
     const hasPins = merchantPayload.length > 0;
     return {
       reply: hasPins ?
-        `${hey}Quick heads-up: AI is down right now. You still have ${merchantPayload.length} nearby GoOut spots on map — tap a pin and go.` :
-        `${hey}AI is down right now, and this pin has no nearby GoOut spots. Move the map a bit or zoom out.`,
+        `${hey}${offlineNotice} You still have ${merchantPayload.length} nearby GoOut spots on map — tap a pin and go.` :
+        `${hey}${offlineNotice} This pin has no nearby GoOut spots. Move the map a bit or zoom out.`,
       browseIntent: 'none',
       mapPan: null,
       highlightBusinessId: null,
@@ -1213,14 +1624,14 @@ function buildOfflineConciergeParsed({
 
   let reply = '';
   if (list.length) {
-    reply = `AI is down right now, but nearby GoOut picks are still here:\n${bullets}`;
+    reply = `${offlineNotice} Nearby GoOut picks are still here:\n${bullets}`;
   } else if (publicPayload.length) {
-    reply = `AI is down right now. No GoOut merchants in this radius, but nearby public spots are:\n${publicPayload
+    reply = `${offlineNotice} No GoOut merchants in this radius, but nearby public spots are:\n${publicPayload
       .slice(0, 6)
       .map((p, i) => `${i + 1}. ${p.name} (${p.category})`)
       .join('\n')}`;
   } else {
-    reply = 'AI is down and this radius is empty. Zoom out or move the pin, then ask again.';
+    reply = `${offlineNotice} This radius is empty. Zoom out or move the pin, then ask again.`;
   }
   if (publicPayload.length && list.length) {
     reply += `\n\nPublic picks nearby: ${publicPayload
@@ -1280,7 +1691,9 @@ export async function runConciergeChat({
   userInterests = [],
   userDisplayName = null,
   explorationRadiusM = null,
-  userActivitySnapshot = null
+  userActivitySnapshot = null,
+  userProfileSnapshot = null,
+  userVisitsSnapshot = []
 }) {
   const userLat = Number(lat);
   const userLng = Number(lng);
@@ -1301,6 +1714,7 @@ export async function runConciergeChat({
   const meetupSafety = isMeetupIntent(rawMessage);
   const searchHint = extractSearchHint(rawMessage);
   const parsedIntent = parseIntentSummary(rawMessage, budget, searchHint);
+  const emotionSignals = extractEmotionSignals(rawMessage, history);
   const casualGreeting = isCasualGreeting(rawMessage);
 
   const er = Number(explorationRadiusM);
@@ -1354,10 +1768,29 @@ export async function runConciergeChat({
     merchants = rankMerchantsByHint(applyLocalPrioritySorting(wideList), searchHint || rawMessage);
   }
 
+  const merchantsBeforeBudgetFilter = [...merchants];
+  let budgetMatchedMerchantCount = merchants.length;
+  let budgetFallbackUsed = false;
   if (budget.isZeroSpend) {
-    merchants = merchants.filter((b) => b.isFree === true || (b.avgPrice ?? 0) <= 0);
+    const filtered = merchants.filter((b) => b.isFree === true || (b.avgPrice ?? 0) <= 0);
+    budgetMatchedMerchantCount = filtered.length;
+    if (filtered.length > 0 || merchantsBeforeBudgetFilter.length === 0) {
+      merchants = filtered;
+    } else {
+      // Keep local knowledge visible when strict budget yields no exact local matches.
+      merchants = merchantsBeforeBudgetFilter;
+      budgetFallbackUsed = true;
+    }
   } else if (budget.maxInr != null && budget.maxInr > 0) {
-    merchants = merchants.filter((b) => (b.avgPrice ?? 0) <= budget.maxInr);
+    const filtered = merchants.filter((b) => (b.avgPrice ?? 0) <= budget.maxInr);
+    budgetMatchedMerchantCount = filtered.length;
+    if (filtered.length > 0 || merchantsBeforeBudgetFilter.length === 0) {
+      merchants = filtered;
+    } else {
+      // Keep local knowledge visible when strict budget yields no exact local matches.
+      merchants = merchantsBeforeBudgetFilter;
+      budgetFallbackUsed = true;
+    }
   }
 
   if (/\b(highest|most|rank|best|top)\b.*\b(sustain|green|eco)|sustainability\s+rating\b/i.test(rawMessage)) {
@@ -1438,7 +1871,7 @@ export async function runConciergeChat({
   }
 
   const mapMc = sanitizeMapContext(mapContext);
-  const mapPoisPayload = (mapMc?.pois || [])
+  let mapPoisPayload = (mapMc?.pois || [])
     .map((p) => serializeMapContextPoi(p, userLat, userLng))
     .filter(Boolean);
 
@@ -1452,7 +1885,78 @@ export async function runConciergeChat({
     merchantPayload
   );
 
-  const publicPayload = publicSpaces.map(serializePublic);
+  let publicPayload = publicSpaces.map(serializePublic);
+  const moodOrderedPayload = applyMoodAwareOrdering({
+    merchants: merchantPayload,
+    publicRows: publicPayload,
+    mapPois: mapPoisPayload,
+    emotionSignals
+  });
+  merchantPayload = moodOrderedPayload.merchants;
+  publicPayload = moodOrderedPayload.publicRows;
+  mapPoisPayload = moodOrderedPayload.mapPois;
+
+  const profileOrderedPayload = buildProfileAwareOrdering({
+    merchants: merchantPayload,
+    publicRows: publicPayload,
+    mapPois: mapPoisPayload,
+    discoveryPreferences,
+    userInterests,
+    rawMessage,
+    searchHint
+  });
+  merchantPayload = profileOrderedPayload.merchants;
+  publicPayload = profileOrderedPayload.publicRows;
+  mapPoisPayload = profileOrderedPayload.mapPois;
+
+  const dynamicNeedles = extractDynamicQueryNeedles(rawMessage, searchHint);
+  if (!casualGreeting && dynamicNeedles.length > 0 && seemsPlaceDiscoveryAsk(rawMessage) && !isBudgetDominantQuery(rawMessage)) {
+    const localMatches = merchantPayload.filter((m) => rowMatchesDynamicNeedles(m, dynamicNeedles));
+    const publicMatches = [...publicPayload, ...mapPoisPayload].filter((p) => rowMatchesDynamicNeedles(p, dynamicNeedles));
+    if (localMatches.length === 0 && publicMatches.length === 0) {
+      const nearest =
+        merchantPayload.find((m) => Number.isFinite(m?.lat) && Number.isFinite(m?.lng)) ||
+        [...publicPayload, ...mapPoisPayload].find((p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lng)) ||
+        null;
+      const mapPan = nearest ? { lat: Number(nearest.lat), lng: Number(nearest.lng) } : null;
+      const walkDistanceMeters =
+        nearest && Number.isFinite(userLat) && Number.isFinite(userLng) ?
+          Math.round(haversineMeters(userLat, userLng, Number(nearest.lat), Number(nearest.lng))) :
+          null;
+      return {
+        reply: buildNoExactMatchReply(rawMessage, merchantPayload, publicPayload, mapPoisPayload),
+        mapPan,
+        highlightBusinessId: null,
+        walkDistanceMeters,
+        carbonCreditsNudge: null,
+        nearby: {
+          local: merchantPayload.slice(0, 60),
+          public: publicPayload.slice(0, 60),
+          mapPois: mapPoisPayload.slice(0, 60)
+        },
+        meta: {
+          budgetMaxRupees: budget.maxInr,
+          budgetNote: budget.note,
+          isZeroSpend: budget.isZeroSpend,
+          meetupSafety,
+          greenMode,
+          merchantCount: merchantPayload.length,
+          publicSpaceCount: publicPayload.length,
+          mapPoiCount: mapPoisPayload.length,
+          mapExplorer: {
+            merchantsFromClient: mapMc?.businesses?.length || 0,
+            poisFromClient: mapPoisPayload.length,
+            offersFromClient: mapMc?.offers?.length || 0
+          },
+          geminiModel: null,
+          offline: false,
+          browseIntent: merchantPayload.length && (publicPayload.length || mapPoisPayload.length) ? 'both' : merchantPayload.length ? 'local' : 'public',
+          parsedIntent,
+          dynamicQueryGuardNoMatch: true
+        }
+      };
+    }
+  }
 
   if (!casualGreeting && isOutOfScopePurchase(rawMessage)) {
     const browseIntent = 'none';
@@ -1549,9 +2053,9 @@ export async function runConciergeChat({
 
   const modelId = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
 
-  const forPromptMerchants = merchantPayload.slice(0, casualGreeting ? 12 : 36);
-  const forPromptPublic = publicPayload.slice(0, casualGreeting ? 0 : 40);
-  const forPromptPublicWithMapPois = [...forPromptPublic, ...mapPoisPayload.slice(0, 24)];
+  const forPromptMerchants = casualGreeting ? merchantPayload.slice(0, 48) : merchantPayload;
+  const forPromptPublic = casualGreeting ? [] : publicPayload;
+  const forPromptPublicWithMapPois = [...forPromptPublic, ...mapPoisPayload];
 
   const walkingAppendix = casualGreeting ?
     '' :
@@ -1566,6 +2070,11 @@ export async function runConciergeChat({
   }
 
   const contextNotes = [];
+  if (budgetFallbackUsed) {
+    contextNotes.push(
+      `Budget filter note: no exact local merchant matched the strict cap (${budget.isZeroSpend ? '₹0/free only' : `≤₹${budget.maxInr}`}) in this radius. Use closest local alternatives from LOCAL_MERCHANTS and clearly mark them as over budget, while still suggesting free/public options.`
+    );
+  }
   if (mentionsNamedWorldCity(rawMessage)) {
     contextNotes.push(
       'NOTE: User may reference a distant city; all merchant/public rows are ONLY near their current map coordinates—say that explicitly if needed.'
@@ -1605,10 +2114,13 @@ export async function runConciergeChat({
     discoveryPreferences,
     userInterests,
     parsedIntent,
+    emotionSignals,
     liveMapSyncLine,
     sessionSignals,
     explorationRadiusM: maxMerchantRadiusM,
-    userActivitySnapshot
+    userActivitySnapshot,
+    userProfileSnapshot,
+    userVisitsSnapshot
   });
 
   let userBlock = `${contextText}\n\nUser message:\n${rawMessage}`;
@@ -1712,8 +2224,9 @@ export async function runConciergeChat({
     usedOffline = true;
   }
 
-  if (merchantPayload.length > 0 && typeof parsed.reply === 'string') {
-    parsed.reply = repairReplyIfPublicOnlyApology(parsed.reply, merchantPayload);
+  if (typeof parsed.reply === 'string') {
+    parsed.reply = repairReplyIfPublicOnlyApology(parsed.reply, merchantPayload, publicPayload, mapPoisPayload, budget);
+    parsed.reply = ensureDiscoveryReplyContainsGroundedNames(rawMessage, parsed.reply, merchantPayload, publicPayload, mapPoisPayload);
   }
 
   let walkDistanceMeters =
@@ -1782,6 +2295,8 @@ export async function runConciergeChat({
     budgetMaxRupees: budget.maxInr,
     budgetNote: budget.note,
     isZeroSpend: budget.isZeroSpend,
+    budgetMatchedMerchantCount,
+    budgetFallbackUsed,
     meetupSafety,
     greenMode,
     merchantCount: merchantPayload.length,
@@ -1792,10 +2307,17 @@ export async function runConciergeChat({
       poisFromClient: mapPoisPayload.length,
       offersFromClient: mapMc?.offers?.length || 0
     },
+    personalization: {
+      interestsCount: normalizeInterests(userInterests).length,
+      preferCount: normalizeDiscoveryPreferences(discoveryPreferences).prefer.length,
+      avoidCount: normalizeDiscoveryPreferences(discoveryPreferences).avoid.length,
+      hasNotes: Boolean(normalizeDiscoveryPreferences(discoveryPreferences).notes)
+    },
     geminiModel: usedOffline ? null : usedModelId || modelId,
     offline: usedOffline,
     browseIntent,
-    parsedIntent
+    parsedIntent,
+    emotionSignals
   };
 
   if (geminiError && usedOffline) {

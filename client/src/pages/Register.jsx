@@ -3,8 +3,27 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
+function EyeIcon({ open = false, className = '' }) {
+  if (open) {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+      <circle cx="12" cy="12" r="3" />
+      <line x1="4" y1="20" x2="20" y2="4" />
+    </svg>
+  );
+}
+
 export default function Register() {
   const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+  const passwordPolicy = /^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{6,}$/;
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -14,11 +33,13 @@ export default function Register() {
   const [avoid, setAvoid] = useState('');
   const [err, setErr] = useState('');
   const [step, setStep] = useState(1);
+  const [showPassword, setShowPassword] = useState(false);
   const { register } = useAuth();
   const { addToast } = useToast();
   const navigate = useNavigate();
   const normalizedEmail = email.trim();
   const isEmailInvalid = normalizedEmail.length > 0 && !emailPattern.test(normalizedEmail);
+  const isPasswordInvalid = password.length > 0 && !passwordPolicy.test(password);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -27,6 +48,10 @@ export default function Register() {
     if (step === 1) {
       if (!emailPattern.test(normalizedEmail)) {
         setErr('Enter a valid email address.');
+        return;
+      }
+      if (!passwordPolicy.test(password)) {
+        setErr('Password must include at least 6 characters, 1 uppercase letter, 1 number, and 1 special symbol.');
         return;
       }
       setEmail(normalizedEmail);
@@ -76,7 +101,11 @@ export default function Register() {
             {step === 1 ? 'Create account' : 'Set your preferences'}
           </h1>
           <form onSubmit={handleSubmit} className="space-y-4">
-            {err && <div className="p-3 rounded-lg text-sm border border-red-300/50 bg-red-500/15 text-red-100">{err}</div>}
+            {err && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm font-medium leading-relaxed text-red-700 break-words">
+                {err}
+              </div>
+            )}
             
             {step === 1 ? (
               <>
@@ -85,8 +114,24 @@ export default function Register() {
                 <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required
                   className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent goout-neon-input" />
                 {isEmailInvalid && <p className="text-xs text-red-600 -mt-2">Enter a valid email address.</p>}
-                <input type="password" placeholder="Password (min 6 chars)" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6}
-                  className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent goout-neon-input" />
+                <div className="relative">
+                  <input type={showPassword ? 'text' : 'password'} placeholder="Password (6+ chars, A-Z, 0-9, symbol)" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6}
+                    title="At least 6 characters, 1 uppercase letter, 1 number, and 1 special symbol"
+                    className="w-full px-4 py-3 pr-11 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent goout-neon-input" />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                  >
+                    <EyeIcon open={showPassword} className="h-4 w-4" />
+                  </button>
+                </div>
+                {isPasswordInvalid && (
+                  <p className="text-xs text-red-600 -mt-2">
+                    Use at least 6 characters with 1 uppercase letter, 1 number, and 1 special symbol.
+                  </p>
+                )}
                 <div>
                   <label className="block text-sm text-slate-600 mb-1">I am a</label>
                   <select value={role} onChange={(e) => setRole(e.target.value)}

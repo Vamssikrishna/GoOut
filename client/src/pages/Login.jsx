@@ -3,6 +3,24 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
+function EyeIcon({ open = false, className = '' }) {
+  if (open) {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+      <circle cx="12" cy="12" r="3" />
+      <line x1="4" y1="20" x2="20" y2="4" />
+    </svg>
+  );
+}
+
 export default function Login() {
   const OTP_WINDOW_SECONDS = 30;
   const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -13,6 +31,7 @@ export default function Login() {
   const [step, setStep] = useState('credentials');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [otpSecondsLeft, setOtpSecondsLeft] = useState(OTP_WINDOW_SECONDS);
   const { login, verifyLoginOtp } = useAuth();
   const { addToast } = useToast();
@@ -132,7 +151,11 @@ export default function Login() {
               <h1 className="font-display text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">Welcome back</h1>
               <p className="mt-2 mb-7 text-sm text-slate-600 leading-relaxed">Sign in to sync your map, buddies, and deals.</p>
               <form onSubmit={handleCredentials} className="space-y-4">
-                {err && <div className="p-3 rounded-lg text-sm border border-red-300/50 bg-red-500/15 text-red-100">{err}</div>}
+                {err && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm font-medium leading-relaxed text-red-700 break-words">
+                    {err}
+                  </div>
+                )}
                 <input
                 type="email"
                 placeholder="Email"
@@ -143,14 +166,25 @@ export default function Login() {
                 className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent goout-neon-input" />
                 {isEmailInvalid && <p className="text-xs text-red-600 -mt-2">Enter a valid email address.</p>}
               
-                <input
-                type="password"
-                placeholder="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                autoComplete="current-password"
-                className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent goout-neon-input" />
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    autoComplete="current-password"
+                    className="w-full px-4 py-3 pr-11 rounded-lg border border-slate-200 focus:ring-2 focus:ring-goout-green focus:border-transparent goout-neon-input"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                  >
+                    <EyeIcon open={showPassword} className="h-4 w-4" />
+                  </button>
+                </div>
               
                 <div className="flex justify-end">
                   <Link to="/forgot-password" className="text-sm text-goout-green font-medium hover:underline">
@@ -181,7 +215,11 @@ export default function Login() {
                 {isOtpExpired ? 'Code expired.' : `Time left: ${otpCountdownLabel}`}
               </p>
               <form onSubmit={handleOtp} className="space-y-4">
-                {err && <div className="p-3 rounded-lg text-sm border border-red-300/50 bg-red-500/15 text-red-100">{err}</div>}
+                {err && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm font-medium leading-relaxed text-red-700 break-words">
+                    {err}
+                  </div>
+                )}
                 <input
                 type="text"
                 inputMode="numeric"

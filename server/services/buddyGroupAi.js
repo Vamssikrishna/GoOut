@@ -14,6 +14,47 @@ function safeJson(raw) {
   }
 }
 
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`timeout:${ms}`)), ms);
+    })
+  ]);
+}
+
+function normalizeInterests(interests = []) {
+  return Array.isArray(interests)
+    ? interests
+        .map((x) => String(x || '').trim())
+        .filter(Boolean)
+        .slice(0, 6)
+    : [];
+}
+
+function compactText(value, max = 160) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+
+function buildFastDescription(activity, interests = [], meetingPlace = '', variant = 0) {
+  const act = compactText(activity, 80);
+  const place = compactText(meetingPlace, 50);
+  const tags = normalizeInterests(interests);
+  const tone = [
+    'Easy vibe, good people, and a clear plan.',
+    'Friendly pace, open to all levels, and zero pressure.',
+    'Come as you are and explore together.',
+    'Low-pressure meetup with room to connect.',
+    'Simple plan, social energy, and good local vibes.'
+  ][variant % 5];
+  const interestBit = tags.length ? ` Focus: ${tags.slice(0, 2).join(' + ')}.` : '';
+  const placeBit = place ? ` Meet at ${place}.` : '';
+  return compactText(`${act}${placeBit} ${tone}${interestBit}`, 160);
+}
+
 /**
  * Generate a unique, engaging description for a buddy group based on the activity.
  * Uses Gemini AI to create personalized group descriptions.
@@ -27,14 +68,9 @@ export async function generateGroupDescription(activity, interests = [], meeting
   if (!activityStr) return null;
 
   const genAI = createGeminiClient(GEMINI_KEY_SCOPES.BUDDIES_MATCHING);
-  if (!genAI) return null;
+  if (!genAI) return buildFastDescription(activityStr, interests, meetingPlace);
 
-  const interestsList = Array.isArray(interests)
-    ? interests
-        .map((x) => String(x || '').trim())
-        .filter(Boolean)
-        .slice(0, 8)
-    : [];
+  const interestsList = normalizeInterests(interests);
 
   const placeContext = meetingPlace ? ` at ${meetingPlace}` : '';
   const interestContext = interestsList.length ? ` (interests: ${interestsList.join(', ')})` : '';
@@ -52,31 +88,27 @@ Generate a 1-2 sentence description that:
 Return strict JSON only:
 {"description":"text here"}`;
 
-  const candidates = buildGeminiCandidateModels(process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL);
-  for (const modelId of candidates) {
-    try {
-      const model = getGenerativeModelForModelId(genAI, modelId, {
-        generationConfig: {
-          temperature: 0.8,
-          maxOutputTokens: 200,
-          responseMimeType: 'application/json'
-        }
-      });
-      if (!model) continue;
-
-      const result = await model.generateContent(prompt);
-      const parsed = safeJson(result?.response?.text?.() || '');
-      if (parsed?.description && typeof parsed.description === 'string') {
-        const desc = parsed.description.trim().slice(0, 160);
-        if (desc.length > 10) return desc;
+  // Speed-first path: try one model with tight timeout; fallback immediately.
+  const modelId = buildGeminiCandidateModels(process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL)[0];
+  try {
+    const model = getGenerativeModelForModelId(genAI, modelId, {
+      generationConfig: {
+        temperature: 0.75,
+        maxOutputTokens: 140,
+        responseMimeType: 'application/json'
       }
-    } catch (err) {
-      console.error(`[BuddyGroupAI] Error with model ${modelId}:`, err.message);
-      // Try next model
+    });
+    if (!model) return buildFastDescription(activityStr, interestsList, meetingPlace);
+    const result = await withTimeout(model.generateContent(prompt), 1800);
+    const parsed = safeJson(result?.response?.text?.() || '');
+    if (parsed?.description && typeof parsed.description === 'string') {
+      const desc = compactText(parsed.description, 160);
+      if (desc.length > 10) return desc;
     }
+  } catch (err) {
+    console.error(`[BuddyGroupAI] Error with model ${modelId}:`, err.message);
   }
-
-  return null;
+  return buildFastDescription(activityStr, interestsList, meetingPlace);
 }
 
 /**
@@ -88,6 +120,10 @@ Return strict JSON only:
  */
 export async function generateMultipleDescriptions(activity, interests = [], meetingPlace = '', count = 3) {
   const descriptions = [];
+  const safeCount = Math.max(1, Math.min(Number(count) || 3, 5));
+  const activityStr = compactText(activity, 120);
+  const interestList = normalizeInterests(interests);
+  if (!activityStr) return [];
   
   // Generate descriptions with different prompts
   const prompts = [
@@ -118,38 +154,40 @@ Return JSON: {"description":"text"}`,
   ];
 
   const genAI = createGeminiClient(GEMINI_KEY_SCOPES.BUDDIES_MATCHING);
-  if (!genAI) return [];
-
-  const candidates = buildGeminiCandidateModels(process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL);
-
-  for (let i = 0; i < Math.min(count, prompts.length); i++) {
-    const { prompt: promptText, temperature } = prompts[i];
-    
-    for (const modelId of candidates) {
-      try {
-        const model = getGenerativeModelForModelId(genAI, modelId, {
-          generationConfig: {
-            temperature,
-            maxOutputTokens: 200,
-            responseMimeType: 'application/json'
-          }
-        });
-        if (!model) continue;
-
-        const result = await model.generateContent(promptText);
-        const parsed = safeJson(result?.response?.text?.() || '');
-        if (parsed?.description && typeof parsed.description === 'string') {
-          const desc = parsed.description.trim().slice(0, 160);
-          if (desc.length > 10) {
-            descriptions.push(desc);
-            break;
-          }
-        }
-      } catch (err) {
-        console.error(`[BuddyGroupAI] Multi-gen error with model ${modelId}:`, err.message);
-      }
+  if (!genAI) {
+    for (let i = 0; i < safeCount; i++) {
+      descriptions.push(buildFastDescription(activityStr, interestList, meetingPlace, i));
     }
+    return descriptions;
   }
 
-  return descriptions;
+  // Fast mode for preview: only first candidate model + short timeout.
+  const modelId = buildGeminiCandidateModels(process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL)[0];
+  for (let i = 0; i < Math.min(safeCount, prompts.length); i++) {
+    const { prompt: promptText, temperature } = prompts[i];
+    try {
+      const model = getGenerativeModelForModelId(genAI, modelId, {
+        generationConfig: {
+          temperature,
+          maxOutputTokens: 140,
+          responseMimeType: 'application/json'
+        }
+      });
+      if (!model) throw new Error('missing-model');
+      const result = await withTimeout(model.generateContent(promptText), 1800);
+      const parsed = safeJson(result?.response?.text?.() || '');
+      if (parsed?.description && typeof parsed.description === 'string') {
+        const desc = compactText(parsed.description, 160);
+        if (desc.length > 10) {
+          descriptions.push(desc);
+          continue;
+        }
+      }
+    } catch (err) {
+      console.error(`[BuddyGroupAI] Multi-gen error with model ${modelId}:`, err.message);
+    }
+    descriptions.push(buildFastDescription(activityStr, interestList, meetingPlace, i));
+  }
+
+  return [...new Set(descriptions)].slice(0, safeCount);
 }

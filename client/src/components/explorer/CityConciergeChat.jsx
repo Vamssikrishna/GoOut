@@ -59,7 +59,11 @@ function buildMapContextPayload(mc) {
     description: typeof b.description === 'string' ? b.description.slice(0, 200) : undefined,
     distanceMeters: typeof b.distance === 'number' ? b.distance : b.distanceMeters,
     openingHours: b.openingHours,
-    menuCatalogFileUrl: typeof b.menuCatalogFileUrl === 'string' ? b.menuCatalogFileUrl.slice(0, 400) : undefined
+    menuCatalogFileUrl: typeof b.menuCatalogFileUrl === 'string' ? b.menuCatalogFileUrl : undefined,
+    ecoOptions: b.ecoOptions,
+    localKarmaScore: b.localKarmaScore,
+    carbonWalkIncentive: b.carbonWalkIncentive,
+    distance: b.distance
   });
   const slimPoi = (p) => ({
     id: p.id,
@@ -67,19 +71,25 @@ function buildMapContextPayload(mc) {
     category: p.category,
     lat: p.lat,
     lng: p.lng,
-    distanceMeters: p.distanceMeters
+    distanceMeters: p.distanceMeters,
+    address: p.address,
+    rating: p.rating,
+    source: p.source,
+    placeId: p.placeId || p.place_id
   });
   const slimOffer = (o) => ({
     _id: o._id,
     title: o.title,
     offerPrice: o.offerPrice,
     validUntil: o.validUntil,
-    businessId: o.businessId
+    businessId: o.businessId,
+    createdAt: o.createdAt,
+    isActive: o.isActive
   });
   return {
-    businesses: (mc.businesses || []).slice(0, 45).map(slimBiz),
-    pois: (mc.pois || []).slice(0, 30).map(slimPoi),
-    offers: (mc.offers || []).slice(0, 18).map(slimOffer)
+    businesses: (mc.businesses || []).map(slimBiz),
+    pois: (mc.pois || []).map(slimPoi),
+    offers: (mc.offers || []).map(slimOffer)
   };
 }
 
@@ -462,19 +472,32 @@ export default function CityConciergeChat({
               <CloseIcon className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 text-sm">
+          <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 text-sm bg-gradient-to-b from-white via-slate-50/40 to-emerald-50/30">
             {messages.map((m, i) => (
               <div
                 key={m.id || `${i}`}
-                className={`rounded-xl px-3 py-2 max-w-[98%] ${m.role === 'user' ? 'bg-goout-green text-white ml-auto' : 'bg-emerald-50/80 text-slate-800 border border-emerald-200/70'}`}
+                className={`max-w-[96%] px-3 py-2.5 rounded-2xl shadow-sm backdrop-blur-[1px] transition-all duration-200 ${
+                  m.role === 'user' ?
+                    'ml-auto border border-emerald-400/25 bg-gradient-to-br from-goout-green via-emerald-600 to-emerald-700 text-white shadow-emerald-500/25' :
+                    'mr-auto border border-slate-200/90 bg-white/95 text-slate-800'
+                }`}
               >
-                <div className="whitespace-pre-wrap text-sm">{m.content}</div>
+                <div className={`mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                  m.role === 'user' ? 'text-emerald-100/90' : 'text-emerald-700'
+                }`}>
+                  {m.role === 'user' ? 'You' : 'Concierge'}
+                </div>
+                <div className={`whitespace-pre-wrap text-sm leading-relaxed ${
+                  m.role === 'user' ? 'text-white/95' : 'text-slate-700'
+                }`}>
+                  {m.content}
+                </div>
                 {m.role === 'assistant' && renderAssistantExtras(m)}
               </div>
             ))}
             {loading && (
-              <div className="rounded-xl px-3 py-2 bg-slate-100 border border-slate-200 text-slate-800 text-sm animate-pulse">
-                Thinking…
+              <div className="mr-auto w-fit rounded-2xl border border-emerald-200 bg-emerald-50/90 px-3 py-2 text-slate-800 text-sm shadow-sm animate-pulse">
+                Concierge is thinking...
               </div>
             )}
             <div ref={bottomRef} />

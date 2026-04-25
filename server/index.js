@@ -24,6 +24,7 @@ import compareRoutes from './routes/compare.js';
 import greenRoutes from './routes/green.js';
 import conciergeRoutes from './routes/concierge.js';
 import uploadRoutes from './routes/uploads.js';
+import placePhotosRoutes from './routes/placePhotos.js';
 import { setupSocketHandlers } from './socket/handlers.js';
 import Business from './models/Business.js';
 import { runBuddyMeetupReminderSweep } from './services/buddyReminderService.js';
@@ -102,6 +103,7 @@ app.use('/api/compare', compareRoutes);
 app.use('/api/green', greenRoutes);
 app.use('/api/concierge', conciergeRoutes);
 app.use('/api/uploads', uploadRoutes);
+app.use('/api/place-photos', placePhotosRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', message: 'GoOut API running' }));
 

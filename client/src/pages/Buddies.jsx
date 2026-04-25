@@ -63,6 +63,14 @@ function mergeUniqueGroups(primary, secondary) {
   return [...byId.values()];
 }
 
+function isPairHangoutRecord(group) {
+  if (!group) return false;
+  if (String(group?.inviteType || '').toLowerCase() === 'pair') return true;
+  if (Number(group?.maxMembers) === 2) return true;
+  if (group?.inviteTargetUserId) return true;
+  return false;
+}
+
 export default function Buddies() {
   const { user, updateUser } = useAuth();
   const userId = String(user?.id || user?._id || '');
@@ -161,7 +169,8 @@ export default function Buddies() {
       setPendingInvites(Array.isArray(invitesRes.data) ? invitesRes.data : []);
       
       // Sent requests are pair hangouts created by user that target hasn't accepted
-      const sent = allGroups.filter(g =>
+      const sent = allGroups.filter((g) =>
+        isPairHangoutRecord(g) &&
         String(g.creatorId?._id || g.creatorId) === userId && 
         g.inviteTargetUserId && 
         !g.members?.some(m => String(m?._id || m) === String(g.inviteTargetUserId))
@@ -497,17 +506,42 @@ export default function Buddies() {
   };
 
   const myId = userId;
+  const groupOnlyGroups = useMemo(
+    () => groups.filter((g) => !isPairHangoutRecord(g)),
+    [groups]
+  );
+  const pairHangoutGroups = useMemo(
+    () => groups.filter((g) => isPairHangoutRecord(g)),
+    [groups]
+  );
+  const pendingGroupInvites = useMemo(
+    () => pendingInvites.filter((g) => !isPairHangoutRecord(g)),
+    [pendingInvites]
+  );
+  const pendingPairInvites = useMemo(
+    () => pendingInvites.filter((g) => isPairHangoutRecord(g)),
+    [pendingInvites]
+  );
   const calendarPlans = useMemo(
-    () => normalizeBuddyPlans(mergeUniqueGroups(groups, pendingInvites), myId),
-    [groups, pendingInvites, myId]
+    () => normalizeBuddyPlans(mergeUniqueGroups(groupOnlyGroups, pendingGroupInvites), myId),
+    [groupOnlyGroups, pendingGroupInvites, myId]
   );
   const rankedSuggestedPeers = useMemo(
     () => [...suggestedPeers].sort((a, b) => Number(b?.matchPercent || 0) - Number(a?.matchPercent || 0)),
     [suggestedPeers]
   );
-  const topSuggestedPeers = rankedSuggestedPeers.slice(0, 3);
+  const matchedSuggestedPeers = useMemo(
+    () =>
+      rankedSuggestedPeers.filter((p) => {
+        const peerId = String(p?.id || '');
+        const isMe = peerId && peerId === String(user?.id || user?._id || '');
+        return !isMe && Number(p?.matchPercent || 0) > 30;
+      }),
+    [rankedSuggestedPeers, user?.id, user?._id]
+  );
+  const topSuggestedPeers = matchedSuggestedPeers.slice(0, 3);
   const openMatchCount = hasRunPeerMatch ? matches.filter((g) => g?.status === 'open').length : 0;
-  const pendingForMe = groups.reduce((sum, g) => sum + (g?.pendingRequests?.length || 0), 0);
+  const pendingForMe = groupOnlyGroups.reduce((sum, g) => sum + (g?.pendingRequests?.length || 0), 0);
   const openPlanOnMap = useCallback((plan) => {
     const lat = Number(plan?.lat);
     const lng = Number(plan?.lng);
@@ -587,7 +621,7 @@ export default function Buddies() {
       <div className="grid sm:grid-cols-3 gap-3">
         <div className="goout-soft-card rounded-xl p-4">
           <p className="text-xs text-slate-500 uppercase tracking-wide">Your Groups</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">{groups.length}</p>
+          <p className="text-2xl font-bold text-slate-900 mt-1">{groupOnlyGroups.length}</p>
         </div>
         <div className="goout-soft-card rounded-xl p-4">
           <p className="text-xs text-slate-500 uppercase tracking-wide">Open Nearby</p>
@@ -595,7 +629,7 @@ export default function Buddies() {
         </div>
         <div className="goout-soft-card rounded-xl p-4">
           <p className="text-xs text-slate-500 uppercase tracking-wide">Pending</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">{pendingForMe + pendingInvites.length}</p>
+          <p className="text-2xl font-bold text-slate-900 mt-1">{pendingForMe + pendingGroupInvites.length + pendingPairInvites.length}</p>
         </div>
       </div>
 
@@ -617,14 +651,14 @@ export default function Buddies() {
 
       {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
-      {pendingInvites.length > 0 && (
+      {pendingPairInvites.length > 0 && (
         <div className="goout-surface rounded-2xl p-5 border border-emerald-200 bg-emerald-50/40">
           <h2 className="font-display font-semibold text-lg mb-2">Hangout invites for you</h2>
           <p className="text-xs text-slate-600 mb-4">
             You see first name, interests, and Green Score until you accept. Meet only at the pinned safe venue.
           </p>
           <div className="space-y-3">
-            {pendingInvites.map((g) => (
+            {pendingPairInvites.map((g) => (
               <div key={g._id} className="rounded-xl border border-slate-200 bg-white p-4 flex flex-wrap justify-between gap-3">
                 <div>
                   <p className="font-medium text-slate-900">{g.activity}</p>
@@ -661,6 +695,47 @@ export default function Buddies() {
                     type="button"
                     disabled={actionGroupId === g._id}
                     onClick={() => (g.inviteType === 'group' ? rejectGroupInvite(g._id) : rejectHangout(g._id))}
+                    className="px-4 py-2 bg-red-100 text-red-700 rounded-lg text-sm font-medium disabled:opacity-60">
+                    {actionGroupId === g._id ? '…' : 'Reject'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {pendingGroupInvites.length > 0 && (
+        <div className="goout-surface rounded-2xl p-5 border border-sky-200 bg-sky-50/40">
+          <h2 className="font-display font-semibold text-lg mb-2">Group invites for you</h2>
+          <p className="text-xs text-slate-600 mb-4">
+            You have group invitations pending. Accept to join the full group chat.
+          </p>
+          <div className="space-y-3">
+            {pendingGroupInvites.map((g) => (
+              <div key={g._id} className="rounded-xl border border-slate-200 bg-white p-4 flex flex-wrap justify-between gap-3">
+                <div>
+                  <p className="font-medium text-slate-900">{g.activity}</p>
+                  <p className="text-sm text-slate-600">{g.description}</p>
+                  <p className="text-xs text-slate-500 mt-2">{formatDateTime(g.scheduledAt)}</p>
+                  {g.safeVenue?.name && (
+                    <p className="text-xs text-sky-800 mt-1">
+                      Safe meetup: {g.safeVenue.name} ({g.safeVenue.kind === 'red_pin' ? 'Red Pin' : 'Public'})
+                    </p>
+                  )}
+                </div>
+                <div className="self-center flex gap-2">
+                  <button
+                    type="button"
+                    disabled={actionGroupId === g._id}
+                    onClick={() => acceptGroupInvite(g._id)}
+                    className="px-4 py-2 bg-goout-green text-white rounded-lg text-sm font-medium disabled:opacity-60">
+                    {actionGroupId === g._id ? '…' : 'Accept invite'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={actionGroupId === g._id}
+                    onClick={() => rejectGroupInvite(g._id)}
                     className="px-4 py-2 bg-red-100 text-red-700 rounded-lg text-sm font-medium disabled:opacity-60">
                     {actionGroupId === g._id ? '…' : 'Reject'}
                   </button>
@@ -868,13 +943,11 @@ export default function Buddies() {
             </div>
           ) : !hasRunPeerMatch ? (
             <p className="text-slate-600 text-sm text-center py-8">Run matching above to see available partners.</p>
-          ) : suggestedPeers.length === 0 ? (
-            <p className="text-slate-600 text-sm text-center py-8">No one is looking for this activity right now.</p>
+          ) : matchedSuggestedPeers.length === 0 ? (
+            <p className="text-slate-600 text-sm text-center py-8">No buddies match your interest yet.</p>
           ) : (
             <div className="space-y-3">
-              {topSuggestedPeers
-                .filter((p) => String(p.id) !== String(user?.id || user?._id))
-                .map((p, idx) => {
+              {topSuggestedPeers.map((p, idx) => {
                   const peerId = String(p.id || '');
                   const isSent = sentPairRequestIds.has(peerId);
                   const isSending = sendingPairRequestId === peerId;
@@ -886,12 +959,9 @@ export default function Buddies() {
                         </p>
                         <p className="text-sm text-slate-600">
                           Match: <span className="font-semibold text-goout-green">{Number(p.matchPercent || 0)}%</span>
-                          {' · '}
-                          Profile fit: {Number(p.preferencePercent || 0)}%
                         </p>
                         <p className="text-xs text-slate-500 mt-1">
-                          Intent: {Number(p.intentPercent || p.matchPercent || 0)}%
-                          {p.interests?.length ? ` · ${p.interests.join(', ')}` : ''}
+                          {p.interests?.length ? `Interests: ${p.interests.join(', ')}` : 'Interests not shared yet'}
                         </p>
                       </div>
                       <button
@@ -907,13 +977,13 @@ export default function Buddies() {
                     </div>
                   );
                 })}
-              {rankedSuggestedPeers.length > 3 && (
+              {matchedSuggestedPeers.length > 3 && (
                 <button
                   type="button"
                   onClick={() => setShowAllPairMatches(true)}
                   className="text-sm font-semibold text-emerald-700 hover:text-emerald-500 underline underline-offset-4"
                 >
-                  View all matches ({rankedSuggestedPeers.length})
+                  View all matches ({matchedSuggestedPeers.length})
                 </button>
               )}
             </div>
@@ -940,10 +1010,10 @@ export default function Buddies() {
           <div className="space-y-3">
             {loading ?
             <div className="goout-soft-card rounded-xl p-4 text-sm text-slate-500">Loading your groups...</div> :
-            groups.length === 0 ?
+            groupOnlyGroups.length === 0 ?
             <p className="text-slate-500 text-sm">You haven't joined any groups yet.</p> :
 
-            groups.map((g) =>
+            groupOnlyGroups.map((g) =>
             <div key={g._id} className="goout-soft-card rounded-xl p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -981,6 +1051,35 @@ export default function Buddies() {
                 )}
                     </div>
               }
+                </div>
+            )
+            }
+          </div>
+        </div>
+        <div>
+          <h2 className="font-display font-semibold text-lg mb-4">Your Pair Hangouts</h2>
+          <div className="space-y-3">
+            {loading ?
+            <div className="goout-soft-card rounded-xl p-4 text-sm text-slate-500">Loading your pair hangouts...</div> :
+            pairHangoutGroups.length === 0 ?
+            <p className="text-slate-500 text-sm">You have no pair hangouts yet.</p> :
+            pairHangoutGroups.map((g) =>
+            <div key={g._id} className="goout-soft-card rounded-xl p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium text-slate-900">{g.activity}</p>
+                      <p className="text-sm text-slate-600 mt-1">{g.description || 'No description provided.'}</p>
+                      <p className="text-xs text-slate-500 mt-2">{formatDateTime(g.scheduledAt)} · Pair hangout</p>
+                    </div>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                      pair
+                    </span>
+                  </div>
+                  <div className="mt-3">
+                    <Link to={`/app/group/${g._id}`} className="inline-flex px-3 py-1.5 text-sm rounded-lg bg-goout-green text-white font-medium hover:bg-goout-accent text-center">
+                      Open Chat
+                    </Link>
+                  </div>
                 </div>
             )
             }
@@ -1047,7 +1146,7 @@ export default function Buddies() {
             </div>
             <div className="space-y-3">
               {rankedSuggestedPeers
-                .filter((p) => String(p.id) !== String(user?.id || user?._id))
+                .filter((p) => Number(p?.matchPercent || 0) > 30 && String(p.id) !== String(user?.id || user?._id))
                 .map((p, idx) => {
                   const peerId = String(p.id || '');
                   const isSent = sentPairRequestIds.has(peerId);
@@ -1056,7 +1155,7 @@ export default function Buddies() {
                     <div key={peerId} className="rounded-xl border border-emerald-300/30 bg-emerald-500/10 p-3">
                       <p className="font-semibold text-emerald-50">#{idx + 1} {p.displayName}</p>
                       <p className="text-xs text-emerald-100/85 mt-1">
-                        Match {Number(p.matchPercent || 0)}% · Intent {Number(p.intentPercent || 0)}% · Profile {Number(p.preferencePercent || 0)}%
+                        Match {Number(p.matchPercent || 0)}%
                       </p>
                       <div className="mt-3">
                         <button
@@ -1086,7 +1185,7 @@ export default function Buddies() {
             onClick={() => setShowCalendarModal(false)}
             className="absolute inset-0 bg-slate-950/50 transition-opacity duration-300 opacity-100"
           />
-          <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-4xl -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-emerald-200/40 bg-white p-5 shadow-2xl transition-all duration-300 opacity-100 scale-100 goout-animate-in">
+          <div className="absolute left-1/2 top-6 md:top-8 w-[92vw] max-w-4xl -translate-x-1/2 rounded-3xl border border-emerald-200/40 bg-white p-5 shadow-2xl">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h3 className="font-display text-lg font-semibold text-slate-900">Your buddy calendar</h3>
               <button
@@ -1097,7 +1196,7 @@ export default function Buddies() {
                 Close
               </button>
             </div>
-            <div className="max-h-[75vh] overflow-y-auto">
+            <div className="max-h-[calc(100vh-7rem)] overflow-y-auto">
               <ExplorerCalendar
                 plans={calendarPlans}
                 loading={loading}

@@ -21,7 +21,7 @@ async function fetchWithTimeout(url, opts, timeoutMs) {
 }
 
 /**
- * One Text Search call per invocation (avoids 429 from burst multi-query).
+ * Google Places Text Search call.
  */
 async function fetchGooglePlacesTextOnce({ searchTerm, latNum, lngNum, radiusMeters }) {
   const apiKey = process.env.GOOGLE_MAPS_API_KEY || '';
@@ -89,6 +89,31 @@ async function fetchGooglePlacesTextOnce({ searchTerm, latNum, lngNum, radiusMet
       };
     })
     .filter(Boolean);
+}
+
+function buildGooglePlacesSearchTerms(userMessage) {
+  const base = buildGooglePlacesConciergeQuery(userMessage);
+  const t = String(userMessage || '').toLowerCase();
+  const terms = [base];
+
+  // Add compact intent-specific terms for broader real-world place coverage.
+  if (/\b(park|garden|playground|outdoor|walk)\b/.test(t)) {
+    terms.push('parks gardens playgrounds public outdoor spaces');
+  }
+  if (/\b(library|museum|gallery|landmark|monument|historic|heritage)\b/.test(t)) {
+    terms.push('libraries museums galleries landmarks monuments heritage');
+  }
+  if (/\b(theater|theatre|cinema|movie|multiplex)\b/.test(t)) {
+    terms.push('cinema movie theater multiplex');
+  }
+  if (/\b(plaza|square|community|civic|public)\b/.test(t)) {
+    terms.push('public plazas squares community civic places');
+  }
+
+  // Stable fallback term so we always query broad public POIs.
+  terms.push('public places points of interest near me');
+
+  return [...new Set(terms.map((s) => String(s || '').trim()).filter(Boolean))].slice(0, 4);
 }
 
 /** Richer OSM: parks + libraries + attractions + civic/cultural places. */
@@ -212,17 +237,20 @@ export async function fetchPublicSpacesNear(lat, lng, radiusMeters = 5000, userM
     if (!merged.has(k)) merged.set(k, p);
   };
 
-  const searchTerm = buildGooglePlacesConciergeQuery(userMessage);
-
   if (process.env.GOOGLE_MAPS_API_KEY) {
     try {
-      const batch = await fetchGooglePlacesTextOnce({
-        searchTerm,
-        latNum,
-        lngNum,
-        radiusMeters
-      });
-      batch.forEach(add);
+      const queries = buildGooglePlacesSearchTerms(userMessage);
+      for (const searchTerm of queries) {
+        const batch = await fetchGooglePlacesTextOnce({
+          searchTerm,
+          latNum,
+          lngNum,
+          radiusMeters
+        });
+        batch.forEach(add);
+        // Small gap to reduce 429 risk while still enriching Google coverage.
+        await delay(120);
+      }
     } catch (e) {
       console.warn('[publicPlaces] Google Places', e?.message || e);
     }

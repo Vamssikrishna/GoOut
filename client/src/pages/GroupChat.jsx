@@ -488,6 +488,7 @@ export default function GroupChat() {
   const mapsMeetUrl = venue?.lat && venue?.lng
     ? `https://www.google.com/maps?q=${venue.lat},${venue.lng}`
     : null;
+  const isPairHangout = group?.inviteType === 'pair' || Number(group?.maxMembers) === 2;
 
   return (
     <div className="w-full space-y-4 goout-animate-in">
@@ -497,7 +498,7 @@ export default function GroupChat() {
         ← Back to Buddies
       </Link>
 
-      {venue?.name && (
+      {!isPairHangout && venue?.name && (
         <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-sm text-slate-800">
           <p className="font-semibold text-emerald-900">Safe meetup pin</p>
           <p className="mt-1">
