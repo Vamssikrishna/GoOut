@@ -31,7 +31,7 @@ Required environment variables:
 
 - `MONGODB_URI`
 - `JWT_SECRET`
-- `CLIENT_URL=https://your-vercel-site.vercel.app`
+- `CLIENT_URL=https://go-out.vercel.app`
 - `GOOGLE_MAPS_API_KEY`
 - `GEMINI_API_KEY` or `GEMINI_API_KEY_MERCHANT`
 
