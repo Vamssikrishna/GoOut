@@ -82,7 +82,6 @@ const merchantUpload = multer({
 
 const chatUpload = multer({
   storage: chatStorage,
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB for chat media
   fileFilter: (_req, file, cb) => {
     if (allowedChatMime.has(file.mimetype)) return cb(null, true);
     cb(new Error('File type not allowed for chat'));

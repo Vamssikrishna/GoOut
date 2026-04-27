@@ -21,6 +21,14 @@ const buddyGroupSchema = new mongoose.Schema({
     placeId: { type: String, default: '' },
     safetyNote: { type: String, default: '' }
   },
+  sharedLocation: {
+    name: { type: String, default: '' },
+    address: { type: String, default: '' },
+    lat: { type: Number },
+    lng: { type: Number },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    updatedAt: { type: Date, default: null }
+  },
   inviteTargetUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   invitedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   declinedInvites: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],

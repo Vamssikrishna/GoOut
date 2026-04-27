@@ -1,8 +1,13 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { io } from 'socket.io-client';
-import api from '../api/client';
+import api, { getAssetUrl } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+
+const SOCKET_URL = String(
+  import.meta.env.VITE_SOCKET_URL ||
+  (import.meta.env.DEV ? 'http://127.0.0.1:5000' : window.location.origin)
+).trim();
 
 export default function GroupChat() {
   const PIN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -20,6 +25,14 @@ export default function GroupChat() {
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [leavingGroup, setLeavingGroup] = useState(false);
   const [showLocationConfirm, setShowLocationConfirm] = useState(false);
+  const [showSharedLocationEditor, setShowSharedLocationEditor] = useState(false);
+  const [sharedLocationSaving, setSharedLocationSaving] = useState(false);
+  const [sharedLocationDraft, setSharedLocationDraft] = useState({
+    name: '',
+    address: '',
+    lat: '',
+    lng: ''
+  });
   const [sharingLocation, setSharingLocation] = useState(false);
   const [recordingAudio, setRecordingAudio] = useState(false);
   const [recordingBusy, setRecordingBusy] = useState(false);
@@ -28,6 +41,7 @@ export default function GroupChat() {
   const [callRoom, setCallRoom] = useState(null);
   const [pendingVote, setPendingVote] = useState(false);
   const [messageActionId, setMessageActionId] = useState('');
+  const [showChatActionMenu, setShowChatActionMenu] = useState(false);
   const scrollRef = useRef(null);
   const fileInputRef = useRef(null);
   const mediaRecorderRef = useRef(null);
@@ -48,6 +62,11 @@ export default function GroupChat() {
   const myId = String(user?.id || user?._id || '');
   const myAvatar = String(user?.avatar || '').trim();
   const isAdmin = String(group?.creatorId?._id || group?.creatorId || '') === myId;
+  const sharedLocation = group?.sharedLocation;
+  const hasSharedLocation = Number.isFinite(Number(sharedLocation?.lat)) && Number.isFinite(Number(sharedLocation?.lng));
+  const sharedLocationMapsUrl = hasSharedLocation ?
+    `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${sharedLocation.lat},${sharedLocation.lng}`)}` :
+    '';
   const pinnedMessages = useMemo(
     () =>
       [...messages]
@@ -69,7 +88,7 @@ export default function GroupChat() {
   useEffect(() => {
     const token = localStorage.getItem('goout_token');
     if (!token) return;
-    const s = io(window.location.origin, { auth: { token } });
+    const s = io(SOCKET_URL, { auth: { token } });
     s.on('connect', () => {
       s.emit('join-group', groupId);
     });
@@ -83,6 +102,9 @@ export default function GroupChat() {
     );
     s.on('message-deleted', ({ messageId }) =>
       setMessages((prev) => prev.filter((m) => String(m._id) !== String(messageId)))
+    );
+    s.on('group-location-updated', ({ sharedLocation }) =>
+      setGroup((g) => g ? { ...g, sharedLocation } : g)
     );
     s.on('call-consent-requested', (payload) => {
       setCallRoom(null);
@@ -208,6 +230,64 @@ export default function GroupChat() {
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
     if (file) uploadFile(file);
+  };
+
+  const openSharedLocationEditor = () => {
+    setSharedLocationDraft({
+      name: sharedLocation?.name || '',
+      address: sharedLocation?.address || '',
+      lat: sharedLocation?.lat != null ? String(sharedLocation.lat) : '',
+      lng: sharedLocation?.lng != null ? String(sharedLocation.lng) : ''
+    });
+    setSockMsg('');
+    setShowSharedLocationEditor((v) => !v);
+  };
+
+  const useCurrentLocationForSharedPin = () => {
+    if (!navigator.geolocation) {
+      setSockMsg('Geolocation is not supported in this browser.');
+      return;
+    }
+    setSockMsg('Getting your location for the group pin…');
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setSharedLocationDraft((prev) => ({
+          ...prev,
+          lat: String(position.coords.latitude.toFixed(6)),
+          lng: String(position.coords.longitude.toFixed(6))
+        }));
+        setSockMsg('Location added to the editor. Review and save it for the group.');
+      },
+      () => setSockMsg('Could not read your location. You can enter coordinates manually.')
+    );
+  };
+
+  const saveSharedLocation = async (e) => {
+    e.preventDefault();
+    if (chatExpired) return;
+    const lat = Number(sharedLocationDraft.lat);
+    const lng = Number(sharedLocationDraft.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      setSockMsg('Add valid latitude and longitude before saving the group location.');
+      return;
+    }
+    setSharedLocationSaving(true);
+    setSockMsg('');
+    try {
+      const { data } = await api.put(`/buddies/groups/${groupId}/shared-location`, {
+        name: sharedLocationDraft.name,
+        address: sharedLocationDraft.address,
+        lat,
+        lng
+      });
+      setGroup((g) => g ? { ...g, sharedLocation: data.sharedLocation } : g);
+      setShowSharedLocationEditor(false);
+      setSockMsg('Group location saved. Everyone in this chat can see it.');
+    } catch (err) {
+      setSockMsg(err?.response?.data?.error || 'Could not save group location.');
+    } finally {
+      setSharedLocationSaving(false);
+    }
   };
 
   const startAudioRecording = async () => {
@@ -492,11 +572,13 @@ export default function GroupChat() {
 
   return (
     <div className="w-full space-y-4 goout-animate-in">
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <Link
         to="/app/buddies"
         className="goout-btn-ghost text-sm py-2 px-3 inline-flex border-slate-200 hover:border-emerald-300/50">
         ← Back to Buddies
       </Link>
+      </div>
 
       {!isPairHangout && venue?.name && (
         <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-sm text-slate-800">
@@ -547,7 +629,7 @@ export default function GroupChat() {
         </div>
       )}
 
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col h-[600px]">
+      <div className="goout-chat-shell bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col min-h-[360px] sm:h-[640px] sm:min-h-[540px]">
         <div className="p-4 border-b flex flex-wrap justify-between items-center gap-2">
           <div>
             <h2 className="font-display font-semibold text-lg">{group.activity}</h2>
@@ -558,57 +640,96 @@ export default function GroupChat() {
               <p className="text-xs text-slate-500 mt-1">Chat closes: {new Date(group.chatExpiresAt).toLocaleString()}</p>
             )}
           </div>
-          <div className="flex gap-2">
+          <div className="goout-chat-actions-wrap">
             <button
               type="button"
-              onClick={() => requestCall()}
-              disabled={chatExpired}
-              aria-label="Start group meeting"
-              title="Start group meeting"
-              className="h-10 w-10 flex items-center justify-center bg-purple-500 text-white rounded-lg font-medium hover:bg-purple-600 text-base disabled:opacity-50"
+              onClick={() => setShowChatActionMenu((v) => !v)}
+              aria-label="Open chat actions"
+              title="Chat actions"
+              className="goout-chat-dots-btn"
             >
-              🎥
+              ...
             </button>
-            {group.safeBy && String(group.safeByUserId) === String(user?.id || user?._id) && new Date(group.safeBy) > new Date() &&
-            <button
-              type="button"
-              onClick={() => api.post(`/buddies/groups/${groupId}/safe`).then(() => setGroup((g) => ({ ...g, safeBy: null })))}
-              aria-label="I am safe"
-              title="I'm Safe"
-              className="h-10 w-10 flex items-center justify-center bg-goout-green text-white rounded-lg font-medium text-base"
-            >
-                ✅
+            <div className={`goout-chat-action-menu ${showChatActionMenu ? 'goout-chat-action-menu--open' : ''}`}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowChatActionMenu(false);
+                  requestCall();
+                }}
+                disabled={chatExpired}
+                aria-label="Start group meeting"
+                title="Start group meeting"
+                className="goout-chat-action-orb goout-chat-action-orb--meet"
+              >
+                🎥
               </button>
-            }
-            <button
-              type="button"
-              onClick={sendSOS}
-              disabled={chatExpired}
-              aria-label="SOS need help"
-              title="SOS - need help"
-              className="h-10 w-10 flex items-center justify-center bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 text-base disabled:opacity-50"
-            >
-              🚨
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowLocationConfirm(true)}
-              disabled={chatExpired}
-              aria-label="Share location"
-              title="Share location"
-              className="h-10 w-10 flex items-center justify-center bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 text-base disabled:opacity-50"
-            >
-              📍
-            </button>
-            <button 
-              type="button" 
-              onClick={() => setShowLeaveConfirm(true)}
-              aria-label="Leave group"
-              title="Leave group"
-              className="h-10 w-10 flex items-center justify-center bg-slate-400 text-white rounded-lg font-medium hover:bg-slate-500 text-base"
-            >
-              🚪
-            </button>
+              {group.safeBy && String(group.safeByUserId) === String(user?.id || user?._id) && new Date(group.safeBy) > new Date() &&
+              <button
+                type="button"
+                onClick={() => {
+                  setShowChatActionMenu(false);
+                  api.post(`/buddies/groups/${groupId}/safe`).then(() => setGroup((g) => ({ ...g, safeBy: null })));
+                }}
+                aria-label="I am safe"
+                title="I'm Safe"
+                className="goout-chat-action-orb goout-chat-action-orb--safe"
+              >
+                  ✅
+                </button>
+              }
+              <button
+                type="button"
+                onClick={() => {
+                  setShowChatActionMenu(false);
+                  sendSOS();
+                }}
+                disabled={chatExpired}
+                aria-label="SOS need help"
+                title="SOS - need help"
+                className="goout-chat-action-orb goout-chat-action-orb--sos"
+              >
+                🚨
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowChatActionMenu(false);
+                  setShowLocationConfirm(true);
+                }}
+                disabled={chatExpired}
+                aria-label="Share location"
+                title="Share location"
+                className="goout-chat-action-orb goout-chat-action-orb--location"
+              >
+                📍
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowChatActionMenu(false);
+                  openSharedLocationEditor();
+                }}
+                disabled={chatExpired}
+                aria-label={hasSharedLocation ? 'Change group map pin' : 'Set group map pin'}
+                title={hasSharedLocation ? 'Change group map pin' : 'Set group map pin'}
+                className="goout-chat-action-orb goout-chat-action-orb--map"
+              >
+                🗺
+              </button>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowChatActionMenu(false);
+                  setShowLeaveConfirm(true);
+                }}
+                aria-label="Leave group"
+                title="Leave group"
+                className="goout-chat-action-orb goout-chat-action-orb--leave"
+              >
+                🚪
+              </button>
+            </div>
           </div>
         </div>
 
@@ -643,6 +764,94 @@ export default function GroupChat() {
             <a href={callRoom.roomUrl} target="_blank" rel="noreferrer" className="inline-block mt-1 text-emerald-800 underline font-medium">
               Join Google Meet
             </a>
+          </div>
+        )}
+
+        {(hasSharedLocation || showSharedLocationEditor) && (
+          <div className="border-b bg-gradient-to-r from-sky-50 via-white to-emerald-50 px-4 py-3 text-sm">
+            {hasSharedLocation && (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-bold uppercase tracking-[0.16em] text-sky-700">Shared group map pin</p>
+                  <p className="mt-1 font-semibold text-slate-900">{sharedLocation.name || 'Group location'}</p>
+                  {sharedLocation.address && <p className="mt-0.5 text-xs text-slate-600">{sharedLocation.address}</p>}
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    {Number(sharedLocation.lat).toFixed(5)}, {Number(sharedLocation.lng).toFixed(5)}
+                    {sharedLocation.updatedBy?.name ? ` · updated by ${sharedLocation.updatedBy.name}` : ''}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <a
+                    href={sharedLocationMapsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-bold text-sky-700 hover:bg-sky-50"
+                  >
+                    Open map
+                  </a>
+                  <button
+                    type="button"
+                    onClick={openSharedLocationEditor}
+                    disabled={chatExpired}
+                    className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                  >
+                    Change pin
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {showSharedLocationEditor && (
+              <form onSubmit={saveSharedLocation} className="mt-3 rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block sm:col-span-2">
+                    <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Location name</span>
+                    <input
+                      className="goout-input mt-1"
+                      value={sharedLocationDraft.name}
+                      onChange={(e) => setSharedLocationDraft((prev) => ({ ...prev, name: e.target.value }))}
+                      placeholder="Cafe, gate, public plaza..."
+                    />
+                  </label>
+                  <label className="block sm:col-span-2">
+                    <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Address or note</span>
+                    <input
+                      className="goout-input mt-1"
+                      value={sharedLocationDraft.address}
+                      onChange={(e) => setSharedLocationDraft((prev) => ({ ...prev, address: e.target.value }))}
+                      placeholder="Near the main entrance..."
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Latitude</span>
+                    <input
+                      className="goout-input mt-1"
+                      value={sharedLocationDraft.lat}
+                      onChange={(e) => setSharedLocationDraft((prev) => ({ ...prev, lat: e.target.value }))}
+                      placeholder="17.385044"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Longitude</span>
+                    <input
+                      className="goout-input mt-1"
+                      value={sharedLocationDraft.lng}
+                      onChange={(e) => setSharedLocationDraft((prev) => ({ ...prev, lng: e.target.value }))}
+                      placeholder="78.486671"
+                    />
+                  </label>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button type="button" onClick={useCurrentLocationForSharedPin} className="goout-btn-ghost text-xs px-3 py-2">
+                    Use my current location
+                  </button>
+                  <button type="submit" disabled={sharedLocationSaving || chatExpired} className="goout-btn-primary text-xs px-3 py-2">
+                    {sharedLocationSaving ? 'Saving…' : 'Save group pin'}
+                  </button>
+                </div>
+                <p className="mt-2 text-[11px] font-medium text-slate-500">Anyone in this group can change this saved pin.</p>
+              </form>
+            )}
           </div>
         )}
 
@@ -686,11 +895,11 @@ export default function GroupChat() {
           {messages.map((m, i) => {
             const isMine = String(m.userId?._id || m.userId) === myId;
             const senderName = String(m.userId?.name || m.userName || 'Member');
-            const senderAvatar = String(
+            const senderAvatar = getAssetUrl(String(
               (isMine ? myAvatar : '') ||
               m.userId?.avatar ||
               ''
-            ).trim();
+            ).trim());
             return (
           <div
             key={i}
@@ -723,34 +932,55 @@ export default function GroupChat() {
               {/* Attachments */}
               {Array.isArray(m.attachments) && m.attachments.length > 0 && (
                 <div className="mt-2 space-y-2">
-                  {m.attachments.map((att, idx) => (
-                    <div key={idx} className="bg-slate-100 rounded-lg p-2">
+                  {m.attachments.map((att, idx) => {
+                    const attachmentUrl = getAssetUrl(att.url);
+                    return (
+                    <div
+                      key={idx}
+                      className={att.type === 'audio' ? '' : 'bg-slate-100 rounded-lg p-2'}
+                    >
                       {att.type === 'image' ? (
-                        <a href={att.url} target="_blank" rel="noreferrer" className="inline-block max-w-xs hover:opacity-80">
-                          <img src={att.url} alt={att.filename} className="max-w-xs max-h-64 rounded-lg" />
+                        <a href={attachmentUrl} target="_blank" rel="noreferrer" className="inline-block max-w-xs hover:opacity-80">
+                          <img src={attachmentUrl} alt={att.filename} className="max-w-xs max-h-64 rounded-lg" />
                         </a>
                       ) : att.type === 'video' ? (
                         <video controls className="max-w-xs max-h-64 rounded-lg">
-                          <source src={att.url} type={att.mimetype} />
+                          <source src={attachmentUrl} type={att.mimetype} />
                           Your browser does not support the video tag.
                         </video>
                       ) : att.type === 'audio' ? (
-                        <button
-                          type="button"
-                          onClick={() => toggleVoicePlayback(att.url)}
-                          aria-label={activeVoiceUrl === att.url ? 'Stop voice message' : 'Play voice message'}
-                          title={activeVoiceUrl === att.url ? 'Stop voice message' : 'Play voice message'}
-                          className={`h-10 w-10 flex items-center justify-center rounded-full border text-base font-medium ${
-                            activeVoiceUrl === att.url ?
-                              'border-red-200 bg-red-50 text-red-700' :
-                              'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
-                          }`}
-                        >
-                          {activeVoiceUrl === att.url ? '⏹' : '▶'}
-                        </button>
+                        <div className={`goout-voice-note ${isMine ? 'goout-voice-note--mine' : ''} ${activeVoiceUrl === attachmentUrl ? 'goout-voice-note--playing' : ''}`}>
+                          <button
+                            type="button"
+                            onClick={() => toggleVoicePlayback(attachmentUrl)}
+                            aria-label={activeVoiceUrl === attachmentUrl ? 'Stop voice message' : 'Play voice message'}
+                            title={activeVoiceUrl === attachmentUrl ? 'Stop voice message' : 'Play voice message'}
+                            className="goout-voice-play-btn"
+                          >
+                            {activeVoiceUrl === attachmentUrl ? '■' : '▶'}
+                          </button>
+                          <div className="min-w-0 flex-1">
+                            <div className="mb-1 flex items-center justify-between gap-3">
+                              <span className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                                Voice note
+                              </span>
+                              <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                                {activeVoiceUrl === attachmentUrl ? 'Playing' : 'Tap to play'}
+                              </span>
+                            </div>
+                            <div className="goout-voice-wave" aria-hidden>
+                              {Array.from({ length: 18 }).map((_, barIdx) => (
+                                <span key={barIdx} style={{ '--bar-height': `${22 + ((barIdx * 13) % 38)}%` }} />
+                              ))}
+                            </div>
+                            <p className="mt-1 truncate text-[11px] font-semibold text-slate-500">
+                              {att.filename || 'Voice message'}
+                            </p>
+                          </div>
+                        </div>
                       ) : (
                         <a 
-                          href={att.url} 
+                          href={attachmentUrl}
                           target="_blank" 
                           rel="noreferrer"
                           className="text-blue-600 hover:underline text-sm font-medium"
@@ -759,7 +989,8 @@ export default function GroupChat() {
                         </a>
                       )}
                     </div>
-                  ))}
+                  );
+                  })}
                 </div>
               )}
 
@@ -806,7 +1037,7 @@ export default function GroupChat() {
           );})}
           <div ref={scrollRef} />
         </div>
-        <div className="p-4 border-t flex gap-2">
+        <div className="p-3 sm:p-4 border-t flex flex-wrap sm:flex-nowrap gap-2">
           <input
             type="file"
             ref={fileInputRef}
@@ -820,7 +1051,7 @@ export default function GroupChat() {
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={chatExpired || uploading || recordingAudio || recordingBusy}
-            className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg disabled:opacity-50"
+            className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg disabled:opacity-50 border border-transparent hover:border-slate-200"
             title="Upload file, image, or video"
           >
             📎
@@ -828,10 +1059,25 @@ export default function GroupChat() {
 
           <button
             type="button"
+            onClick={openSharedLocationEditor}
+            disabled={chatExpired || uploading || recordingAudio || recordingBusy}
+            className={`p-2 rounded-lg disabled:opacity-50 border ${
+              hasSharedLocation ?
+                'bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100' :
+                'text-slate-600 hover:bg-slate-100 border-transparent hover:border-slate-200'
+            }`}
+            title={hasSharedLocation ? 'Change group map pin' : 'Set group map pin'}
+            aria-label={hasSharedLocation ? 'Change group map pin' : 'Set group map pin'}
+          >
+            🗺
+          </button>
+
+          <button
+            type="button"
             onClick={recordingAudio ? stopAudioRecording : startAudioRecording}
             disabled={chatExpired || uploading || recordingBusy}
-            className={`p-2 rounded-lg disabled:opacity-50 ${
-              recordingAudio ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'text-slate-600 hover:bg-slate-100'
+            className={`p-2 rounded-lg disabled:opacity-50 border ${
+              recordingAudio ? 'bg-red-100 text-red-700 hover:bg-red-200 border-red-200' : 'text-slate-600 hover:bg-slate-100 border-transparent hover:border-slate-200'
             }`}
             title={recordingAudio ? 'Stop recording and send voice note' : 'Record and send voice note'}
           >
@@ -845,14 +1091,14 @@ export default function GroupChat() {
             onKeyDown={(e) => e.key === 'Enter' && send()}
             placeholder={chatExpired ? 'Chat expired' : 'Type a message...'}
             disabled={chatExpired || uploading || recordingAudio}
-            className="flex-1 px-4 py-2 border border-slate-200 rounded-xl disabled:bg-slate-50"
+            className="min-w-[180px] flex-1 px-4 py-2 border border-slate-200 rounded-xl disabled:bg-slate-50"
           />
 
-          <button 
+          <button
             type="button" 
             onClick={send} 
             disabled={chatExpired || uploading || recordingAudio}
-            className="px-4 py-2 bg-goout-green text-white rounded-xl font-medium disabled:opacity-50"
+            className="goout-btn-primary px-4 py-2 rounded-xl font-medium disabled:opacity-50"
           >
             {recordingAudio ? 'Recording...' : uploading ? 'Uploading...' : 'Send'}
           </button>

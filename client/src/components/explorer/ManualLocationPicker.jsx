@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { GoogleMap, Marker, useLoadScript } from '@react-google-maps/api';
 
 const DEFAULT_CENTER = { lat: 28.6139, lng: 77.2090 };
+const GOOGLE_MAPS_LIBRARIES = [];
 
 export default function ManualLocationPicker({ value, onPick, height = 260 }) {
   const center = useMemo(() => {
@@ -17,7 +18,7 @@ export default function ManualLocationPicker({ value, onPick, height = 260 }) {
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
   const { isLoaded, loadError } = useLoadScript({
     googleMapsApiKey: apiKey || '',
-    libraries: []
+    libraries: GOOGLE_MAPS_LIBRARIES
   });
 
   const mapRef = useRef(null);

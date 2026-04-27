@@ -130,10 +130,11 @@ export default function ExplorerCalendar({
 
   return (
     <div className="space-y-4">
-      <div className="goout-glass-card rounded-2xl border border-slate-200/80 p-4 md:p-5">
+      <div className="goout-explorer-hero rounded-2xl p-4 md:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="font-display text-lg font-semibold text-slate-900">Buddy Calendar</h3>
+            <p className="goout-premium-kicker mb-2">Explorer schedule</p>
+            <h3 className="font-display text-xl font-semibold text-slate-900">Buddy Calendar</h3>
             <p className="text-xs text-slate-600 mt-1">
               Buddy meetups sync here. Monthly plans: <span className="font-semibold">{monthPlanCount}</span>
             </p>
@@ -165,7 +166,7 @@ export default function ExplorerCalendar({
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.6fr,1fr]">
-        <div className="goout-surface rounded-2xl border border-slate-200 p-4">
+        <div className="goout-premium-card rounded-2xl p-4">
           <div className="grid grid-cols-7 gap-2">
             {WEEK_DAYS.map((d) => (
               <div key={d} className="text-[11px] font-bold uppercase tracking-wide text-slate-500 text-center">
@@ -186,7 +187,7 @@ export default function ExplorerCalendar({
                     !cell.inMonth ?
                       'border-slate-200/70 bg-slate-50/60 cursor-default' :
                       active ?
-                        'border-indigo-300/80 bg-indigo-500/20 shadow-sm' :
+                        'border-orange-300 bg-orange-50 shadow-sm' :
                         isToday ?
                           'border-cyan-300/70 bg-cyan-500/10' :
                         'border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/40'
@@ -194,8 +195,8 @@ export default function ExplorerCalendar({
                   <>
                     <div
                       className={`text-sm font-semibold ${
-                        active ? 'text-cyan-100' :
-                          isToday ? 'text-cyan-200' :
+                        active ? 'text-orange-700' :
+                          isToday ? 'text-emerald-700' :
                             cell.inMonth ? 'text-slate-900' : 'text-slate-500'
                       }`}>
                       {cell.day}
@@ -213,7 +214,7 @@ export default function ExplorerCalendar({
           </div>
         </div>
 
-        <div className="goout-surface rounded-2xl border border-slate-200 p-4">
+        <div className="goout-premium-card rounded-2xl p-4">
           <div className="flex items-center justify-between">
             <h4 className="font-display font-semibold text-slate-900">Plans on {selectedDateKey || 'selected day'}</h4>
             {loading && <span className="text-xs text-slate-500">Syncing…</span>}

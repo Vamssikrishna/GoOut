@@ -18,6 +18,11 @@ import {
   poiMatchesPreciseQuery
 } from '../utils/searchMapRank';
 
+const SOCKET_URL = String(
+  import.meta.env.VITE_SOCKET_URL ||
+  (import.meta.env.DEV ? 'http://127.0.0.1:5000' : window.location.origin)
+).trim();
+
 const DEFAULT_CENTER = { lat: 28.6139, lng: 77.2090 };
 const GEO_OPTIONS = { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 };
 const MAX_ACCEPTABLE_ACCURACY_M = 250;
@@ -191,7 +196,14 @@ export default function Explorer() {
   /** When set, that public POI (lat/lng key) is hidden from the map until search changes or user applies again. */
   const [hiddenPoiKey, setHiddenPoiKey] = useState(null);
   const prevSearchTrimRef = useRef('');
-  const [activeTab, setActiveTab] = useState('map');
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('goout_explorer_active_tab');
+      return ['map', 'budget', 'compare', 'green'].includes(saved) ? saved : 'map';
+    } catch {
+      return 'map';
+    }
+  });
   const { addToast } = useToast();
   const { user } = useAuth();
   const [isSearching, setIsSearching] = useState(false);
@@ -233,6 +245,7 @@ export default function Explorer() {
   const lastArrivalPromptAtRef = useRef(0);
   const routeTrackedDistanceRef = useRef(0);
   const routeLastTrackPointRef = useRef(null);
+  const lastLiveUiUpdateRef = useRef(0);
 
   const fetchCityName = useCallback(async (lat, lng) => {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return '';
@@ -330,6 +343,10 @@ export default function Explorer() {
     if (!hiddenPoiKey) return poiResults;
     return (poiResults || []).filter((p) => poiStableKey(p) !== hiddenPoiKey);
   }, [poiResults, hiddenPoiKey]);
+  const conciergeMapContext = useMemo(
+    () => ({ businesses, pois: visiblePois, offers }),
+    [businesses, visiblePois, offers]
+  );
 
   const displayDirectionsRoutes = useMemo(() => {
     if (!Array.isArray(directionsRoutes) || directionsRoutes.length === 0 || !liveTrackingPoint) return directionsRoutes;
@@ -915,7 +932,7 @@ export default function Explorer() {
   useEffect(() => {
     const token = localStorage.getItem('goout_token');
     if (!token) return;
-    const socket = io(window.location.origin, { auth: { token } });
+    const socket = io(SOCKET_URL, { auth: { token } });
     socket.on('new_deal', (offer) => {
       setOffers((prev) => prev.some((o) => o._id === offer._id) ? prev : [...prev, offer]);
     });
@@ -1050,9 +1067,27 @@ export default function Explorer() {
         const now = Date.now();
         const current = { lat: p.coords.latitude, lng: p.coords.longitude };
         const accuracy = Number(p.coords?.accuracy);
-        setLiveTrackingPoint(current);
+        const previousLivePoint = routeLastTrackPointRef.current;
+        const movedSinceLastUiPoint =
+          previousLivePoint ?
+            haversineMeters(previousLivePoint.lat, previousLivePoint.lng, current.lat, current.lng) :
+            Number.POSITIVE_INFINITY;
+        const shouldRefreshUiPoint =
+          !previousLivePoint ||
+          movedSinceLastUiPoint >= 3 ||
+          now - lastLiveUiUpdateRef.current >= 1200;
+        if (shouldRefreshUiPoint) {
+          setLiveTrackingPoint(current);
+          lastLiveUiUpdateRef.current = now;
+        }
         if (liveTrackingEnabled) {
-          setUserLocation(current);
+          const prevUser = userLocationRef.current;
+          const movedFromPrevUser =
+            prevUser ? haversineMeters(prevUser.lat, prevUser.lng, current.lat, current.lng) : Number.POSITIVE_INFINITY;
+          if (!prevUser || movedFromPrevUser >= 3) {
+            setUserLocation(current);
+            userLocationRef.current = current;
+          }
         }
         if (liveTrackingEnabled && destinationPoint && !hasReachedDestination) {
           const prev = routeLastTrackPointRef.current;
@@ -1112,7 +1147,10 @@ export default function Explorer() {
           }
         }
         const meters = haversineMeters(current.lat, current.lng, destinationPoint.lat, destinationPoint.lng);
-        setDistanceToDestination(meters);
+        setDistanceToDestination((prev) => {
+          if (!Number.isFinite(prev)) return meters;
+          return Math.abs(prev - meters) >= 1 ? meters : prev;
+        });
         const inArrivalZone = meters <= ARRIVAL_THRESHOLD_M * 2;
         if (inArrivalZone && !hasReachedDestination && !pendingArrivalConfirm) {
           const windowUntil = arrivalRepromptUntilTs > now ? arrivalRepromptUntilTs : now + ARRIVAL_REPROMPT_WINDOW_MS;
@@ -1291,11 +1329,22 @@ export default function Explorer() {
     }
   }, [arrivalEcoImpact, savingEcoImpact, addToast, directionsDestinationLabel]);
 
-  const tabs = [
-  { id: 'map', label: 'Map' },
-  { id: 'budget', label: 'Budget' },
-  { id: 'compare', label: 'Compare' },
-  { id: 'green', label: 'Green' }];
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('goout_explorer_active_tab', activeTab);
+    } catch {}
+  }, [activeTab]);
+
+  useEffect(() => {
+    const handleExplorerTab = (event) => {
+      const nextTab = String(event?.detail?.tab || '');
+      if (['map', 'budget', 'compare', 'green'].includes(nextTab)) {
+        setActiveTab(nextTab);
+      }
+    };
+    window.addEventListener('goout:explorer-tab', handleExplorerTab);
+    return () => window.removeEventListener('goout:explorer-tab', handleExplorerTab);
+  }, []);
 
   const mapUserLocation = userLocation || mapCenter || DEFAULT_CENTER;
   const isLiveTrackingActive = Boolean(
@@ -1330,7 +1379,7 @@ export default function Explorer() {
           userDisplayName={user?.name}
           // explorationRadiusM removed, now relying on city constraint
           greenMode={activeTab === 'green'}
-          mapContext={{ businesses, pois: visiblePois, offers }}
+          mapContext={conciergeMapContext}
           onDiscoveryBudgetHint={({ isZeroSpend }) => {
             if (isZeroSpend) {
               setMapBudgetInr(0);
@@ -1359,30 +1408,10 @@ export default function Explorer() {
           <strong>Approx location (IP).</strong> Tap Use my location for GPS.
         </div>
       }
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="font-display font-bold text-2xl md:text-3xl bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent">
-          Explore
-        </h1>
-        <div className="flex gap-2 flex-wrap">
-          {tabs.map((t) =>
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setActiveTab(t.id)}
-            className={`goout-tab-pill ${
-              activeTab === t.id
-                ? 'bg-slate-900 border-slate-900 text-white shadow-sm'
-                : ''
-            }`}>
-            {t.label}
-          </button>
-          )}
-        </div>
-      </div>
-
       <div className="space-y-4">
         {activeTab === 'map' && (
           <>
+            <div className="goout-explorer-toolbar rounded-2xl p-3">
             <div className="flex gap-2 flex-wrap items-center">
               {mapBudgetInr != null &&
               <button
@@ -1415,7 +1444,7 @@ export default function Explorer() {
                 City switcher: {citySwitcherEnabled ? 'ON' : 'OFF'}
               </button>
               {citySwitcherEnabled && (
-                <div className="flex items-center gap-2 min-w-[220px] flex-1 sm:flex-none">
+                <div className="flex min-w-0 flex-1 flex-col gap-2 sm:min-w-[220px] sm:flex-none sm:flex-row sm:items-center">
                   <input
                     type="text"
                     value={cityLookup}
@@ -1433,7 +1462,7 @@ export default function Explorer() {
                   </button>
                 </div>
               )}
-              <div className="relative flex-1 min-w-[220px] goout-ai-live rounded-xl overflow-hidden">
+              <div className="relative min-w-0 flex-[1_1_15rem] goout-ai-live rounded-xl overflow-hidden">
                 <SearchIcon className="pointer-events-none absolute left-3 top-1/2 z-[1] h-4 w-4 -translate-y-1/2 text-emerald-200/90" />
                 <input
                   type="text"
@@ -1460,6 +1489,7 @@ export default function Explorer() {
                 )}
               </div>
             </div>
+            </div>
             {isSearching &&
           <div className="text-sm text-goout-dark bg-goout-light px-3 py-2 rounded-lg border border-goout-green/30">
                 Loading…
@@ -1473,7 +1503,7 @@ export default function Explorer() {
               </div>
           }
             {!userLocation &&
-          <div className="rounded-2xl border border-slate-200 bg-white p-12 flex flex-col items-center justify-center h-[500px]">
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 sm:p-12 flex flex-col items-center justify-center min-h-[340px] sm:min-h-[500px]">
                 <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-goout-green mb-4" />
                 <p className="text-slate-600 font-medium">Finding you…</p>
                 <p className="text-slate-500 text-sm mt-2">Need location. Locals first.</p>
@@ -1482,7 +1512,7 @@ export default function Explorer() {
           </>
         )}
 
-        <div className="relative">
+        <div className="relative goout-map-stage">
           <DiscoveryMap
               userLocation={mapUserLocation}
               mapCenter={mapCenter || mapUserLocation}
@@ -1516,7 +1546,7 @@ export default function Explorer() {
               onCancelRoute={cancelRoute}
           />
           {activeTab !== 'map' && (
-              <div className="absolute inset-0 z-20 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 shadow-inner p-4 md:p-6">
+              <div className="absolute inset-0 z-20 overflow-y-auto rounded-2xl goout-explorer-panel p-3 sm:p-4 md:p-6">
                 <ExplorerSectionErrorBoundary>
                   {activeTab === 'budget' && (
                     <BudgetPlanner
@@ -1695,12 +1725,12 @@ export default function Explorer() {
               </div>
             )}
             {directionsLoading &&
-            <div className="goout-soft-card goout-neon-panel rounded-2xl p-4">
+            <div className="goout-premium-card rounded-2xl p-4">
               <h3 className="font-display font-semibold">Routing…</h3>
             </div>
             }
             {directionsRoutes.length > 0 && !directionsLoading &&
-            <div className="goout-soft-card goout-neon-panel rounded-2xl p-4">
+            <div className="goout-premium-card rounded-2xl p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="font-display font-semibold">To {directionsDestinationLabel || 'destination'}</h3>
@@ -1758,11 +1788,11 @@ export default function Explorer() {
             </div>
             }
             {offers.length > 0 &&
-            <div className="goout-soft-card goout-neon-panel rounded-2xl p-4">
+            <div className="goout-premium-card rounded-2xl p-4">
               <h3 className="font-display font-semibold mb-3">Flash deals</h3>
               <div className="flex gap-3 overflow-x-auto pb-2">
                 {offers.map((o) =>
-                <div key={o._id} className="flex-shrink-0 w-56 p-3 bg-red-50 border border-red-100 rounded-xl">
+                <div key={o._id} className="goout-deal-card flex-shrink-0 w-56 p-3 rounded-xl">
                   <p className="font-medium text-slate-900">{o.title}</p>
                   <p className="text-sm text-slate-600">{o.businessId?.name}</p>
                   <p className="text-goout-green font-bold mt-1">₹{o.offerPrice}</p>

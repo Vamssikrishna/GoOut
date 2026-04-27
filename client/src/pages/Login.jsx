@@ -139,13 +139,30 @@ export default function Login() {
 
   return (
     <div className="min-h-screen goout-auth-shell flex items-center justify-center p-4 relative z-10">
-      <div className="w-full max-w-2xl goout-animate-in">
+      <div className="w-full max-w-6xl goout-animate-in">
         <Link
           to="/"
           className="block font-display font-extrabold text-3xl mb-8 bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent hover:opacity-90 transition-opacity w-fit">
           GoOut
         </Link>
-        <div className="goout-glass-card goout-neon-panel goout-auth-panel rounded-3xl p-8 sm:p-9 shadow-md border border-slate-200">
+        <div className="grid overflow-hidden rounded-[2rem] border border-orange-100 bg-white shadow-2xl shadow-orange-950/10 lg:grid-cols-5">
+          <div className="hidden bg-gradient-to-br from-orange-500 via-rose-500 to-emerald-500 p-8 text-white lg:col-span-2 lg:flex lg:flex-col lg:justify-between">
+            <div>
+              <p className="font-mono text-[10px] font-bold uppercase tracking-[0.32em] text-white/80">GoOut access</p>
+              <h2 className="mt-4 font-display text-4xl font-extrabold leading-tight">Your city, deals, buddies, and routes in one place.</h2>
+              <p className="mt-4 text-sm leading-relaxed text-white/85">
+                Sign in to continue your live discovery feed, buddy plans, and merchant-powered local offers.
+              </p>
+            </div>
+            <div className="grid gap-3 text-sm">
+              {['Live maps', 'Buddy groups', 'Smart budgets'].map((item) => (
+                <div key={item} className="rounded-2xl border border-white/20 bg-white/10 px-4 py-3 font-semibold">
+                  {item}
+                </div>
+              ))}
+            </div>
+          </div>
+        <div className="goout-auth-panel p-8 sm:p-9 lg:col-span-3">
           {step === 'credentials' ?
           <>
               <h1 className="font-display text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">Welcome back</h1>
@@ -267,6 +284,7 @@ export default function Login() {
               </div>
             </>
           }
+        </div>
         </div>
       </div>
     </div>);

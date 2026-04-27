@@ -37,13 +37,21 @@ export default function ForgotPassword() {
 
   return (
     <div className="min-h-screen goout-auth-shell flex items-center justify-center p-4 relative z-10">
-      <div className="w-full max-w-3xl goout-animate-in">
+      <div className="w-full max-w-5xl goout-animate-in">
         <Link
           to="/"
           className="block font-display font-extrabold text-3xl mb-8 bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent w-fit">
           GoOut
         </Link>
-        <div className="goout-glass-card rounded-2xl p-8 shadow-md border border-slate-200">
+        <div className="grid overflow-hidden rounded-[2rem] border border-orange-100 bg-white shadow-2xl shadow-orange-950/10 md:grid-cols-5">
+          <div className="hidden bg-gradient-to-br from-orange-500 to-emerald-500 p-8 text-white md:col-span-2 md:flex md:flex-col md:justify-between">
+            <div>
+              <p className="font-mono text-[10px] font-bold uppercase tracking-[0.32em] text-white/75">Account recovery</p>
+              <h2 className="mt-4 font-display text-3xl font-extrabold leading-tight">Get back to your plans quickly.</h2>
+            </div>
+            <p className="text-sm leading-relaxed text-white/85">We will send a secure reset link if the email belongs to your GoOut account.</p>
+          </div>
+        <div className="p-8 md:col-span-3">
           <h1 className="text-2xl font-bold text-slate-900 mb-2">Forgot password</h1>
           <p className="text-slate-600 text-sm mb-6">
             Enter your account email. If it&apos;s registered, we&apos;ll send a link to choose a new password.
@@ -79,6 +87,7 @@ export default function ForgotPassword() {
               Back to sign in
             </Link>
           </p>
+        </div>
         </div>
       </div>
     </div>);

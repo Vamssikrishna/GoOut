@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { GoogleMap, useLoadScript } from '@react-google-maps/api';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import { estimateMerchantSpendInr, businessIsStrongGreen, poiMatchesPreciseQuery } from '../../utils/searchMapRank';
-import api from '../../api/client';
+import api, { getAssetUrl } from '../../api/client';
+
+const GOOGLE_MAPS_LIBRARIES = ['places'];
 
 const DEFAULT_ZOOM = 17;
 const PIN_COLORS = Object.freeze({
@@ -177,12 +179,7 @@ function businessPopupHtml(b, { isHighlighted }) {
   const goLng = Number.isFinite(lng) ? lng : '';
 
   const menuPath = String(b?.menuCatalogFileUrl || '').trim();
-  const menuAbs =
-    typeof window !== 'undefined' && menuPath.startsWith('/')
-      ? `${window.location.origin}${menuPath}`
-      : menuPath.startsWith('http')
-        ? menuPath
-        : '';
+  const menuAbs = getAssetUrl(menuPath);
   const menuLinkHtml = menuAbs
     ? `<p class="mt-2"><a href="${escapeHtml(menuAbs)}" target="_blank" rel="noopener noreferrer" class="text-emerald-700 font-semibold underline hover:text-emerald-900">View menu</a></p>`
     : '';
@@ -291,11 +288,7 @@ function summarizeReviewText(text, maxLen = 180) {
 }
 
 function toAssetUrl(pathLike) {
-  const s = String(pathLike || '').trim();
-  if (!s) return '';
-  if (s.startsWith('http://') || s.startsWith('https://')) return s;
-  if (typeof window !== 'undefined' && s.startsWith('/')) return `${window.location.origin}${s}`;
-  return s;
+  return getAssetUrl(pathLike);
 }
 
 function poiGoogleLikePopupHtml(p, details, { isSearchPrimary, isExactSearchMatch, isMayMatch } = {}) {
@@ -609,7 +602,7 @@ function DiscoveryMap({
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
   const { isLoaded, loadError } = useLoadScript({
     googleMapsApiKey: apiKey || '',
-    libraries: ['places']
+    libraries: GOOGLE_MAPS_LIBRARIES
   });
 
   const mapRef = useRef(null);
@@ -773,12 +766,7 @@ function DiscoveryMap({
     'N/A';
   const localPanelDescription = String(localPanelBusiness?.description || localPanelBusiness?.localSourcingNote || '').trim();
   const localPanelMenu = String(localPanelBusiness?.menuCatalogFileUrl || '').trim();
-  const localPanelMenuAbs =
-    typeof window !== 'undefined' && localPanelMenu.startsWith('/') ?
-      `${window.location.origin}${localPanelMenu}` :
-      localPanelMenu.startsWith('http') ?
-        localPanelMenu :
-        '';
+  const localPanelMenuAbs = getAssetUrl(localPanelMenu);
   const localPanelCrowd = crowdLabel(localPanelBusiness?.crowdLevel);
   const localPanelCrowdNum = Math.max(0, Math.min(100, Number(localPanelBusiness?.crowdLevel) || 0));
   const localPanelIsRedPin = Boolean(localPanelBusiness?.localVerification?.redPin);
@@ -1579,7 +1567,7 @@ function DiscoveryMap({
 
   return (
     <div className="rounded-2xl overflow-hidden border border-slate-200 bg-white shadow-sm">
-      <div className="h-[420px] sm:h-[500px] relative">
+      <div className="relative h-[clamp(340px,72dvh,560px)] min-h-[340px] sm:h-[clamp(440px,70dvh,620px)]">
         {highlightedPoiLatLng && typeof onDismissHighlightedPoi === 'function' &&
         <button
           type="button"

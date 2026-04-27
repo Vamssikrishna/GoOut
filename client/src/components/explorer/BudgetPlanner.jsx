@@ -182,35 +182,35 @@ export default function BudgetPlanner({ userLocation, businesses: _businesses, o
   const budgetNumEntered = String(inputBudget).trim() === '' ? null : Number(inputBudget);
 
   return (
-    <div className="grid md:grid-cols-2 gap-6">
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-        <h2 className="font-display font-semibold text-lg mb-2">Budget &amp; discovery</h2>
-        <div className="flex flex-wrap items-center gap-3 mb-4">
-          <span className="text-sm text-slate-600">Mode:</span>
-          <button
-            type="button"
-            onClick={() => setLocalMode(true)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-            localMode ? 'bg-goout-green text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`
-            }>
-            
-            Local mode
-          </button>
-          <button
-            type="button"
-            onClick={() => setLocalMode(false)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-            !localMode ? 'bg-goout-green text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`
-            }>
-            
-            All places
-          </button>
-        </div>
+    <div className="grid gap-6 lg:grid-cols-12">
+      <div className="goout-premium-card rounded-2xl p-6 lg:col-span-5">
+        <p className="goout-premium-kicker mb-3">Smart spend</p>
+        <h2 className="font-display font-semibold text-xl mb-2">Budget &amp; discovery</h2>
         <p className="text-slate-600 text-sm mb-4">
           {localMode ?
           'Local mode: Only local places will be shown here' :
           'Public mode: shows public places around you. Use Go to open route to any place.'}
         </p>
+        <div className="mb-4 inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
+          <button
+            type="button"
+            onClick={() => setLocalMode(true)}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+              localMode ? 'bg-goout-green text-white shadow-sm' : 'text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            Local mode
+          </button>
+          <button
+            type="button"
+            onClick={() => setLocalMode(false)}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+              !localMode ? 'bg-goout-green text-white shadow-sm' : 'text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            All places
+          </button>
+        </div>
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-1">{localMode ? 'What are you looking for?' : 'Search places'}</label>
@@ -248,17 +248,33 @@ export default function BudgetPlanner({ userLocation, businesses: _businesses, o
             
             </div>
           }
-          <button
-            type="button"
-            onClick={runSuggest}
-            className="px-4 py-2 bg-goout-green text-white rounded-lg font-medium hover:bg-goout-accent transition">
-            
-            {localMode ? 'Suggest local places' : 'Search places'}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={runSuggest}
+              className="px-4 py-2 bg-goout-green text-white rounded-lg font-medium hover:bg-goout-accent transition">
+              {localMode ? 'Suggest local places' : 'Search places'}
+            </button>
+            {localMode && (
+              <span className="text-xs text-slate-500">
+                Tip: start broad, then lower budget to narrow results.
+              </span>
+            )}
+          </div>
         </div>
       </div>
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-        <h3 className="font-display font-semibold text-lg mb-4">{localMode ? 'Your itinerary' : 'Places near you'}</h3>
+      <div className="goout-premium-card rounded-2xl p-6 lg:col-span-7">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="goout-premium-kicker mb-2">Live picks</p>
+            <h3 className="font-display font-semibold text-xl">{localMode ? 'Your itinerary' : 'Places near you'}</h3>
+          </div>
+          {displayPlan.length > 0 && (
+            <span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-700">
+              {displayPlan.length} stops
+            </span>
+          )}
+        </div>
         {budgetError && localMode && (
           <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
             {budgetError}

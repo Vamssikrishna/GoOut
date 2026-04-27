@@ -85,13 +85,30 @@ export default function Register() {
 
   return (
     <div className="min-h-screen goout-auth-shell flex items-center justify-center p-4 relative z-10">
-      <div className="w-full max-w-2xl goout-animate-in">
+      <div className="w-full max-w-6xl goout-animate-in">
         <Link
           to="/"
           className="block font-display font-extrabold text-3xl mb-8 bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent hover:opacity-90 transition-opacity w-fit">
           GoOut
         </Link>
-        <div className="goout-glass-card goout-neon-panel goout-auth-panel rounded-3xl p-8 sm:p-9 shadow-md border border-slate-200">
+        <div className="grid overflow-hidden rounded-[2rem] border border-orange-100 bg-white shadow-2xl shadow-orange-950/10 lg:grid-cols-5">
+          <div className="hidden bg-gradient-to-br from-slate-950 via-orange-600 to-emerald-600 p-8 text-white lg:col-span-2 lg:flex lg:flex-col lg:justify-between">
+            <div>
+              <p className="font-mono text-[10px] font-bold uppercase tracking-[0.32em] text-white/75">Join GoOut</p>
+              <h2 className="mt-4 font-display text-4xl font-extrabold leading-tight">Build your local life around places worth visiting.</h2>
+              <p className="mt-4 text-sm leading-relaxed text-white/85">
+                Explorers get smarter discovery. Merchants get a modern storefront and live demand tools.
+              </p>
+            </div>
+            <div className="grid gap-3 text-sm">
+              {['Explorer matching', 'Merchant console', 'AI concierge'].map((item) => (
+                <div key={item} className="rounded-2xl border border-white/20 bg-white/10 px-4 py-3 font-semibold">
+                  {item}
+                </div>
+              ))}
+            </div>
+          </div>
+        <div className="goout-auth-panel p-8 sm:p-9 lg:col-span-3">
           <div className="flex items-center gap-2 mb-6" aria-hidden>
             <span className={`h-1.5 flex-1 rounded-full ${step === 1 ? 'bg-gradient-to-r from-emerald-500 to-teal-400' : 'bg-emerald-200'}`} />
             <span className={`h-1.5 flex-1 rounded-full ${step === 2 ? 'bg-gradient-to-r from-emerald-500 to-teal-500' : 'bg-slate-200'}`} />
@@ -194,6 +211,7 @@ export default function Register() {
           <p className="mt-6 text-center text-slate-600 text-sm">
             Already have an account? <Link to="/login" className="text-goout-green font-medium hover:underline">Login</Link>
           </p>
+        </div>
         </div>
       </div>
     </div>);

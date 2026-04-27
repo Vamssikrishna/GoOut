@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import api from '../api/client';
+import api, { getAssetUrl } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
@@ -290,61 +290,83 @@ export default function Profile() {
   const profileCompleteness = isMerchant ?
     (name.trim() ? 40 : 0) + (bizName.trim() ? 30 : 0) + (bizDescription.trim() ? 30 : 0) :
     (name.trim() ? 34 : 0) + (interestCount > 0 ? 33 : 0) + (preferCount > 0 ? 33 : 0);
+  const safeCompleteness = Math.min(100, profileCompleteness);
+  const displayInitials = getInitials(name || user?.name);
 
   return (
-    <div className="w-full space-y-6 pb-16 goout-animate-in">
-      <div className="relative overflow-hidden rounded-3xl border border-emerald-200/60 bg-gradient-to-br from-white via-emerald-50/40 to-slate-50/40 p-6 md:p-7 shadow-sm">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_85%_20%,rgba(16,185,129,0.12),transparent_40%)]" />
-        <div className="relative goout-animate-stagger space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-goout-green/90">Account</p>
-          <h1 className="font-display text-3xl md:text-4xl font-bold text-slate-900 tracking-tight">Your profile</h1>
-          <p className="text-slate-700 text-sm md:text-base max-w-2xl font-medium">
-          {isMerchant
-            ? 'Manage your identity, storefront details, and public listing fields from one modern workspace.'
-            : 'Manage your explorer identity, safety details, and concierge preferences in one place.'}
-          </p>
-          <div className="pt-3 flex flex-wrap gap-2">
-            <span className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-700">
-              Profile completeness: {Math.min(100, profileCompleteness)}%
-            </span>
-            {!isMerchant && (
-              <>
-                <span className="rounded-full border border-sky-200 bg-white px-3 py-1 text-xs font-semibold text-sky-700">
-                  Groups: {groupsJoined}
-                </span>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
-                  Friends: {friendsCount}
-                </span>
-              </>
-            )}
-            {isMerchant && (
-              <span className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700">
-                Listing: {bid ? 'Linked' : 'Not linked'}
-              </span>
-            )}
+    <div className="w-full space-y-7 pb-16 goout-animate-in">
+      <div className="goout-profile-hero relative overflow-hidden rounded-[2rem] border border-orange-100/80 p-5 shadow-dock md:p-7">
+        <div className="pointer-events-none absolute -right-16 -top-20 h-52 w-52 rounded-full bg-orange-300/20 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-24 left-1/4 h-56 w-56 rounded-full bg-emerald-300/20 blur-3xl" />
+        <div className="relative grid items-center gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+          <div className="goout-animate-stagger space-y-4">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/75 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-orange-700 shadow-sm">
+              <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_16px_rgba(16,185,129,0.8)]" />
+              {isMerchant ? 'Merchant Control Center' : 'Explorer Control Center'}
+            </div>
+            <div>
+              <h1 className="font-display text-3xl font-black tracking-tight text-slate-950 sm:text-4xl md:text-5xl">
+                Your profile, upgraded
+              </h1>
+              <p className="mt-3 max-w-2xl text-sm font-medium leading-6 text-slate-700 md:text-base">
+                {isMerchant
+                  ? 'Tune your public identity, listing confidence, and storefront details from one clean command space.'
+                  : 'Shape your explorer identity, safety layer, buddy network, and AI concierge preferences in one polished workspace.'}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <span className="goout-profile-chip">Completeness {safeCompleteness}%</span>
+              <span className="goout-profile-chip">{isMerchant ? (bid ? 'Listing linked' : 'Listing pending') : `${groupsJoined} groups`}</span>
+              <span className="goout-profile-chip">{isMerchant ? 'Storefront tools' : `${friendsCount} friends`}</span>
+            </div>
+          </div>
+
+          <div className="goout-profile-score-card rounded-[1.6rem] border border-white/70 bg-white/78 p-5 shadow-xl shadow-orange-950/10 backdrop-blur">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Profile power</p>
+                <p className="mt-1 text-4xl font-black text-slate-950">{safeCompleteness}%</p>
+              </div>
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-500 to-emerald-500 text-xl font-black text-white shadow-lg shadow-orange-500/20">
+                {displayInitials}
+              </div>
+            </div>
+            <div className="mt-5 h-3 overflow-hidden rounded-full bg-slate-100">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-orange-500 via-amber-400 to-emerald-500 transition-all duration-500"
+                style={{ width: `${safeCompleteness}%` }}
+              />
+            </div>
+            <p className="mt-3 text-xs font-semibold text-slate-600">
+              {safeCompleteness >= 100 ? 'Everything looks sharp.' : 'Add a few more details to make the profile feel complete.'}
+            </p>
           </div>
         </div>
       </div>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="goout-soft-card rounded-2xl p-4 border border-slate-200">
-          <p className="text-xs uppercase tracking-wider text-slate-500 font-semibold">Profile Score</p>
-          <p className="mt-1 text-2xl font-bold text-slate-900">{Math.min(100, profileCompleteness)}%</p>
+        <div className="goout-profile-stat rounded-3xl p-5">
+          <span className="goout-profile-stat-icon">01</span>
+          <p className="mt-4 text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Profile Score</p>
+          <p className="mt-1 text-3xl font-black text-slate-950">{safeCompleteness}%</p>
         </div>
-        <div className="goout-soft-card rounded-2xl p-4 border border-slate-200">
-          <p className="text-xs uppercase tracking-wider text-slate-500 font-semibold">Buddy Mode</p>
-          <p className="mt-1 text-2xl font-bold text-slate-900">{buddyMode ? 'On' : 'Off'}</p>
+        <div className="goout-profile-stat rounded-3xl p-5">
+          <span className="goout-profile-stat-icon">02</span>
+          <p className="mt-4 text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{isMerchant ? 'Listing Mode' : 'Buddy Mode'}</p>
+          <p className="mt-1 text-3xl font-black text-slate-950">{isMerchant ? (bid ? 'Live' : 'Setup') : (buddyMode ? 'On' : 'Off')}</p>
         </div>
-        <div className="goout-soft-card rounded-2xl p-4 border border-slate-200">
-          <p className="text-xs uppercase tracking-wider text-slate-500 font-semibold">{isMerchant ? 'Business Status' : 'Groups Joined'}</p>
-          <p className="mt-1 text-2xl font-bold text-slate-900">
+        <div className="goout-profile-stat rounded-3xl p-5">
+          <span className="goout-profile-stat-icon">03</span>
+          <p className="mt-4 text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{isMerchant ? 'Business Status' : 'Groups Joined'}</p>
+          <p className="mt-1 text-3xl font-black text-slate-950">
             {isMerchant ? (bid ? 'Linked' : 'Pending') : groupsJoined}
           </p>
         </div>
-        <div className="goout-soft-card rounded-2xl p-4 border border-slate-200 flex items-center justify-between gap-3">
+        <div className="goout-profile-stat rounded-3xl p-5 flex items-center justify-between gap-3">
           <div>
-            <p className="text-xs uppercase tracking-wider text-slate-500 font-semibold">{isMerchant ? 'Quick Action' : 'Friends'}</p>
-            <p className="mt-1 text-sm text-slate-700">{isMerchant ? 'Open Merchant Hub' : `${friendsCount} total`}</p>
+            <span className="goout-profile-stat-icon">04</span>
+            <p className="mt-4 text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{isMerchant ? 'Quick Action' : 'Friends'}</p>
+            <p className="mt-1 text-sm font-semibold text-slate-700">{isMerchant ? 'Open Merchant Hub' : `${friendsCount} total`}</p>
           </div>
           {isMerchant ?
           <Link to="/app/merchant" className="goout-btn-primary text-sm py-2 px-3">
@@ -357,20 +379,23 @@ export default function Profile() {
         </div>
       </section>
 
-      <section className="goout-glass-card rounded-3xl p-6 md:p-8 goout-hover-lift border border-slate-200">
-        <div className="flex flex-wrap items-start gap-5">
+      <section className="goout-profile-identity rounded-[2rem] p-5 md:p-7">
+        <div className="grid gap-6 lg:grid-cols-[auto_1fr_auto] lg:items-center">
           <div className="relative shrink-0">
             {avatarUrl ? (
               <img
-                src={avatarUrl}
+                src={getAssetUrl(avatarUrl)}
                 alt="Profile avatar"
-                className="h-16 w-16 rounded-2xl object-cover shadow-lg shadow-emerald-500/20 border border-white"
+                className="h-24 w-24 rounded-[1.6rem] border-4 border-white object-cover shadow-2xl shadow-emerald-500/20"
               />
             ) : (
-              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-xl font-bold text-white shadow-lg shadow-emerald-500/25">
-                {getInitials(name || user?.name)}
+              <div className="flex h-24 w-24 items-center justify-center rounded-[1.6rem] border-4 border-white bg-gradient-to-br from-orange-500 via-amber-500 to-emerald-500 text-3xl font-black text-white shadow-2xl shadow-orange-500/20">
+                {displayInitials}
               </div>
             )}
+            <span className="absolute -bottom-2 -right-2 flex h-8 w-8 items-center justify-center rounded-full border-4 border-white bg-emerald-500 text-xs font-black text-white shadow-lg">
+              ✓
+            </span>
             <input
               ref={avatarInputRef}
               type="file"
@@ -379,9 +404,9 @@ export default function Profile() {
               onChange={(e) => uploadAvatar(e.target.files?.[0])}
             />
           </div>
-          <div className="min-w-0 flex-1 space-y-3">
+          <div className="min-w-0 space-y-4">
             <div className="flex flex-wrap items-center gap-2 gap-y-2">
-              <h2 className="font-display text-xl font-bold text-slate-900 truncate">{user?.name || 'Member'}</h2>
+              <h2 className="font-display text-2xl font-black text-slate-950 truncate md:text-3xl">{user?.name || 'Member'}</h2>
               <span className={`goout-role-pill ${isMerchant ? 'goout-role-pill--merchant' : 'goout-role-pill--explorer'}`}>
                 {isMerchant ? 'Merchant' : 'Explorer'}
               </span>
@@ -389,10 +414,15 @@ export default function Profile() {
               <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-sky-100 text-sky-800">Verified</span>
               }
             </div>
-            <p className="text-sm text-slate-600 break-all">
+            <p className="rounded-2xl border border-slate-200/80 bg-white/72 px-3 py-2 text-sm font-semibold text-slate-600 break-all">
               <span className="goout-label !inline mr-2">Email</span>
               {user?.email || '—'}
             </p>
+            <div className="flex flex-wrap gap-2 text-xs font-bold text-slate-600">
+              <span className="rounded-full bg-slate-100 px-3 py-1">Role: {isMerchant ? 'Merchant' : 'Explorer'}</span>
+              <span className="rounded-full bg-orange-50 px-3 py-1 text-orange-700">Score: {safeCompleteness}%</span>
+              {!isMerchant && <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">Buddy: {buddyMode ? 'Enabled' : 'Disabled'}</span>}
+            </div>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
@@ -426,8 +456,19 @@ export default function Profile() {
                 </button>
               )}
             </div>
+          </div>
+          <div className="rounded-[1.4rem] border border-orange-100 bg-white/75 p-4 shadow-sm lg:min-w-[14rem]">
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Next best action</p>
+            <p className="mt-2 text-sm font-semibold leading-5 text-slate-700">
+              {isMerchant
+                ? bid ? 'Keep your storefront details fresh so explorers trust your listing.' : 'Register your storefront to unlock the merchant profile tools.'
+                : preferCount > 0 ? 'Your concierge has enough taste data to personalize picks.' : 'Add preferences so the AI concierge can recommend better places.'}
+            </p>
+          </div>
+        </div>
+        <div className="mt-6 grid gap-4 lg:grid-cols-2">
             {!isMerchant && user?.greenStats && (
-              <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/50 px-4 py-3 text-sm text-slate-700">
+              <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/60 px-4 py-3 text-sm text-slate-700">
                 <p className="font-semibold text-emerald-900 mb-2 text-xs uppercase tracking-wide">Green mode (activity)</p>
                 <ul className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs sm:text-sm">
                   <li>Walks: <strong className="text-slate-900">{user.greenStats.totalWalks ?? 0}</strong></li>
@@ -437,7 +478,7 @@ export default function Profile() {
               </div>
             )}
             {isMerchant && (
-              <div className="rounded-xl border border-amber-200/70 bg-amber-50/40 px-4 py-3 text-sm text-slate-700">
+              <div className="rounded-2xl border border-amber-200/70 bg-amber-50/50 px-4 py-3 text-sm text-slate-700 lg:col-span-2">
                 <p className="font-semibold text-amber-900/90 mb-1 text-xs uppercase tracking-wide">Business link</p>
                 {bid ? (
                   <>
@@ -451,11 +492,11 @@ export default function Profile() {
                 )}
               </div>
             )}
-          </div>
         </div>
       </section>
 
-      <form onSubmit={saveAccount} className="goout-glass-card rounded-3xl p-6 md:p-8 space-y-5 goout-hover-lift border border-slate-200">
+      <div className="grid gap-6 xl:grid-cols-12">
+      <form onSubmit={saveAccount} className="goout-profile-panel rounded-[2rem] p-6 md:p-8 space-y-5 goout-hover-lift xl:col-span-7">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <h2 className="font-display text-lg font-semibold text-slate-900">Account &amp; safety settings</h2>
           <span
@@ -547,7 +588,7 @@ export default function Profile() {
       </form>
 
       {!isMerchant && (
-        <form onSubmit={saveDiscovery} className="goout-glass-card rounded-3xl p-6 md:p-8 space-y-5 goout-hover-lift border border-slate-200">
+        <form onSubmit={saveDiscovery} className="goout-profile-panel rounded-[2rem] p-6 md:p-8 space-y-5 goout-hover-lift xl:col-span-5">
           <h2 className="font-display text-lg font-semibold text-slate-900">Discovery &amp; concierge</h2>
           <p className="text-sm text-slate-600">
             Short chips help the AI concierge bias recommendations. Separate items with commas.
@@ -587,7 +628,7 @@ export default function Profile() {
       )}
 
       {isMerchant && (
-        <div className="goout-glass-card rounded-3xl p-6 md:p-8 space-y-6 goout-hover-lift border border-slate-200">
+        <div className="goout-profile-panel rounded-[2rem] p-6 md:p-8 space-y-6 goout-hover-lift xl:col-span-5">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <h2 className="font-display text-lg font-semibold text-slate-900">Business listing</h2>
             {!bid && (
@@ -681,6 +722,7 @@ export default function Profile() {
           )}
         </div>
       )}
+      </div>
 
       <section className="goout-glass-card rounded-3xl p-6 md:p-8 border border-slate-200">
         <h2 className="font-display text-lg font-semibold text-slate-900 mb-2">Session</h2>

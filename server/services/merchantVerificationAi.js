@@ -196,6 +196,21 @@ function strictAadhaarCheck(check) {
   };
 }
 
+const MIN_STRICT_CONFIDENCE = 0.68;
+
+function uniqueErrors(...groups) {
+  return [...new Set(groups.flat().map((e) => String(e || '').trim()).filter(Boolean))];
+}
+
+async function isReadableFile(localPath) {
+  try {
+    await fs.access(localPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function getMerchantVerificationTemplates() {
   return {
     businessCertificate: BUSINESS_CERTIFICATE_TEMPLATE,
@@ -217,38 +232,101 @@ export async function verifyOnboardingDocuments({
   if (!licensePath || !ownerIdPath || !storefrontPath) {
     return { isVerified: false, summary: 'Uploaded files are missing or invalid.', checks: {} };
   }
-  // Temporary permissive mode: accept any uploaded files during project testing.
-  const summary = 'Verification accepted (temporary permissive mode).';
+
+  const [licenseReadable, ownerReadable, storefrontReadable] = await Promise.all([
+    isReadableFile(licensePath),
+    isReadableFile(ownerIdPath),
+    isReadableFile(storefrontPath)
+  ]);
+  if (!licenseReadable || !ownerReadable || !storefrontReadable) {
+    return {
+      isVerified: false,
+      summary: 'Uploaded verification files could not be read. Please upload clear documents again.',
+      templates: getMerchantVerificationTemplates(),
+      checks: {
+        storefront: {
+          ok: storefrontReadable,
+          errors: storefrontReadable ? [] : ['Storefront photo file is missing on the server.'],
+          reason: storefrontReadable ? 'Storefront upload is readable.' : 'Storefront upload is not readable.'
+        },
+        businessLicense: {
+          ok: false,
+          expectedType: 'business_license',
+          confidence: 0,
+          extractedBusinessName: '',
+          extractedAddressHint: '',
+          ocrText: '',
+          errors: licenseReadable ? ['Business license OCR was not run because other files are missing.'] : ['Business license file is missing on the server.'],
+          reason: 'Strict OCR verification did not run.'
+        },
+        ownerIdentity: {
+          ok: false,
+          expectedType: 'owner_id',
+          confidence: 0,
+          extractedBusinessName: '',
+          extractedAddressHint: '',
+          ocrText: '',
+          errors: ownerReadable ? ['Owner ID OCR was not run because other files are missing.'] : ['Owner ID file is missing on the server.'],
+          reason: 'Strict OCR verification did not run.'
+        }
+      }
+    };
+  }
+
+  const [licenseAi, ownerAi] = await Promise.all([
+    aiClassifyDoc(licensePath, 'business_license', mapDisplayName, lat, lng),
+    aiClassifyDoc(ownerIdPath, 'owner_id', mapDisplayName, lat, lng)
+  ]);
+
+  const licenseStrict = strictBusinessLicenseCheck(licenseAi, mapDisplayName);
+  const ownerStrict = strictAadhaarCheck(ownerAi);
+  const licenseConfidenceOk = Number(licenseAi?.confidence || 0) >= MIN_STRICT_CONFIDENCE;
+  const ownerConfidenceOk = Number(ownerAi?.confidence || 0) >= MIN_STRICT_CONFIDENCE;
+  const licenseErrors = uniqueErrors(
+    licenseStrict.errors,
+    licenseConfidenceOk ? [] : [`Business license OCR confidence is below ${MIN_STRICT_CONFIDENCE}.`],
+    licenseAi?.ok ? [] : ['Business license document was not accepted by OCR verification.']
+  );
+  const ownerErrors = uniqueErrors(
+    ownerStrict.errors,
+    ownerConfidenceOk ? [] : [`Owner ID OCR confidence is below ${MIN_STRICT_CONFIDENCE}.`],
+    ownerAi?.ok ? [] : ['Owner ID document was not accepted by OCR verification.']
+  );
+  const storefrontMime = mimeForFile(storefrontPath);
+  const storefrontErrors = storefrontMime.startsWith('image/')
+    ? []
+    : ['Storefront proof must be a clear image file, not a PDF or document.'];
+
+  const businessLicenseOk = Boolean(licenseAi?.ok && licenseStrict.ok && licenseConfidenceOk);
+  const ownerIdentityOk = Boolean(ownerAi?.ok && ownerStrict.ok && ownerConfidenceOk);
+  const storefrontOk = storefrontErrors.length === 0;
+  const isVerified = businessLicenseOk && ownerIdentityOk && storefrontOk;
+  const summary = isVerified
+    ? 'Verification passed strict OCR checks.'
+    : 'Verification failed strict OCR checks. Please upload clearer matching documents.';
 
   return {
-    isVerified: true,
+    isVerified,
     summary,
     templates: getMerchantVerificationTemplates(),
     checks: {
       storefront: {
-        ok: true,
-        errors: [],
-        reason: 'Accepted in temporary permissive mode.'
+        ok: storefrontOk,
+        errors: storefrontErrors,
+        reason: storefrontOk ? 'Storefront proof is a readable image upload.' : 'Storefront proof did not meet strict upload rules.'
       },
       businessLicense: {
-        ok: true,
-        expectedType: 'business_license',
-        confidence: 1,
-        extractedBusinessName: String(mapDisplayName || '').trim().slice(0, 120),
-        extractedAddressHint: '',
-        ocrText: '',
-        errors: [],
-        reason: 'Accepted in temporary permissive mode.'
+        ...licenseAi,
+        ok: businessLicenseOk,
+        errors: licenseErrors,
+        nameOverlap: licenseStrict.nameOverlap,
+        reason: businessLicenseOk ? 'Business license passed strict OCR and registration checks.' : licenseAi.reason || 'Business license failed strict OCR checks.'
       },
       ownerIdentity: {
-        ok: true,
-        expectedType: 'owner_id',
-        confidence: 1,
-        extractedBusinessName: '',
-        extractedAddressHint: '',
-        ocrText: '',
-        errors: [],
-        reason: 'Accepted in temporary permissive mode.'
+        ...ownerAi,
+        ok: ownerIdentityOk,
+        errors: ownerErrors,
+        reason: ownerIdentityOk ? 'Owner identity proof passed strict Aadhaar checks.' : ownerAi.reason || 'Owner identity proof failed strict OCR checks.'
       }
     }
   };

@@ -795,12 +795,60 @@ router.post('/groups/:id/safe', protect, async (req, res) => {
   }
 });
 
+router.put('/groups/:id/shared-location', protect, async (req, res) => {
+  try {
+    const group = await BuddyGroup.findById(req.params.id);
+    if (!group) return res.status(404).json({ error: 'Group not found' });
+    const isMember = group.creatorId.toString() === req.user._id.toString() || group.members.some((m) => m.toString() === req.user._id.toString());
+    if (!isMember) return res.status(403).json({ error: 'Not a member' });
+
+    const lat = Number(req.body?.lat);
+    const lng = Number(req.body?.lng);
+    const name = String(req.body?.name || '').trim().slice(0, 120);
+    const address = String(req.body?.address || '').trim().slice(0, 240);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({ error: 'Valid latitude and longitude are required.' });
+    }
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return res.status(400).json({ error: 'Location coordinates are outside the valid range.' });
+    }
+
+    group.sharedLocation = {
+      name: name || 'Group location',
+      address,
+      lat,
+      lng,
+      updatedBy: req.user._id,
+      updatedAt: new Date()
+    };
+    await group.save();
+
+    const updated = await BuddyGroup.findById(req.params.id).
+    populate('creatorId', 'name avatar verified').
+    populate('members', 'name avatar verified').
+    populate('pendingRequests', 'name avatar verified').
+    populate('sharedLocation.updatedBy', 'name avatar');
+
+    const io = req.app.get('io');
+    if (io) io.to(`group-${req.params.id}`).emit('group-location-updated', {
+      groupId: req.params.id,
+      sharedLocation: updated.sharedLocation
+    });
+
+    res.json({ sharedLocation: updated.sharedLocation });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/groups/:id', protect, async (req, res) => {
   try {
     const group = await BuddyGroup.findById(req.params.id).
     populate('creatorId', 'name avatar verified').
     populate('members', 'name avatar verified').
-    populate('pendingRequests', 'name avatar verified');
+    populate('pendingRequests', 'name avatar verified').
+    populate('sharedLocation.updatedBy', 'name avatar');
     if (!group) return res.status(404).json({ error: 'Group not found' });
     res.json(group);
   } catch (err) {

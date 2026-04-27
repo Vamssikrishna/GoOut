@@ -43,10 +43,10 @@ function percent(numerator, denominator) {
 
 function MetricCard({ title, value, subtitle, trend }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-sm">
-      <p className="text-[10px] uppercase tracking-[0.22em] text-slate-400 font-semibold">{title}</p>
-      <p className="mt-1 text-2xl md:text-3xl font-display font-bold text-white">{value}</p>
-      {subtitle ? <p className="mt-1 text-xs text-slate-400">{subtitle}</p> : null}
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500 font-semibold">{title}</p>
+      <p className="mt-1 text-2xl md:text-3xl font-display font-bold text-slate-900">{value}</p>
+      {subtitle ? <p className="mt-1 text-xs text-slate-500">{subtitle}</p> : null}
       {trend ? <p className={`mt-1 text-xs font-medium ${toneClass(trend.tone)}`}>{trend.text}</p> : null}
     </div>
   );
@@ -112,22 +112,21 @@ export default function MerchantAnalyticsPanel({ analytics, business, onCrowdCha
 
   return (
     <div className="space-y-6">
-      <div className="relative overflow-hidden rounded-3xl border border-emerald-500/20 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 p-6 text-white shadow-2xl shadow-emerald-950/40 md:p-8">
-        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(16,185,129,0.07)_1px,transparent_1px),linear-gradient(90deg,rgba(16,185,129,0.07)_1px,transparent_1px)] bg-[size:28px_28px]" />
-        <div className="relative flex flex-wrap items-end justify-between gap-4">
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-7">
+        <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.35em] text-emerald-300">Merchant intelligence</p>
-            <h2 className="mt-2 font-display text-2xl md:text-3xl font-bold">Performance command center</h2>
-            <p className="mt-2 text-sm text-slate-400 max-w-2xl">
+            <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.35em] text-emerald-700">Merchant intelligence</p>
+            <h2 className="mt-2 font-display text-2xl md:text-3xl font-bold text-slate-900">Performance command center</h2>
+            <p className="mt-2 text-sm text-slate-600 max-w-2xl">
               Advanced insights with visual charts: trend movement, conversion quality, day-part demand, and peak-time radar from your live store data.
             </p>
           </div>
-          <div className="rounded-xl border border-emerald-300/30 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-200 font-semibold">
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 font-semibold">
             Rolling 30-day intelligence
           </div>
         </div>
 
-        <div className="relative mt-6 grid gap-3 md:grid-cols-4">
+        <div className="mt-6 grid gap-3 md:grid-cols-4">
           <MetricCard title="Profile views" value={last30Views.toLocaleString()} trend={viewTrend} />
           <MetricCard title="Offer clicks" value={last30Clicks.toLocaleString()} trend={clickTrend} />
           <MetricCard title="CTR quality" value={`${ctr}%`} subtitle="Clicks per 100 views" />
@@ -198,9 +197,9 @@ export default function MerchantAnalyticsPanel({ analytics, business, onCrowdCha
           )}
         </div>
 
-        <div className="rounded-3xl border border-slate-200 bg-gradient-to-b from-slate-900 to-slate-800 p-6 text-white shadow-sm">
-          <h3 className="font-display text-lg font-bold">Quality pie chart</h3>
-          <p className="text-xs text-slate-400 mt-1">Traffic vs conversion vs consistency split</p>
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h3 className="font-display text-lg font-bold text-slate-900">Quality pie chart</h3>
+          <p className="text-xs text-slate-600 mt-1">Traffic vs conversion vs consistency split</p>
           {(() => {
             const slices = [
               { label: 'Traffic', value: Math.max(5, activityScore), color: '#34d399' },
@@ -218,26 +217,26 @@ export default function MerchantAnalyticsPanel({ analytics, business, onCrowdCha
             const strongest = [...slices].sort((a, b) => b.value - a.value)[0];
             return (
               <div className="mt-4">
-                <div className="mx-auto h-44 w-44 rounded-full border-4 border-white/10 shadow-xl relative" style={{ background: `conic-gradient(${gradientParts.join(', ')})` }}>
-                  <div className="absolute inset-[22%] rounded-full bg-slate-900 border border-white/10 flex items-center justify-center text-center px-2">
+                <div className="mx-auto h-44 w-44 rounded-full border-4 border-slate-200 shadow-xl relative" style={{ background: `conic-gradient(${gradientParts.join(', ')})` }}>
+                  <div className="absolute inset-[22%] rounded-full bg-white border border-slate-200 flex items-center justify-center text-center px-2">
                     <div>
-                      <p className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Top</p>
-                      <p className="text-sm font-semibold text-white">{strongest.label}</p>
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Top</p>
+                      <p className="text-sm font-semibold text-slate-900">{strongest.label}</p>
                     </div>
                   </div>
                 </div>
                 <div className="mt-4 space-y-2">
                   {slices.map((s) => (
                     <div key={s.label} className="flex items-center justify-between text-xs">
-                      <span className="inline-flex items-center gap-2 text-slate-200">
+                      <span className="inline-flex items-center gap-2 text-slate-700">
                         <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: s.color }} />
                         {s.label}
                       </span>
-                      <span className="font-semibold text-white">{Math.round((s.value / total) * 100)}%</span>
+                      <span className="font-semibold text-slate-900">{Math.round((s.value / total) * 100)}%</span>
                     </div>
                   ))}
                 </div>
-                <div className="mt-5 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-slate-300">
+                <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
                   Recommendation: schedule flash deals 30-45 mins before your peak hour to improve conversion lift.
                 </div>
               </div>
@@ -246,8 +245,8 @@ export default function MerchantAnalyticsPanel({ analytics, business, onCrowdCha
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="grid gap-6 lg:grid-cols-12">
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-7">
           <div className="mb-4">
             <h3 className="font-display text-lg font-bold text-slate-900">Peak-hour radar</h3>
             <p className="text-sm text-slate-600">24-hour intensity strip (darker = higher demand)</p>
@@ -270,54 +269,55 @@ export default function MerchantAnalyticsPanel({ analytics, business, onCrowdCha
           </div>
         </div>
 
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="mb-4">
-            <h3 className="font-display text-lg font-bold text-slate-900">Day-part distribution</h3>
-            <p className="text-sm text-slate-600">When your profile gets discovered most</p>
+        <div className="space-y-6 lg:col-span-5">
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-4">
+              <h3 className="font-display text-lg font-bold text-slate-900">Day-part distribution</h3>
+              <p className="text-sm text-slate-600">When your profile gets discovered most</p>
+            </div>
+            <div className="space-y-3">
+              {dayParts.map((d) => (
+                <div key={d.key} className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-3">
+                  <div className="flex items-center justify-between text-sm mb-2">
+                    <span className="font-semibold text-slate-800">{d.label} <span className="text-slate-500 font-normal">({d.range})</span></span>
+                    <span className="text-slate-600">{d.total} views · {d.pct}%</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
+                    <div
+                      className="h-2 rounded-full bg-gradient-to-r from-goout-green to-emerald-400"
+                      style={{ width: `${d.pct}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-          <div className="space-y-3">
-            {dayParts.map((d) => (
-              <div key={d.key} className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-3">
-                <div className="flex items-center justify-between text-sm mb-2">
-                  <span className="font-semibold text-slate-800">{d.label} <span className="text-slate-500 font-normal">({d.range})</span></span>
-                  <span className="text-slate-600">{d.total} views · {d.pct}%</span>
-                </div>
-                <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
-                  <div
-                    className="h-2 rounded-full bg-gradient-to-r from-goout-green to-emerald-400"
-                    style={{ width: `${d.pct}%` }}
-                  />
-                </div>
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h3 className="font-display text-lg font-bold text-slate-900">Floor signal control</h3>
+                <p className="text-xs text-slate-600 mt-1">Adjust crowd state visible to nearby explorers</p>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-3xl border border-slate-200 bg-gradient-to-br from-slate-900 to-slate-800 p-6 text-white shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h3 className="font-display text-lg font-bold">Floor signal control</h3>
-            <p className="text-xs text-slate-400 mt-1">Adjust crowd state visible to nearby explorers</p>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 w-full sm:w-auto">
-            {CROWD_STEPS.map(({ level, label, hint }) => {
-              const active = business?.crowdLevel === level;
-              return (
-                <button
-                  key={level}
-                  type="button"
-                  onClick={() => onCrowdChange?.(level)}
-                  className={`rounded-xl border px-3 py-2 text-left text-xs font-semibold transition-all ${
-                    active ?
-                      'border-emerald-300 bg-emerald-500 text-white shadow-lg shadow-emerald-900/40' :
-                      'border-white/15 bg-white/5 text-slate-300 hover:bg-white/10 hover:border-white/30'
-                  }`}>
-                  <span className="block text-[11px] opacity-80">{hint}</span>
-                  {label}
-                </button>
-              );
-            })}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 w-full sm:w-auto">
+                {CROWD_STEPS.map(({ level, label, hint }) => {
+                  const active = business?.crowdLevel === level;
+                  return (
+                    <button
+                      key={level}
+                      type="button"
+                      onClick={() => onCrowdChange?.(level)}
+                      className={`rounded-xl border px-3 py-2 text-left text-xs font-semibold transition-all ${
+                        active ?
+                          'border-emerald-300 bg-emerald-500 text-white shadow-sm' :
+                          'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                      }`}>
+                      <span className="block text-[11px] opacity-80">{hint}</span>
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </div>
       </div>

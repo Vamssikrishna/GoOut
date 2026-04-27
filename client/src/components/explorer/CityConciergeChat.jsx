@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import api from '../../api/client';
+import api, { getAssetUrl } from '../../api/client';
 
 function formatDist(m) {
   if (m == null || !Number.isFinite(m)) return '';
@@ -145,7 +145,7 @@ function PlaceRows({ items, kind, onPickPlace, onGoRoute }) {
                 <span className="text-slate-600 truncate">Location: {formatLocalLocation(p)}</span>
                 {p.menuCatalogFileUrl ? (
                   <a
-                    href={p.menuCatalogFileUrl}
+                    href={getAssetUrl(p.menuCatalogFileUrl)}
                     target="_blank"
                     rel="noreferrer"
                     onClick={(e) => e.stopPropagation()}
@@ -444,11 +444,11 @@ export default function CityConciergeChat({
 
   return createPortal(
     <div
-      className={`fixed z-[10050] bottom-[max(1rem,env(safe-area-inset-bottom,0px))] right-[max(1rem,env(safe-area-inset-right,0px))] sm:bottom-[max(1.5rem,env(safe-area-inset-bottom,0px))] sm:right-[max(1.5rem,env(safe-area-inset-right,0px))] ${className}`}>
+      className={`pointer-events-none fixed z-[10050] bottom-[max(1rem,env(safe-area-inset-bottom,0px))] right-[max(1rem,env(safe-area-inset-right,0px))] sm:bottom-[max(1.5rem,env(safe-area-inset-bottom,0px))] sm:right-[max(1.5rem,env(safe-area-inset-right,0px))] ${className}`}>
       <div className="relative flex flex-col items-end">
         <div
           className={`
-            absolute bottom-full right-0 mb-2 w-[min(100vw-2rem,400px)] max-h-[min(78vh,520px)] flex flex-col rounded-2xl border border-slate-200 bg-white shadow-xl overflow-hidden origin-bottom-right goout-ai-live
+            absolute bottom-full right-0 mb-2 w-[min(100vw-2rem,420px)] max-h-[min(78vh,560px)] flex flex-col rounded-[1.35rem] border border-orange-200 bg-white shadow-2xl shadow-orange-950/15 overflow-hidden origin-bottom-right
             ${panelTransition}
             ${open ?
               'z-[10051] translate-y-0 scale-100 opacity-100 pointer-events-auto' :
@@ -456,12 +456,12 @@ export default function CityConciergeChat({
           `}
           style={{ willChange: open ? 'opacity, transform' : 'auto' }}
           aria-hidden={!open}
-          inert={!open ? true : undefined}
+          inert={!open ? '' : undefined}
         >
-          <div className="px-4 py-3 border-b border-slate-100 bg-emerald-50/70 flex items-center justify-between gap-2">
+          <div className="px-4 py-3 border-b border-orange-100 bg-gradient-to-r from-orange-50 via-white to-emerald-50 flex items-center justify-between gap-2">
             <div>
-              <p className="font-display font-semibold text-goout-dark text-sm">City Concierge</p>
-              <p className="text-[11px] text-slate-600">Locals + public spots near you</p>
+              <p className="font-display font-semibold text-slate-900 text-sm">City Concierge</p>
+              <p className="text-[11px] text-slate-600">GoOut local + public spots near you</p>
             </div>
             <button
               type="button"
@@ -472,13 +472,13 @@ export default function CityConciergeChat({
               <CloseIcon className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 text-sm bg-gradient-to-b from-white via-slate-50/40 to-emerald-50/30">
+          <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 text-sm bg-gradient-to-b from-white via-orange-50/25 to-emerald-50/25">
             {messages.map((m, i) => (
               <div
                 key={m.id || `${i}`}
                 className={`max-w-[96%] px-3 py-2.5 rounded-2xl shadow-sm backdrop-blur-[1px] transition-all duration-200 ${
                   m.role === 'user' ?
-                    'ml-auto border border-emerald-400/25 bg-gradient-to-br from-goout-green via-emerald-600 to-emerald-700 text-white shadow-emerald-500/25' :
+                    'ml-auto border border-orange-400/25 bg-gradient-to-br from-orange-500 via-rose-500 to-emerald-600 text-white shadow-orange-500/25' :
                     'mr-auto border border-slate-200/90 bg-white/95 text-slate-800'
                 }`}
               >
@@ -503,7 +503,7 @@ export default function CityConciergeChat({
             <div ref={bottomRef} />
           </div>
           {error && <p className="px-3 text-xs text-red-600">{error}</p>}
-          <div className={`p-2 border-t border-slate-100 flex gap-2 goout-ai-live ${loading ? 'goout-ai-thinking' : ''}`}>
+          <div className={`p-2 border-t border-orange-100 flex gap-2 bg-white ${loading ? 'goout-ai-thinking' : ''}`}>
             <input
               type="text"
               value={input}
@@ -511,13 +511,13 @@ export default function CityConciergeChat({
               onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && send()}
               placeholder="Near me? Café + park"
               disabled={loading}
-              className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-emerald-200/70 text-sm focus:ring-2 focus:ring-goout-green focus:border-transparent"
+              className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-orange-200/80 text-sm focus:ring-2 focus:ring-orange-300 focus:border-transparent"
             />
             <button
               type="button"
               onClick={send}
               disabled={loading || !input.trim()}
-              className="px-4 py-2 rounded-xl bg-goout-green text-white text-sm font-medium hover:bg-goout-accent disabled:opacity-50 shrink-0"
+              className="goout-btn-primary px-4 py-2 rounded-xl text-sm disabled:opacity-50 shrink-0"
             >
               Send
             </button>
@@ -526,7 +526,7 @@ export default function CityConciergeChat({
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="group relative z-[10052] h-14 w-14 rounded-full bg-gradient-to-br from-emerald-500 via-goout-green to-teal-600 text-white shadow-[0_12px_28px_rgba(16,185,129,0.45)] border-2 border-white/95 flex items-center justify-center font-display font-bold text-lg hover:shadow-[0_16px_34px_rgba(16,185,129,0.52)] hover:scale-105 active:scale-95 transition-all duration-300 ease-out motion-reduce:transition-none motion-reduce:hover:scale-100"
+          className="pointer-events-auto group relative z-[10052] h-14 w-14 rounded-full bg-gradient-to-br from-orange-500 via-rose-500 to-emerald-500 text-white shadow-[0_12px_28px_rgba(249,115,22,0.38)] border-2 border-white/95 flex items-center justify-center font-display font-bold text-lg hover:shadow-[0_16px_34px_rgba(249,115,22,0.48)] hover:scale-105 active:scale-95 transition-all duration-300 ease-out motion-reduce:transition-none motion-reduce:hover:scale-100"
           aria-expanded={open}
           aria-label={open ? 'Close concierge chat' : 'Open city concierge chat'}
         >

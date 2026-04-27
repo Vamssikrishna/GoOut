@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import api from '../api/client';
+import api, { getAssetUrl } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import ManualLocationPicker from '../components/explorer/ManualLocationPicker';
@@ -586,22 +586,20 @@ export default function Merchant() {
   if (!user) return null;
 
   return (
-    <div className="space-y-8 goout-animate-in relative">
-      <div className="pointer-events-none absolute inset-x-0 -top-8 h-44 bg-gradient-to-r from-emerald-400/10 via-slate-300/10 to-slate-500/10 blur-3xl" />
-      <div className="relative overflow-hidden rounded-3xl border border-emerald-300/30 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 p-6 md:p-8 shadow-2xl shadow-emerald-900/25">
-        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(16,185,129,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(16,185,129,0.08)_1px,transparent_1px)] bg-[size:26px_26px]" />
-        <div className="relative flex flex-wrap items-center justify-between gap-4">
+    <div className="space-y-8 goout-animate-in">
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 md:p-7 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.35em] text-emerald-300/90">Merchant Console</p>
-            <h1 className="mt-2 font-display font-bold text-2xl md:text-4xl bg-gradient-to-r from-white to-emerald-100 bg-clip-text text-transparent">
+            <p className="font-mono text-[10px] uppercase tracking-[0.35em] text-emerald-700">Merchant Console</p>
+            <h1 className="mt-2 font-display font-bold text-2xl md:text-4xl bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent">
               Merchant dashboard
             </h1>
-            <p className="text-sm text-slate-300 mt-2 max-w-xl">Offers, crowd signals, verification, and storefront controls in one command center.</p>
+            <p className="text-sm text-slate-600 mt-2 max-w-xl">Offers, crowd signals, verification, and storefront controls in one command center.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full border border-emerald-300/40 bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-200">
+            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
               <span className="inline-flex items-center gap-1.5">
-                <span className="inline-block h-2 w-2 rounded-full bg-red-400 animate-pulse shadow-[0_0_10px_rgba(248,113,113,0.9)]" />
+                <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
                 Live
               </span>
             </span>
@@ -612,7 +610,7 @@ export default function Merchant() {
                   setCreatingNewBusiness(true);
                   resetNewBusinessForm();
                 }}
-                className="px-4 py-2 rounded-xl text-sm font-semibold border border-emerald-200/40 bg-white/10 text-white hover:bg-white/15 transition">
+                className="px-4 py-2 rounded-xl text-sm font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition">
                 + Create new business
               </button>
             )}
@@ -689,16 +687,16 @@ export default function Merchant() {
         </div>
       )}
       {business && !creatingNewBusiness && (
-        <div className="grid gap-4 sm:grid-cols-6 goout-bento-grid">
-          <div className="sm:col-span-2 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-emerald-50 p-4 shadow-sm">
+        <div className="grid gap-4 md:grid-cols-12 goout-bento-grid">
+          <div className="md:col-span-4 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-emerald-50 p-4 shadow-sm">
             <p className="text-[11px] uppercase tracking-wider font-semibold text-slate-500">Live flash deals</p>
             <p className="mt-1 text-2xl font-bold text-slate-900">{offers.length}</p>
           </div>
-          <div className="sm:col-span-2 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-4 shadow-sm">
+          <div className="md:col-span-4 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-4 shadow-sm">
             <p className="text-[11px] uppercase tracking-wider font-semibold text-slate-500">Profile views</p>
             <p className="mt-1 text-2xl font-bold text-slate-900">{analytics?.profileViews || 0}</p>
           </div>
-          <div className="sm:col-span-2 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-4 shadow-sm">
+          <div className="md:col-span-4 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-4 shadow-sm">
             <p className="text-[11px] uppercase tracking-wider font-semibold text-slate-500">Verification</p>
             <p className="mt-1 text-sm font-semibold text-slate-900">
               {business?.localVerification?.redPin ? 'Red Pin active' : 'Standard listing'}
@@ -708,7 +706,7 @@ export default function Merchant() {
       )}
 
       {showRegistrationForm && (
-        <div className="mx-auto w-full max-w-6xl rounded-3xl border border-emerald-400/35 bg-gradient-to-b from-[#123b2c] to-[#0f2f24] p-6 shadow-lg md:p-7">
+        <div className="mx-auto w-full max-w-6xl rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-7">
           <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
             <h2 className="font-display font-semibold text-lg">
               {creatingNewBusiness ? 'Register another business' : 'Register your business'}
@@ -720,62 +718,63 @@ export default function Merchant() {
                   setCreatingNewBusiness(false);
                   resetNewBusinessForm();
                 }}
-                className="text-sm text-emerald-100 hover:text-emerald-50 underline"
+                className="text-sm text-slate-600 hover:text-slate-800 underline"
               >
                 Cancel
               </button>
             )}
           </div>
-          <p className="text-emerald-100/90 text-sm mb-6">
+          <p className="text-slate-600 text-sm mb-6">
             Complete only the essentials to go live quickly. You can edit advanced profile details later from Profile.
           </p>
 
-          <div className="mb-6 p-5 rounded-2xl border border-emerald-400/35 bg-gradient-to-br from-[#1a4a36] to-[#123627] space-y-3 shadow-sm">
-            <h3 className="text-sm font-semibold text-emerald-50">1 · AI-driven smart onboarding</h3>
-            <label className="text-xs text-emerald-100/85 block">Business narrative (natural language)</label>
-            <textarea
-              value={aiBlurb}
-              onChange={(e) => setAiBlurb(e.target.value)}
-              rows={5}
-              placeholder='e.g. "We are a small vegan bakery on 5th street, open 9–5, sourdough and cinnamon rolls, bright casual vibe."'
-              className="goout-input min-h-[120px] text-sm"
-            />
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={fillWithAi}
-                disabled={aiBusy}
-                className="px-3 py-1.5 rounded-lg bg-goout-green text-white text-sm font-medium disabled:opacity-60"
-              >
-                {aiBusy ? 'Working…' : 'Fill with AI'}
-              </button>
-            </div>
-            {aiError && <p className="text-xs text-red-600">{aiError}</p>}
-            {aiPreview && (
-              <div className="rounded-lg border border-emerald-400/40 bg-[#14382a]/90 p-3 space-y-2">
-                <p className="text-xs font-medium text-emerald-100">AI metadata preview (read-only — confirm below before submitting)</p>
-                <dl className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
-                  <div>
-                    <dt className="text-xs text-emerald-200/75">Name</dt>
-                    <dd className="font-medium text-emerald-50">{aiPreview.name || '—'}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-emerald-200/75">Category</dt>
-                    <dd className="font-medium text-emerald-50">{aiPreview.category || '—'}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-emerald-200/75">Vibe</dt>
-                    <dd className="font-medium text-emerald-50">{aiPreview.vibe || '—'}</dd>
-                  </div>
-                </dl>
+          <div className="mb-6 grid gap-4 xl:grid-cols-12">
+          <div className="p-5 rounded-2xl border border-slate-200 bg-slate-50/70 space-y-3 shadow-sm xl:col-span-5">
+              <h3 className="text-sm font-semibold text-slate-900">1 · AI-driven smart onboarding</h3>
+              <label className="text-xs text-slate-600 block">Business narrative (natural language)</label>
+              <textarea
+                value={aiBlurb}
+                onChange={(e) => setAiBlurb(e.target.value)}
+                rows={5}
+                placeholder='e.g. "We are a small vegan bakery on 5th street, open 9–5, sourdough and cinnamon rolls, bright casual vibe."'
+                className="goout-input min-h-[120px] text-sm"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={fillWithAi}
+                  disabled={aiBusy}
+                  className="px-3 py-1.5 rounded-lg bg-goout-green text-white text-sm font-medium disabled:opacity-60"
+                >
+                  {aiBusy ? 'Working…' : 'Fill with AI'}
+                </button>
               </div>
-            )}
-          </div>
+              {aiError && <p className="text-xs text-red-600">{aiError}</p>}
+              {aiPreview && (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 space-y-2">
+                  <p className="text-xs font-medium text-emerald-900">AI metadata preview (read-only — confirm below before submitting)</p>
+                  <dl className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+                    <div>
+                      <dt className="text-xs text-emerald-700/80">Name</dt>
+                      <dd className="font-medium text-emerald-900">{aiPreview.name || '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-emerald-700/80">Category</dt>
+                      <dd className="font-medium text-emerald-900">{aiPreview.category || '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-emerald-700/80">Vibe</dt>
+                      <dd className="font-medium text-emerald-900">{aiPreview.vibe || '—'}</dd>
+                    </div>
+                  </dl>
+                </div>
+              )}
+            </div>
 
-          <div className="mb-6 p-5 rounded-2xl border border-emerald-400/35 bg-gradient-to-br from-[#194533] to-[#102f23] space-y-3 shadow-sm">
-            <h3 className="text-sm font-semibold text-emerald-50">2 · Identity and verification (Red Pin layer)</h3>
+          <div className="p-5 rounded-2xl border border-slate-200 bg-slate-50/70 space-y-3 shadow-sm xl:col-span-7">
+            <h3 className="text-sm font-semibold text-slate-900">2 · Identity and verification (Red Pin layer)</h3>
             <div>
-              <label className="text-xs text-emerald-200/80 block mb-1">Official business name (map markers)</label>
+              <label className="text-xs text-slate-600 block mb-1">Official business name (map markers)</label>
               <input
                 type="text"
                 value={mapDisplayName}
@@ -783,11 +782,11 @@ export default function Merchant() {
                 placeholder="Shown on the map (e.g. storefront sign)"
                 className="goout-input text-sm"
               />
-              <p className="text-[11px] text-emerald-100/80 mt-1">Legal / listing name is below; this label is what explorers see on the pin.</p>
+              <p className="text-[11px] text-slate-500 mt-1">Legal / listing name is below; this label is what explorers see on the pin.</p>
             </div>
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-emerald-200/80 block mb-1">Business license / GST / registration proof (photo or PDF)</label>
+                <label className="text-xs text-slate-600 block mb-1">Business license / GST / registration proof (photo or PDF)</label>
                 <input
                   type="file"
                   accept="image/jpeg,image/png,image/webp,application/pdf"
@@ -807,12 +806,12 @@ export default function Merchant() {
                       setUploadBusy(false);
                     }
                   }}
-                  className="block w-full text-sm text-emerald-100"
+                  className="block w-full text-sm text-slate-700"
                 />
                 {licenseDoc?.url && <a href={licenseDoc.url} target="_blank" rel="noreferrer" className="text-xs text-goout-green underline">View license proof</a>}
               </div>
               <div>
-                <label className="text-xs text-emerald-200/80 block mb-1">Owner government ID (PAN/Aadhaar)</label>
+                <label className="text-xs text-slate-600 block mb-1">Owner government ID (PAN/Aadhaar)</label>
                 <input
                   type="file"
                   accept="image/jpeg,image/png,image/webp,application/pdf"
@@ -832,14 +831,14 @@ export default function Merchant() {
                       setUploadBusy(false);
                     }
                   }}
-                  className="block w-full text-sm text-emerald-100"
+                  className="block w-full text-sm text-slate-700"
                 />
                 {ownerIdDoc?.url && <a href={ownerIdDoc.url} target="_blank" rel="noreferrer" className="text-xs text-goout-green underline">View owner ID</a>}
               </div>
             </div>
             {verificationTemplates && (
-              <div className="rounded-lg border border-emerald-400/35 bg-[#14382a] px-3 py-2 text-xs text-emerald-100 space-y-2">
-                <p className="font-semibold text-emerald-50">Verification templates that pass OCR checks</p>
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900 space-y-2">
+                <p className="font-semibold text-emerald-900">Verification templates that pass OCR checks</p>
                 <div>
                   <p className="font-medium">{verificationTemplates?.businessCertificate?.title || 'Business certificate'}</p>
                   <ul className="list-disc ml-4 mt-1 space-y-0.5">
@@ -848,7 +847,7 @@ export default function Merchant() {
                     ))}
                   </ul>
                   {(verificationTemplates?.businessCertificate?.sampleTemplateText || []).length > 0 && (
-                    <pre className="mt-2 whitespace-pre-wrap rounded border border-emerald-500/30 bg-[#0f2f24] p-2 text-[11px] text-emerald-100">
+                    <pre className="mt-2 whitespace-pre-wrap rounded border border-emerald-300/40 bg-white p-2 text-[11px] text-emerald-900">
                       {(verificationTemplates?.businessCertificate?.sampleTemplateText || []).join('\n')}
                     </pre>
                   )}
@@ -861,7 +860,7 @@ export default function Merchant() {
                     ))}
                   </ul>
                   {(verificationTemplates?.aadhaar?.sampleTemplateText || []).length > 0 && (
-                    <pre className="mt-2 whitespace-pre-wrap rounded border border-emerald-500/30 bg-[#0f2f24] p-2 text-[11px] text-emerald-100">
+                    <pre className="mt-2 whitespace-pre-wrap rounded border border-emerald-300/40 bg-white p-2 text-[11px] text-emerald-900">
                       {(verificationTemplates?.aadhaar?.sampleTemplateText || []).join('\n')}
                     </pre>
                   )}
@@ -885,7 +884,7 @@ export default function Merchant() {
             )}
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-emerald-200/80 block mb-1">Primary mobile (OTP / alerts)</label>
+                <label className="text-xs text-slate-600 block mb-1">Primary mobile (OTP / alerts)</label>
                 <input
                   type="tel"
                   value={form.phone}
@@ -895,7 +894,7 @@ export default function Merchant() {
                 />
               </div>
               <div>
-                <label className="text-xs text-emerald-200/80 block mb-1">Owner contact email</label>
+                <label className="text-xs text-slate-600 block mb-1">Owner contact email</label>
                 <input
                   type="email"
                   value={contactEmail}
@@ -906,12 +905,13 @@ export default function Merchant() {
               </div>
             </div>
           </div>
+          </div>
 
-          <div className="mb-6 p-5 rounded-2xl border border-emerald-400/35 bg-gradient-to-br from-[#1a4332] to-[#123326] space-y-3 shadow-sm">
-            <h3 className="text-sm font-semibold text-emerald-50">3 · Geospatial and map</h3>
-            <p className="text-xs text-emerald-100/85">Pin your exact shop entrance (interactive map). You can change it anytime before submit.</p>
+          <div className="mb-6 p-5 rounded-2xl border border-slate-200 bg-slate-50/70 space-y-3 shadow-sm">
+            <h3 className="text-sm font-semibold text-slate-900">3 · Geospatial and map</h3>
+            <p className="text-xs text-slate-600">Pin your exact shop entrance (interactive map). You can change it anytime before submit.</p>
             <div className="flex items-center gap-2 flex-wrap">
-              <button type="button" onClick={takeCurrentLocation} className="px-3 py-1.5 rounded-lg bg-[#14382a] border border-emerald-400/35 text-sm text-emerald-50 hover:bg-[#184230]">
+              <button type="button" onClick={takeCurrentLocation} className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-sm text-slate-700 hover:bg-slate-50">
                 Refresh GPS
               </button>
             </div>
@@ -924,14 +924,14 @@ export default function Merchant() {
               }}
               height={260}
             />
-            {locationStatus && <p className="text-xs text-emerald-100/85">{locationStatus}</p>}
+            {locationStatus && <p className="text-xs text-slate-600">{locationStatus}</p>}
             {suggestedLocation && (
               <p className="text-xs text-goout-green">
                 Coordinates: {suggestedLocation.lat.toFixed(5)}, {suggestedLocation.lng.toFixed(5)}
               </p>
             )}
             <div>
-              <label className="text-xs text-emerald-200/80 block mb-1">Storefront photo (helps people find you)</label>
+              <label className="text-xs text-slate-600 block mb-1">Storefront photo (helps people find you)</label>
               <input
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
@@ -951,7 +951,7 @@ export default function Merchant() {
                     setUploadBusy(false);
                   }
                 }}
-                className="block w-full text-sm text-emerald-100"
+                className="block w-full text-sm text-slate-700"
               />
               {storefrontUrl && (
                 <img src={storefrontUrl} alt="Storefront" className="mt-2 max-h-36 rounded-lg border border-emerald-500/30 object-cover" />
@@ -960,11 +960,11 @@ export default function Merchant() {
           </div>
 
           <form onSubmit={registerBusiness} className="space-y-6">
-            <div className="p-5 rounded-2xl border border-emerald-400/35 bg-[#133829] shadow-sm space-y-3">
-              <h3 className="text-sm font-semibold text-emerald-50">4 · Business essentials</h3>
+            <div className="p-5 rounded-2xl border border-slate-200 bg-slate-50/70 shadow-sm space-y-3">
+              <h3 className="text-sm font-semibold text-slate-900">4 · Business essentials</h3>
               <div className="grid sm:grid-cols-2 gap-3">
                 <div className="sm:col-span-2">
-                  <label className="text-xs text-emerald-200/80 block mb-1">Legal / listing business name</label>
+                  <label className="text-xs text-slate-600 block mb-1">Legal / listing business name</label>
                   <input
                     type="text"
                     value={form.name}
@@ -974,7 +974,7 @@ export default function Merchant() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-emerald-200/80 block mb-1">Primary category</label>
+                  <label className="text-xs text-slate-600 block mb-1">Primary category</label>
                   <select
                     value={primaryCategory}
                     onChange={(e) => setPrimaryCategory(e.target.value)}
@@ -986,7 +986,7 @@ export default function Merchant() {
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs text-emerald-200/80 block mb-1">Price tier</label>
+                  <label className="text-xs text-slate-600 block mb-1">Price tier</label>
                   <div className="flex flex-wrap gap-2">
                     {[1, 2, 3, 4].map((t) => (
                       <button
@@ -994,7 +994,7 @@ export default function Merchant() {
                         type="button"
                         onClick={() => setPriceTier(t)}
                         className={`px-3 py-1.5 rounded-lg text-sm border ${
-                          priceTier === t ? 'border-emerald-300 bg-emerald-200/20 text-emerald-100 font-semibold' : 'border-emerald-500/30 bg-[#103224] text-emerald-200/90'
+                          priceTier === t ? 'border-emerald-300 bg-emerald-50 text-emerald-700 font-semibold' : 'border-slate-200 bg-white text-slate-700'
                         }`}
                       >
                         {'₹'.repeat(t)}
@@ -1014,7 +1014,7 @@ export default function Merchant() {
                 />
               )}
               <div>
-                <label className="text-xs text-emerald-200/80 block mb-1">Customer-facing vibe</label>
+                <label className="text-xs text-slate-600 block mb-1">Customer-facing vibe</label>
                 <input
                   type="text"
                   value={vibe}
@@ -1024,7 +1024,7 @@ export default function Merchant() {
                 />
               </div>
               <div>
-                <label className="text-xs text-emerald-200/80 block mb-1">Description</label>
+                <label className="text-xs text-slate-600 block mb-1">Description</label>
                 <textarea
                   value={form.description}
                   onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
@@ -1034,7 +1034,7 @@ export default function Merchant() {
               </div>
               <div className="grid sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-emerald-200/80 block mb-1">Primary mobile</label>
+                  <label className="text-xs text-slate-600 block mb-1">Primary mobile</label>
                   <input
                     type="tel"
                     value={form.phone}
@@ -1044,7 +1044,7 @@ export default function Merchant() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-emerald-200/80 block mb-1">Owner contact email</label>
+                  <label className="text-xs text-slate-600 block mb-1">Owner contact email</label>
                   <input
                     type="email"
                     value={contactEmail}
@@ -1054,7 +1054,7 @@ export default function Merchant() {
                   />
                 </div>
               </div>
-              <label className="flex items-center gap-2 text-sm text-emerald-100">
+              <label className="flex items-center gap-2 text-sm text-slate-700">
                 <input
                   type="checkbox"
                   checked={Boolean(form.isFree)}
@@ -1064,20 +1064,20 @@ export default function Merchant() {
               </label>
             </div>
 
-            <div className="p-5 rounded-2xl border border-emerald-400/35 bg-[#133829] shadow-sm space-y-3">
-              <h3 className="text-sm font-semibold text-emerald-50">5 · Menu essentials (required)</h3>
-              <p className="text-xs text-emerald-100/85">
+            <div className="p-5 rounded-2xl border border-slate-200 bg-slate-50/70 shadow-sm space-y-3">
+              <h3 className="text-sm font-semibold text-slate-900">5 · Menu essentials (required)</h3>
+              <p className="text-xs text-slate-600">
                 Add at least one menu item with INR price. Average price is auto-derived and menu PDF is generated after registration.
               </p>
-              <div className="space-y-2 rounded-lg border border-emerald-500/30 bg-[#103224] p-3">
+              <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
                 {menuRows.map((row, idx) => (
-                  <div key={`onboard-${idx}`} className="grid grid-cols-12 gap-2">
+                  <div key={`onboard-${idx}`} className="grid grid-cols-1 gap-2 sm:grid-cols-12">
                     <input
                       type="text"
                       value={row.name}
                       onChange={(e) => setMenuRows((rows) => rows.map((r, i) => (i === idx ? { ...r, name: e.target.value } : r)))}
                       placeholder="Item"
-                      className="col-span-6 px-2 py-1.5 border border-emerald-500/35 rounded text-sm bg-[#123a2b] text-emerald-50"
+                      className="sm:col-span-6 px-2 py-1.5 border border-slate-200 rounded text-sm bg-white text-slate-900"
                     />
                     <input
                       type="number"
@@ -1086,29 +1086,29 @@ export default function Merchant() {
                       value={row.price}
                       onChange={(e) => setMenuRows((rows) => rows.map((r, i) => (i === idx ? { ...r, price: e.target.value } : r)))}
                       placeholder="₹ Price"
-                      className="col-span-3 px-2 py-1.5 border border-emerald-500/35 rounded text-sm bg-[#123a2b] text-emerald-50"
+                      className="sm:col-span-3 px-2 py-1.5 border border-slate-200 rounded text-sm bg-white text-slate-900"
                     />
                     <input
                       type="text"
                       value={row.description}
                       onChange={(e) => setMenuRows((rows) => rows.map((r, i) => (i === idx ? { ...r, description: e.target.value } : r)))}
                       placeholder="Note"
-                      className="col-span-3 px-2 py-1.5 border border-emerald-500/35 rounded text-sm bg-[#123a2b] text-emerald-50"
+                      className="sm:col-span-3 px-2 py-1.5 border border-slate-200 rounded text-sm bg-white text-slate-900"
                     />
                   </div>
                 ))}
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => setMenuRows((rows) => [...rows, { name: '', price: '', description: '' }])} className="px-3 py-1.5 text-xs rounded border border-emerald-500/35 text-emerald-100 hover:bg-emerald-200/10">
+                  <button type="button" onClick={() => setMenuRows((rows) => [...rows, { name: '', price: '', description: '' }])} className="px-3 py-1.5 text-xs rounded border border-slate-200 text-slate-700 hover:bg-slate-50">
                     + Add item
                   </button>
-                  <button type="button" onClick={() => setMenuRows([{ name: '', price: '', description: '' }])} className="px-3 py-1.5 text-xs rounded border border-emerald-500/35 text-emerald-100 hover:bg-emerald-200/10">
+                  <button type="button" onClick={() => setMenuRows([{ name: '', price: '', description: '' }])} className="px-3 py-1.5 text-xs rounded border border-slate-200 text-slate-700 hover:bg-slate-50">
                     Reset
                   </button>
                 </div>
-                <div className="rounded-md bg-[#0f2f24] px-3 py-2 text-xs text-emerald-100">
+                <div className="rounded-md bg-slate-100 px-3 py-2 text-xs text-slate-700">
                   Preview avg price (derived): ₹{averagePriceFromItems(normalizeMenuRows(menuRows))}
                 </div>
-                <label className="flex items-center gap-2 text-xs text-emerald-100">
+                <label className="flex items-center gap-2 text-xs text-slate-700">
                   <input type="checkbox" checked={menuPreviewConfirmed} onChange={(e) => setMenuPreviewConfirmed(e.target.checked)} />
                   I reviewed the menu preview.
                 </label>
@@ -1238,7 +1238,7 @@ export default function Merchant() {
               <p className="text-sm text-slate-600">
                 Current PDF:{' '}
                 <a
-                  href={business.menuCatalogFileUrl}
+                  href={getAssetUrl(business.menuCatalogFileUrl)}
                   target="_blank"
                   rel="noreferrer"
                   className="text-goout-green font-semibold underline hover:text-emerald-700">

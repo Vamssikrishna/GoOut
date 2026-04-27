@@ -552,17 +552,18 @@ export default function Buddies() {
 
   return (
     <div className="space-y-8 goout-animate-in">
-      <div className="goout-glass-card rounded-2xl p-6 md:p-7 goout-hover-lift border border-slate-200">
-        <div className="flex flex-wrap justify-between items-center gap-4">
+      <div className="goout-explorer-hero rounded-[1.75rem] p-6 md:p-7">
+        <div className="relative flex flex-col gap-4">
           <div>
-            <h1 className="font-display font-bold text-2xl md:text-3xl bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent">
+            <p className="goout-premium-kicker mb-2">Social discovery</p>
+            <h1 className="font-display font-bold text-3xl md:text-4xl bg-gradient-to-r from-slate-950 via-orange-600 to-emerald-700 bg-clip-text text-transparent">
               GoOut Buddies
             </h1>
             <p className="text-sm text-slate-600 mt-2 max-w-xl leading-relaxed">
               AI-assisted interest matching, Red Pin or public meetups only, and Buddy Mode privacy.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 md:justify-end">
             <button type="button" onClick={refreshData} className="goout-btn-ghost text-sm py-2 px-3">
               Refresh
             </button>
@@ -589,63 +590,65 @@ export default function Buddies() {
         )}
       </div>
 
-      <div className="goout-surface rounded-2xl p-5 border border-slate-200">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h2 className="font-display font-semibold text-slate-900">Buddy Mode</h2>
-            <p className="text-sm text-slate-600 mt-1 max-w-xl">
-              When off, you are hidden from suggested partner lists and open group discovery hosts. Turn on when you want to explore with someone.
-            </p>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="goout-premium-card rounded-2xl p-5 lg:col-span-2">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h2 className="font-display font-semibold text-slate-900">Buddy Mode</h2>
+              <p className="text-sm text-slate-600 mt-1 max-w-xl">
+                When off, you are hidden from suggested partner lists and open group discovery hosts. Turn on when you want to explore with someone.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={buddyBusy}
+              onClick={toggleBuddyMode}
+              className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition disabled:opacity-60 ${
+                user?.buddyMode ?
+                  'bg-goout-green text-white border border-emerald-300/40' :
+                  'bg-slate-800/90 text-slate-100 border border-indigo-300/40 hover:bg-slate-700/90'
+              }`}>
+              <span
+                className={`h-2.5 w-2.5 rounded-full ${user?.buddyMode ? 'bg-emerald-100' : 'bg-slate-500'}`}
+                aria-hidden
+              />
+              <span>Buddy Mode</span>
+              <span className="rounded-full border border-current/35 px-2 py-0.5 text-[11px] leading-none tracking-wide">
+                {buddyBusy ? 'SAVING' : user?.buddyMode ? 'ON' : 'OFF'}
+              </span>
+            </button>
           </div>
-          <button
-            type="button"
-            disabled={buddyBusy}
-            onClick={toggleBuddyMode}
-            className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition disabled:opacity-60 ${
-              user?.buddyMode ?
-                'bg-goout-green text-white border border-emerald-300/40' :
-                'bg-slate-800/90 text-slate-100 border border-indigo-300/40 hover:bg-slate-700/90'
-            }`}>
-            <span
-              className={`h-2.5 w-2.5 rounded-full ${user?.buddyMode ? 'bg-emerald-100' : 'bg-slate-500'}`}
-              aria-hidden
-            />
-            <span>Buddy Mode</span>
-            <span className="rounded-full border border-current/35 px-2 py-0.5 text-[11px] leading-none tracking-wide">
-              {buddyBusy ? 'SAVING' : user?.buddyMode ? 'ON' : 'OFF'}
-            </span>
-          </button>
         </div>
-      </div>
 
-      <div className="grid sm:grid-cols-3 gap-3">
-        <div className="goout-soft-card rounded-xl p-4">
-          <p className="text-xs text-slate-500 uppercase tracking-wide">Your Groups</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">{groupOnlyGroups.length}</p>
-        </div>
-        <div className="goout-soft-card rounded-xl p-4">
-          <p className="text-xs text-slate-500 uppercase tracking-wide">Open Nearby</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">{openMatchCount}</p>
-        </div>
-        <div className="goout-soft-card rounded-xl p-4">
-          <p className="text-xs text-slate-500 uppercase tracking-wide">Pending</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">{pendingForMe + pendingGroupInvites.length + pendingPairInvites.length}</p>
-        </div>
-      </div>
-
-      <div className="goout-surface rounded-2xl p-5 border border-slate-200">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="font-display font-semibold text-slate-900">Buddy calendar</h2>
-            <p className="text-xs text-slate-600 mt-1">Open your plans in a quick popup view.</p>
+        <div className="goout-premium-card rounded-2xl p-5">
+          <div className="flex h-full flex-col justify-between gap-3">
+            <div>
+              <h2 className="font-display font-semibold text-slate-900">Buddy calendar</h2>
+              <p className="text-xs text-slate-600 mt-1">Open your plans in a quick popup view.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowCalendarModal(true)}
+              className="px-4 py-2 rounded-lg bg-goout-green text-white text-sm font-medium shadow-sm hover:bg-goout-accent transition"
+            >
+              Open Calendar
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowCalendarModal(true)}
-            className="px-4 py-2 rounded-lg bg-goout-green text-white text-sm font-medium shadow-sm hover:bg-goout-accent transition"
-          >
-            Open Calendar
-          </button>
+        </div>
+
+        <div className="grid sm:grid-cols-3 gap-3 lg:col-span-3">
+          <div className="goout-premium-card rounded-xl p-4">
+            <p className="text-xs text-slate-500 uppercase tracking-wide">Your Groups</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{groupOnlyGroups.length}</p>
+          </div>
+          <div className="goout-premium-card rounded-xl p-4">
+            <p className="text-xs text-slate-500 uppercase tracking-wide">Open Nearby</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{openMatchCount}</p>
+          </div>
+          <div className="goout-premium-card rounded-xl p-4">
+            <p className="text-xs text-slate-500 uppercase tracking-wide">Pending</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{pendingForMe + pendingGroupInvites.length + pendingPairInvites.length}</p>
+          </div>
         </div>
       </div>
 
@@ -1196,7 +1199,7 @@ export default function Buddies() {
                 Close
               </button>
             </div>
-            <div className="max-h-[calc(100vh-7rem)] overflow-y-auto">
+            <div className="max-h-[calc(100dvh-7rem)] overflow-y-auto">
               <ExplorerCalendar
                 plans={calendarPlans}
                 loading={loading}

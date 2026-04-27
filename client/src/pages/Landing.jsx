@@ -161,9 +161,9 @@ export default function Landing() {
 
   return (
     <div className="goout-app-mesh relative min-h-screen overflow-x-hidden font-display text-slate-900 goout-page-shell">
-      <div className="goout-hero-orb w-[min(90vw,28rem)] h-[min(90vw,28rem)] -top-24 -left-24 bg-rose-400/35 animate-float-slow" />
-      <div className="goout-hero-orb w-[min(70vw,22rem)] h-[min(70vw,22rem)] top-32 -right-16 bg-orange-300/30 animate-float-delayed" />
-      <div className="goout-hero-orb w-[min(50vw,16rem)] h-[min(50vw,16rem)] bottom-20 left-1/3 bg-red-300/20 animate-pulse-soft" />
+      <div className="goout-hero-orb w-[min(90vw,28rem)] h-[min(90vw,28rem)] -top-24 -left-24 bg-orange-300/35 animate-float-slow" />
+      <div className="goout-hero-orb w-[min(70vw,22rem)] h-[min(70vw,22rem)] top-32 -right-16 bg-emerald-300/30 animate-float-delayed" />
+      <div className="goout-hero-orb w-[min(50vw,16rem)] h-[min(50vw,16rem)] bottom-20 left-1/3 bg-rose-300/20 animate-pulse-soft" />
 
       <nav className="relative mx-auto w-full max-w-[1240px] flex justify-between items-center px-5 md:px-8 py-6 z-10 animate-fade-in">
         <span className="goout-brand-link text-2xl font-extrabold tracking-tight md:text-3xl">GoOut</span>
@@ -175,7 +175,7 @@ export default function Landing() {
           </Link>
           <Link
             to="/register"
-            className="goout-link-landing bg-emerald-600 text-white shadow-lg shadow-emerald-500/30 transition-shadow duration-300 hover:bg-emerald-700 hover:shadow-xl">
+            className="goout-link-landing bg-orange-500 text-white shadow-lg shadow-orange-500/25 transition-shadow duration-300 hover:bg-orange-600 hover:shadow-xl">
             Get started
           </Link>
         </div>
@@ -184,15 +184,15 @@ export default function Landing() {
       <main className="relative z-10 mx-auto w-full max-w-[1240px] px-5 md:px-8 pb-28">
         <section className="pt-6 md:pt-14 lg:pt-20 lg:flex lg:items-end lg:justify-between gap-14">
           <div className="max-w-2xl goout-animate-stagger">
-            <p className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.22em] text-rose-700 shadow-sm">
+            <p className="inline-flex items-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.22em] text-orange-700 shadow-sm">
               Hyper-local
-              <span className="h-1 w-1 rounded-full bg-rose-400" aria-hidden />
+              <span className="h-1 w-1 rounded-full bg-emerald-400" aria-hidden />
               Social
             </p>
             <h1 className="mt-5 text-4xl sm:text-5xl md:text-6xl lg:text-[4.25rem] font-extrabold leading-[1.02] tracking-tight text-slate-900">
               Discover local.
               <br />
-              <span className="bg-gradient-to-r from-rose-500 to-orange-500 bg-clip-text text-transparent drop-shadow-sm">
+              <span className="bg-gradient-to-r from-orange-500 via-rose-500 to-emerald-600 bg-clip-text text-transparent drop-shadow-sm">
                 Explore together.
               </span>
             </h1>
@@ -211,12 +211,12 @@ export default function Landing() {
             <div className="mt-10 flex flex-wrap gap-4">
               <Link
                 to="/register"
-                className="goout-link-landing px-8 py-4 text-lg rounded-2xl bg-rose-500 text-white shadow-xl shadow-rose-500/30 hover:bg-rose-600 hover:shadow-2xl">
+                className="goout-link-landing px-8 py-4 text-lg rounded-2xl bg-orange-500 text-white shadow-xl shadow-orange-500/30 hover:bg-orange-600 hover:shadow-2xl">
                 Start exploring
               </Link>
               <Link
                 to="/login"
-                className="goout-link-landing px-8 py-4 text-lg rounded-2xl border-2 border-rose-200 bg-white text-slate-800 hover:border-orange-300 hover:bg-orange-50">
+                className="goout-link-landing px-8 py-4 text-lg rounded-2xl border-2 border-orange-200 bg-white text-slate-800 hover:border-orange-300 hover:bg-orange-50">
                 Sign in
               </Link>
             </div>
@@ -236,7 +236,7 @@ export default function Landing() {
                 {nearbyItems.map((item) => (
                   <div
                     key={item}
-                    className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-slate-700">
+                    className="rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-slate-700">
                     {item}
                   </div>
                 ))}
@@ -271,7 +271,7 @@ export default function Landing() {
           <div className="goout-glass-card goout-hover-lift rounded-3xl border border-slate-200 p-8 md:p-10 mb-8 md:mb-10 shadow-md">
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-8">
               <div className="max-w-xl">
-                <p className="text-xs font-bold uppercase tracking-[0.2em] text-emerald-700/90 mb-2">How it works</p>
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-700 mb-2">How it works</p>
                 <h2 className="font-display text-2xl md:text-3xl font-bold text-slate-900 tracking-tight">
                   Built for walking, not scrolling.
                 </h2>

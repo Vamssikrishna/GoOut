@@ -373,56 +373,59 @@ export default function CostComparator({
 
   return (
     <div className="space-y-6">
-      <div className="rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-white p-5 md:p-6 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="font-display font-semibold text-lg text-slate-900">Compare Journey</h2>
-            <p className="text-sm text-slate-600 mt-1">
-              Go to a place, track live, confirm arrival, then collect feedback + meal savings.
-            </p>
-          </div>
-          <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold border ${
-            hasReachedDestination ?
-              'bg-emerald-100 text-emerald-800 border-emerald-300' :
-              'bg-amber-50 text-amber-800 border-amber-200'
-          }`}>
-            {hasReachedDestination ? 'Reached destination' : 'In journey'}
-          </span>
-        </div>
-        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          {journeySteps.map((step) => (
-            <div
-              key={step.key}
-              className={`rounded-xl border px-3 py-2 text-sm ${
-                step.done ?
-                  'border-emerald-300 bg-emerald-50 text-emerald-900' :
-                  'border-slate-200 bg-white text-slate-600'
-              }`}
-            >
-              <p className="font-semibold">{step.done ? 'Done' : 'Pending'}</p>
-              <p className="text-xs mt-0.5">{step.label}</p>
+      <div className="grid gap-6 lg:grid-cols-12">
+        <div className="goout-premium-card rounded-3xl p-5 md:p-6 lg:col-span-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="goout-premium-kicker mb-2">Journey intelligence</p>
+              <h2 className="font-display font-semibold text-xl text-slate-900">Compare Journey</h2>
+              <p className="text-sm text-slate-600 mt-1">
+                Go to a place, track live, confirm arrival, then collect feedback + meal savings.
+              </p>
             </div>
-          ))}
+            <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold border ${
+              hasReachedDestination ?
+                'bg-emerald-100 text-emerald-800 border-emerald-300' :
+                'bg-amber-50 text-amber-800 border-amber-200'
+            }`}>
+              {hasReachedDestination ? 'Reached destination' : 'In journey'}
+            </span>
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+            {journeySteps.map((step) => (
+              <div
+                key={step.key}
+                className={`rounded-xl border px-3 py-2 text-sm ${
+                  step.done ?
+                    'border-emerald-300 bg-emerald-50 text-emerald-900' :
+                    'border-slate-200 bg-white text-slate-600'
+                }`}
+              >
+                <p className="font-semibold">{step.done ? 'Done' : 'Pending'}</p>
+                <p className="text-xs mt-0.5">{step.label}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+            {!destinationPoint ? (
+              <p>Tap Go on any local/public pin to begin live route tracking.</p>
+            ) : !hasReachedDestination ? (
+              <p>
+                Heading to <strong>{activeDestinationName || 'selected place'}</strong> · {liveDistanceLabel}
+              </p>
+            ) : !movedAwayAfterArrival ? (
+              <p>You&apos;ve reached <strong>{activeDestinationName || 'this place'}</strong>, enjoy.</p>
+            ) : (
+              <p>You moved away from the place. Leave quick feedback to help local business growth.</p>
+            )}
+          </div>
         </div>
-        <div className="mt-4 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-          {!destinationPoint ? (
-            <p>Tap Go on any local/public pin to begin live route tracking.</p>
-          ) : !hasReachedDestination ? (
-            <p>
-              Heading to <strong>{activeDestinationName || 'selected place'}</strong> · {liveDistanceLabel}
-            </p>
-          ) : !movedAwayAfterArrival ? (
-            <p>You&apos;ve reached <strong>{activeDestinationName || 'this place'}</strong>, enjoy.</p>
-          ) : (
-            <p>You moved away from the place. Leave quick feedback to help local business growth.</p>
-          )}
-        </div>
-      </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+        <div className="goout-premium-card rounded-2xl p-6 space-y-4 lg:col-span-8">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <h3 className="font-display font-semibold text-lg">Plan Compare</h3>
+            <p className="goout-premium-kicker mb-2">Best value</p>
+            <h3 className="font-display font-semibold text-xl">Plan Compare</h3>
             <p className="text-slate-600 text-sm">Pick two local options and compute value before you go.</p>
           </div>
           {visitStats && visitStats.totalVisits > 0 && (
@@ -576,9 +579,11 @@ export default function CostComparator({
             )}
           </div>
         )}
+        </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="goout-premium-card rounded-2xl p-6">
         <h3 className="font-display font-semibold text-lg mb-2">Post-Visit Feedback</h3>
         <p className="text-sm text-slate-600 mb-3">
           {movedAwayAfterArrival ?
@@ -661,7 +666,7 @@ export default function CostComparator({
         {feedbackStatus && <p className="mt-2 text-sm text-slate-600">{feedbackStatus}</p>}
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-3">
+      <div className="goout-premium-card rounded-2xl p-6 space-y-3">
         <h3 className="font-display font-semibold text-lg">Meal Price Reality Check</h3>
         <p className="text-xs text-slate-600">
           Tell what you ate. We total local menu prices and compare against Swiggy/Zomato estimate.
@@ -732,8 +737,9 @@ export default function CostComparator({
           </div>
         )}
       </div>
+      </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+      <div className="goout-premium-card rounded-2xl p-6">
         <h3 className="font-display font-semibold text-lg mb-4">Visit History</h3>
         {!visitHistoryRows.length ? (
           <p className="text-sm text-slate-600">No visits logged yet.</p>
