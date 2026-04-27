@@ -105,6 +105,7 @@ app.use('/api/concierge', conciergeRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/place-photos', placePhotosRoutes);
 
+app.get('/', (req, res) => res.json({ status: 'ok', message: 'GoOut API running', health: '/api/health' }));
 app.get('/api/health', (req, res) => res.json({ status: 'ok', message: 'GoOut API running' }));
 
 app.use((err, req, res, next) => {
