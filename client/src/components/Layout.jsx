@@ -200,7 +200,7 @@ export default function Layout() {
                 <span className="goout-brand-link font-display text-xl font-bold tracking-tight sm:text-2xl">GoOut</span>
               </NavLink>
               <HeaderWalkAnimation />
-              <nav className="goout-nav-cluster flex items-center gap-1 sm:gap-2 flex-wrap justify-end rounded-xl border border-orange-100 bg-white px-1.5 py-1 sm:rounded-2xl max-w-full shadow-sm">
+              <nav className="goout-nav-cluster flex items-center gap-1 sm:gap-2 flex-wrap justify-end rounded-xl border border-orange-100 bg-white px-1.5 py-1 sm:rounded-2xl max-w-full shadow-sm" aria-label="Primary app navigation">
                 {user?.role !== 'merchant' &&
                 <>
                     <div className="goout-explore-nav-wrap relative">
@@ -264,7 +264,7 @@ export default function Layout() {
           </div>
         </div>
       </header>
-      <main className="relative z-10 w-full px-4 py-8 sm:px-6 lg:px-8 goout-grid-overlay motion-safe:goout-animate-in">
+      <main className="relative z-10 w-full px-4 py-6 sm:py-8 sm:px-6 lg:px-8 goout-grid-overlay motion-safe:goout-animate-in pb-[max(2rem,env(safe-area-inset-bottom,0px))]">
         <div className="mx-auto w-full max-w-[1240px]">
           {cachedRoutes.map((route) =>
           <section

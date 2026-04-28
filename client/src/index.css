@@ -247,6 +247,12 @@ body.theme-dark .goout-input {
   color: #e2e8f0 !important;
 }
 
+body.theme-dark .goout-search-shell {
+  background: linear-gradient(165deg, rgba(15, 23, 42, 0.96), rgba(30, 41, 59, 0.92)) !important;
+  border-color: rgba(129, 140, 248, 0.42) !important;
+  box-shadow: 0 16px 34px rgba(2, 6, 23, 0.42) !important;
+}
+
 body.theme-dark .goout-label,
 body.theme-dark .goout-muted {
   color: #94a3b8 !important;
@@ -623,11 +629,13 @@ button:focus-visible {
 
 .goout-input {
   width: 100%;
-  border-radius: 0.75rem;
+  min-height: 2.85rem;
+  border-radius: 1rem;
   border: 1px solid #cbd5e1;
   background: #ffffff;
   color: #0f172a;
-  padding: 0.65rem 1rem;
+  padding: 0.78rem 1rem;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.02), 0 10px 24px rgba(15, 23, 42, 0.04);
   transition:
     border-color 0.2s ease,
     box-shadow 0.2s ease,
@@ -641,7 +649,7 @@ button:focus-visible {
 .goout-input:focus {
   outline: none;
   border-color: rgba(255, 104, 55, 0.68);
-  box-shadow: 0 0 0 3px rgba(255, 104, 55, 0.14);
+  box-shadow: 0 0 0 4px rgba(255, 104, 55, 0.14), 0 16px 32px rgba(15, 23, 42, 0.08);
 }
 
 .goout-btn-primary {
@@ -649,8 +657,9 @@ button:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  padding: 0.72rem 1.45rem;
-  border-radius: 0.75rem;
+  min-height: 2.85rem;
+  padding: 0.78rem 1.45rem;
+  border-radius: 1rem;
   font-weight: 700;
   font-size: 0.9rem;
   line-height: 1;
@@ -659,6 +668,8 @@ button:focus-visible {
   border: 1px solid rgba(255, 104, 55, 0.65);
   cursor: pointer;
   box-shadow: 0 12px 26px rgba(255, 104, 55, 0.28);
+  touch-action: manipulation;
+  user-select: none;
   transition:
     transform 0.2s cubic-bezier(0.22, 1, 0.36, 1),
     box-shadow 0.25s ease,
@@ -687,8 +698,9 @@ button:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0.72rem 1.25rem;
-  border-radius: 0.75rem;
+  min-height: 2.85rem;
+  padding: 0.78rem 1.25rem;
+  border-radius: 1rem;
   font-weight: 600;
   font-size: 0.9rem;
   line-height: 1;
@@ -696,6 +708,9 @@ button:focus-visible {
   background: #ffffff;
   border: 1px solid #e2e8f0;
   cursor: pointer;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+  touch-action: manipulation;
+  user-select: none;
   transition:
     background 0.2s ease,
     border-color 0.2s ease,
@@ -713,6 +728,51 @@ button:focus-visible {
 
 .goout-btn-ghost:active {
   transform: translateY(0) scale(0.985);
+}
+
+.goout-btn-primary:focus-visible,
+.goout-btn-ghost:focus-visible,
+.goout-input:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid rgba(255, 104, 55, 0.28);
+  outline-offset: 2px;
+}
+
+.goout-app-button,
+.goout-icon-button {
+  min-height: 2.75rem;
+  min-width: 2.75rem;
+  border-radius: 1rem;
+  touch-action: manipulation;
+  transition:
+    transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.22s ease,
+    background 0.22s ease,
+    border-color 0.22s ease;
+}
+
+.goout-app-button:active,
+.goout-icon-button:active {
+  transform: scale(0.97);
+}
+
+.goout-search-shell {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  border-radius: 1.25rem;
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.08);
+  padding: 0.45rem;
+}
+
+.goout-search-shell input,
+.goout-search-input {
+  min-height: 2.9rem;
+  border-radius: 1rem;
 }
 
 .goout-role-pill {
@@ -1633,9 +1693,17 @@ body.theme-dark ::-webkit-scrollbar-thumb {
 
   .goout-btn-primary,
   .goout-btn-ghost {
-    min-height: 2.65rem;
+    min-height: 2.9rem;
     font-size: 0.88rem;
     padding: 0.72rem 1.15rem;
+  }
+
+  .goout-app-button,
+  .goout-icon-button,
+  button[aria-label],
+  a[aria-label] {
+    min-height: 2.75rem;
+    min-width: 2.75rem;
   }
 
   .goout-surface,
@@ -1657,8 +1725,18 @@ body.theme-dark ::-webkit-scrollbar-thumb {
   select,
   .goout-input,
   .goout-neon-input {
-    min-height: 2.75rem;
+    min-height: 2.95rem;
     font-size: 1rem;
+  }
+
+  .goout-responsive-stack {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  .goout-responsive-stack > * {
+    width: 100%;
   }
 
   table {
@@ -1678,6 +1756,7 @@ body.theme-dark ::-webkit-scrollbar-thumb {
   main {
     padding-left: 0.75rem !important;
     padding-right: 0.75rem !important;
+    padding-bottom: max(2rem, env(safe-area-inset-bottom, 0px)) !important;
   }
 
   .goout-brand-link {
@@ -1710,10 +1789,15 @@ body.theme-dark ::-webkit-scrollbar-thumb {
 
   .goout-btn-primary,
   .goout-btn-ghost {
-    min-height: 2.55rem;
+    min-height: 2.9rem;
     font-size: 0.84rem;
     padding: 0.68rem 1rem;
-    border-radius: 0.7rem;
+    border-radius: 0.9rem;
+  }
+
+  .goout-search-shell {
+    border-radius: 1rem;
+    padding: 0.35rem;
   }
 
   .goout-auth-shell {

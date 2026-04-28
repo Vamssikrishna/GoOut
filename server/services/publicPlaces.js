@@ -47,7 +47,21 @@ async function fetchGooglePlacesTextOnce({ searchTerm, latNum, lngNum, radiusMet
         headers: {
           'Content-Type': 'application/json',
           'X-Goog-Api-Key': apiKey,
-          'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.primaryType,places.formattedAddress'
+          'X-Goog-FieldMask': [
+            'places.id',
+            'places.displayName',
+            'places.location',
+            'places.primaryType',
+            'places.types',
+            'places.formattedAddress',
+            'places.rating',
+            'places.userRatingCount',
+            'places.priceLevel',
+            'places.regularOpeningHours',
+            'places.websiteUri',
+            'places.nationalPhoneNumber',
+            'places.editorialSummary'
+          ].join(',')
         },
         body
       },
@@ -83,12 +97,76 @@ async function fetchGooglePlacesTextOnce({ searchTerm, latNum, lngNum, radiusMet
         id: p.id || `${la},${lo}`,
         name: p.displayName?.text || p.formattedAddress || 'Unnamed place',
         category: p.primaryType || 'public_space',
+        types: Array.isArray(p.types) ? p.types.slice(0, 8) : [],
+        address: p.formattedAddress || '',
+        rating: p.rating ?? null,
+        ratingCount: p.userRatingCount ?? null,
+        priceLevel: p.priceLevel || '',
+        openingHoursText: Array.isArray(p.regularOpeningHours?.weekdayDescriptions) ?
+          p.regularOpeningHours.weekdayDescriptions.slice(0, 7) :
+          [],
+        websiteUri: p.websiteUri || '',
+        phone: p.nationalPhoneNumber || '',
+        editorialSummary: p.editorialSummary?.text || '',
         lat: la,
         lng: lo,
         source: 'google_places'
       };
     })
     .filter(Boolean);
+}
+
+async function fetchGooglePlaceDetails(placeId) {
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY || '';
+  const id = String(placeId || '').trim();
+  if (!apiKey || !id) return null;
+  const resp = await fetchWithTimeout(
+    `https://places.googleapis.com/v1/places/${encodeURIComponent(id)}`,
+    {
+      headers: {
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask': [
+          'id',
+          'displayName',
+          'formattedAddress',
+          'primaryType',
+          'types',
+          'rating',
+          'userRatingCount',
+          'priceLevel',
+          'regularOpeningHours',
+          'websiteUri',
+          'nationalPhoneNumber',
+          'editorialSummary',
+          'location'
+        ].join(',')
+      }
+    },
+    7000
+  );
+  if (!resp.ok) return null;
+  const p = await resp.json();
+  const la = Number(p?.location?.latitude);
+  const lo = Number(p?.location?.longitude);
+  return {
+    id: p.id || id,
+    name: p.displayName?.text || p.formattedAddress || 'Unnamed place',
+    category: p.primaryType || 'public_space',
+    types: Array.isArray(p.types) ? p.types.slice(0, 10) : [],
+    address: p.formattedAddress || '',
+    rating: p.rating ?? null,
+    ratingCount: p.userRatingCount ?? null,
+    priceLevel: p.priceLevel || '',
+    openingHoursText: Array.isArray(p.regularOpeningHours?.weekdayDescriptions) ?
+      p.regularOpeningHours.weekdayDescriptions.slice(0, 7) :
+      [],
+    websiteUri: p.websiteUri || '',
+    phone: p.nationalPhoneNumber || '',
+    editorialSummary: p.editorialSummary?.text || '',
+    lat: Number.isFinite(la) ? la : null,
+    lng: Number.isFinite(lo) ? lo : null,
+    source: 'google_places_details'
+  };
 }
 
 function buildGooglePlacesSearchTerms(userMessage) {
@@ -226,6 +304,7 @@ export function buildGooglePlacesConciergeQuery(userMessage) {
  */
 export async function fetchPublicSpacesNear(lat, lng, radiusMeters = 5000, userMessage = '', opts = {}) {
   const maxResults = Math.min(80, Math.max(8, Number(opts.maxResults) || 20));
+  const detailsCap = Math.min(12, Math.max(0, Number(opts.detailsCap) || 0));
   const latNum = Number(lat);
   const lngNum = Number(lng);
   if (!Number.isFinite(latNum) || !Number.isFinite(lngNum)) return [];
@@ -265,11 +344,39 @@ export async function fetchPublicSpacesNear(lat, lng, radiusMeters = 5000, userM
     }
   }
 
-  return Array.from(merged.values())
+  let rows = Array.from(merged.values())
     .map((p) => ({
       ...p,
       distanceMeters: haversineMeters(latNum, lngNum, p.lat, p.lng)
     }))
     .sort((a, b) => a.distanceMeters - b.distanceMeters)
     .slice(0, maxResults);
+
+  if (process.env.GOOGLE_MAPS_API_KEY && detailsCap > 0) {
+    const enriched = [];
+    for (const row of rows.slice(0, detailsCap)) {
+      if (row.source === 'google_places' && row.id) {
+        try {
+          const detail = await fetchGooglePlaceDetails(row.id);
+          if (detail && Number.isFinite(Number(detail.lat)) && Number.isFinite(Number(detail.lng))) {
+            enriched.push({
+              ...row,
+              ...detail,
+              distanceMeters: haversineMeters(latNum, lngNum, Number(detail.lat), Number(detail.lng))
+            });
+            await delay(80);
+            continue;
+          }
+        } catch (e) {
+          console.warn('[publicPlaces] Google details', e?.message || e);
+        }
+      }
+      enriched.push(row);
+    }
+    rows = [...enriched, ...rows.slice(detailsCap)]
+      .sort((a, b) => a.distanceMeters - b.distanceMeters)
+      .slice(0, maxResults);
+  }
+
+  return rows;
 }

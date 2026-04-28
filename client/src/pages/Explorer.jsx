@@ -1451,7 +1451,7 @@ export default function Explorer() {
                     onChange={(e) => setCityLookup(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && switchToCity()}
                     placeholder="City (e.g. Mumbai)"
-                    className="w-full sm:w-[250px] px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-goout-green focus:border-transparent"
+                    className="goout-input w-full sm:w-[250px] text-sm"
                   />
                   <button
                     type="button"
@@ -1462,7 +1462,7 @@ export default function Explorer() {
                   </button>
                 </div>
               )}
-              <div className="relative min-w-0 flex-[1_1_15rem] goout-ai-live rounded-xl overflow-hidden">
+              <div className="relative min-w-0 flex-[1_1_15rem] goout-ai-live rounded-2xl overflow-hidden shadow-sm">
                 <SearchIcon className="pointer-events-none absolute left-3 top-1/2 z-[1] h-4 w-4 -translate-y-1/2 text-emerald-200/90" />
                 <input
                   type="text"
@@ -1470,7 +1470,7 @@ export default function Explorer() {
                   onChange={(e) => setCategorySearch(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && applySearch()}
                   placeholder="Vibe or place — Enter"
-                  className="w-full rounded-xl border border-transparent bg-transparent py-2.5 pl-10 pr-12 text-sm font-medium text-slate-100 placeholder:text-emerald-200/70 focus:border-transparent focus:ring-2 focus:ring-emerald-400/70"
+                  className="w-full min-h-[2.9rem] rounded-2xl border border-transparent bg-transparent py-2.5 pl-10 pr-12 text-sm font-medium text-slate-100 placeholder:text-emerald-200/70 focus:border-transparent focus:ring-2 focus:ring-emerald-400/70"
                 />
                 {categorySearch.trim() && (
                   <button

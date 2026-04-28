@@ -41,6 +41,15 @@ function buildWelcomeContent(displayName) {
 
 function buildMapContextPayload(mc) {
   if (!mc || typeof mc !== 'object') return undefined;
+  const slimMenuItems = (items) =>
+    (Array.isArray(items) ? items : [])
+      .map((item) => ({
+        name: String(item?.name || '').trim().slice(0, 90),
+        price: Number(item?.price),
+        description: String(item?.description || '').trim().slice(0, 140)
+      }))
+      .filter((item) => item.name && Number.isFinite(item.price) && item.price >= 0)
+      .slice(0, 12);
   const slimBiz = (b) => ({
     _id: b._id,
     name: b.name,
@@ -59,6 +68,8 @@ function buildMapContextPayload(mc) {
     description: typeof b.description === 'string' ? b.description.slice(0, 200) : undefined,
     distanceMeters: typeof b.distance === 'number' ? b.distance : b.distanceMeters,
     openingHours: b.openingHours,
+    menuItems: slimMenuItems(b.menuItems),
+    menuCatalogText: typeof b.menuCatalogText === 'string' ? b.menuCatalogText.replace(/\s+/g, ' ').trim().slice(0, 900) : undefined,
     menuCatalogFileUrl: typeof b.menuCatalogFileUrl === 'string' ? b.menuCatalogFileUrl : undefined,
     ecoOptions: b.ecoOptions,
     localKarmaScore: b.localKarmaScore,
@@ -511,13 +522,13 @@ export default function CityConciergeChat({
               onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && send()}
               placeholder="Near me? Café + park"
               disabled={loading}
-              className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-orange-200/80 text-sm focus:ring-2 focus:ring-orange-300 focus:border-transparent"
+              className="goout-input flex-1 min-w-0 text-sm"
             />
             <button
               type="button"
               onClick={send}
               disabled={loading || !input.trim()}
-              className="goout-btn-primary px-4 py-2 rounded-xl text-sm disabled:opacity-50 shrink-0"
+              className="goout-btn-primary text-sm disabled:opacity-50 shrink-0"
             >
               Send
             </button>

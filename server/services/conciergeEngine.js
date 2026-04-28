@@ -163,8 +163,12 @@ function buildProfileAwareOrdering({
       row?.category,
       row?.address,
       row?.descriptionSnippet,
+      row?.menuCatalogSnippet,
+      row?.menuPriceRange,
       ...(Array.isArray(row?.tags) ? row.tags : []),
-      ...(Array.isArray(row?.greenInitiatives) ? row.greenInitiatives : [])
+      ...(Array.isArray(row?.greenInitiatives) ? row.greenInitiatives : []),
+      ...(Array.isArray(row?.menuItems) ? row.menuItems.map((m) => `${m.name || ''} ${m.description || ''}`) : []),
+      ...(Array.isArray(row?.cheapestItems) ? row.cheapestItems.map((m) => `${m.name || ''} ${m.price || ''}`) : [])
     ]
       .map((x) => String(x || '').toLowerCase())
       .join(' ');
@@ -229,6 +233,197 @@ function buildProfileAwareOrdering({
     merchants: merchantOrdered,
     publicRows: [...publicRows].sort(byPublicScore),
     mapPois: [...mapPois].sort(byPublicScore)
+  };
+}
+
+const INTENT_PATTERNS = Object.freeze({
+  quiet: /\b(quiet|peaceful|calm|silent|less\s+crowd|low\s+crowd|not\s+crowded|study|work|laptop|read|reading|focus|chill)\b/i,
+  cafe: /\b(cafe|café|coffee|espresso|latte|chai|tea|brew|bakery)\b/i,
+  food: /\b(food|eat|hungry|restaurant|lunch|dinner|breakfast|brunch|snack|meal|biryani|pizza|burger|thali|dosa|idli)\b/i,
+  vegetarian: /\b(veg|vegetarian|vegan|plant[-\s]?based|jain)\b/i,
+  spicy: /\b(spicy|masala|hot food|chilli|chili)\b/i,
+  romantic: /\b(romantic|date|couple|cozy|cosy|proposal|anniversary)\b/i,
+  family: /\b(family|kids|children|child|stroller|parents)\b/i,
+  public: /\b(park|garden|plaza|public|library|museum|monument|landmark|outdoor|walk|trail|square|playground)\b/i,
+  shopping: /\b(shop|shopping|store|gift|bookstore|books|clothes|fashion|market|artisan|handmade)\b/i,
+  safe: /\b(safe|safety|meetup|meet|first\s+meet|buddy|hang\s*out|group)\b/i,
+  green: /\b(green|eco|sustainable|plastic[-\s]?free|organic|carbon|walk|walking|zero\s*waste|recycle)\b/i,
+  menu: /\b(menu|dish|item|items|price|prices|cost|cheap|cheapest|under|below|budget|how much)\b/i,
+  openNow: /\b(open\s+now|open\s+right\s+now|currently\s+open|open today)\b/i,
+  premium: /\b(best|top|premium|high\s+end|fancy|beautiful|nice|aesthetic|instagrammable|insta)\b/i
+});
+
+function matchesPatternSet(text, patternMap) {
+  const out = [];
+  for (const [key, re] of Object.entries(patternMap)) {
+    if (re.test(text)) out.push(key);
+  }
+  return out;
+}
+
+function inferPlaceTypes(text) {
+  const t = String(text || '');
+  const types = [];
+  if (INTENT_PATTERNS.cafe.test(t)) types.push('cafe');
+  if (INTENT_PATTERNS.food.test(t)) types.push('restaurant_food');
+  if (INTENT_PATTERNS.public.test(t)) types.push('public_place');
+  if (INTENT_PATTERNS.shopping.test(t)) types.push('shopping_retail');
+  if (/\b(salon|spa|haircut|beauty)\b/i.test(t)) types.push('salon_spa');
+  if (/\b(gym|fitness|yoga|workout)\b/i.test(t)) types.push('fitness');
+  if (/\b(bar|pub|drink|beer|wine|cocktail)\b/i.test(t)) types.push('bar_drinks');
+  return [...new Set(types)];
+}
+
+function buildAdvancedRequirementIntent(rawMessage, budget, searchHint) {
+  const text = String(rawMessage || '');
+  const tl = text.toLowerCase();
+  const requirementSignals = matchesPatternSet(text, INTENT_PATTERNS);
+  const placeTypes = inferPlaceTypes(text);
+  const vibeSignals = [];
+  if (requirementSignals.includes('quiet')) vibeSignals.push('quiet', 'low-crowd', 'work-study-friendly');
+  if (requirementSignals.includes('romantic')) vibeSignals.push('romantic', 'cozy');
+  if (requirementSignals.includes('family')) vibeSignals.push('family-friendly');
+  if (requirementSignals.includes('premium')) vibeSignals.push('aesthetic-high-quality');
+  if (/\b(rooftop|view|scenic|sunset)\b/i.test(text)) vibeSignals.push('scenic');
+  if (/\b(indoor|inside|ac)\b/i.test(text)) vibeSignals.push('indoor');
+  if (/\b(outdoor|outside|open air)\b/i.test(text)) vibeSignals.push('outdoor');
+
+  const dietarySignals = [];
+  if (requirementSignals.includes('vegetarian')) dietarySignals.push('vegetarian_or_vegan');
+  if (/\b(jain)\b/i.test(text)) dietarySignals.push('jain');
+  if (/\b(halal)\b/i.test(text)) dietarySignals.push('halal');
+  if (/\b(gluten[-\s]?free)\b/i.test(text)) dietarySignals.push('gluten_free');
+
+  const timeSignals = [];
+  if (/\b(morning|breakfast|brunch)\b/i.test(tl)) timeSignals.push('morning');
+  if (/\b(afternoon|lunch)\b/i.test(tl)) timeSignals.push('afternoon');
+  if (/\b(evening|tonight|dinner|night|late)\b/i.test(tl)) timeSignals.push('evening');
+  if (requirementSignals.includes('openNow')) timeSignals.push('open-now-requested');
+
+  const rankingPriorities = [];
+  if (requirementSignals.includes('quiet')) rankingPriorities.push('low crowdLevel', 'quiet tags/vibe', 'library/cafe study fit');
+  if (budget.maxInr != null || budget.isZeroSpend || requirementSignals.includes('menu')) rankingPriorities.push('budget/menu price fit');
+  if (requirementSignals.includes('safe')) rankingPriorities.push('Red Pin / busy public safety');
+  if (requirementSignals.includes('green')) rankingPriorities.push('green initiatives and walkability');
+  if (requirementSignals.includes('premium')) rankingPriorities.push('rating and local quality');
+  rankingPriorities.push('distance');
+
+  const currencyMentions = [];
+  if (/\$|usd|dollar/i.test(text)) currencyMentions.push('USD');
+  if (/₹|inr|rupee|rs\b/i.test(text)) currencyMentions.push('INR');
+
+  return {
+    requirementSignals: [...new Set(requirementSignals)],
+    placeTypes,
+    vibeSignals: [...new Set(vibeSignals)],
+    dietarySignals: [...new Set(dietarySignals)],
+    timeSignals: [...new Set(timeSignals)],
+    rankingPriorities: [...new Set(rankingPriorities)],
+    needsMenuData: requirementSignals.includes('menu') || dietarySignals.length > 0,
+    wantsGooglePublicContext: requirementSignals.includes('public') || placeTypes.includes('public_place'),
+    wantsLocalMerchantContext: placeTypes.some((t) => t !== 'public_place') || !placeTypes.length,
+    budgetMaxRupees: budget.maxInr,
+    zeroSpend: budget.isZeroSpend,
+    currencyMentions: [...new Set(currencyMentions)],
+    locationAnchor: 'gps',
+    searchHint: searchHint || null
+  };
+}
+
+function menuTextForRow(row) {
+  return [
+    row?.menuCatalogSnippet,
+    row?.menuPriceRange,
+    ...(Array.isArray(row?.menuItems) ? row.menuItems.map((m) => `${m.name || ''} ${m.description || ''} ${m.price || ''}`) : []),
+    ...(Array.isArray(row?.cheapestItems) ? row.cheapestItems.map((m) => `${m.name || ''} ${m.price || ''}`) : [])
+  ].join(' ').toLowerCase();
+}
+
+function rowTextBlob(row) {
+  return [
+    row?.name,
+    row?.category,
+    row?.address,
+    row?.descriptionSnippet,
+    row?.editorialSummary,
+    row?.openingHoursLine,
+    row?.priceLevel,
+    row?.menuPriceRange,
+    row?.menuCatalogSnippet,
+    ...(Array.isArray(row?.tags) ? row.tags : []),
+    ...(Array.isArray(row?.types) ? row.types : []),
+    ...(Array.isArray(row?.greenInitiatives) ? row.greenInitiatives : []),
+    menuTextForRow(row)
+  ].map((x) => String(x || '').toLowerCase()).join(' ');
+}
+
+function scoreRowForRequirement(row, parsedIntent, budget, discoveryPreferences = null, userInterests = []) {
+  const blob = rowTextBlob(row);
+  const signals = new Set(parsedIntent?.requirementSignals || []);
+  const placeTypes = new Set(parsedIntent?.placeTypes || []);
+  let score = 0;
+
+  if (signals.has('cafe') && /\b(cafe|coffee|tea|chai|bakery|espresso|latte)\b/.test(blob)) score += 36;
+  if (signals.has('food') && /\b(food|restaurant|meal|dining|biryani|pizza|burger|thali|dosa|snack|bakery)\b/.test(blob)) score += 28;
+  if (signals.has('shopping') && /\b(shop|store|market|gift|book|fashion|artisan|handmade)\b/.test(blob)) score += 26;
+  if (signals.has('public') && /\b(park|garden|library|museum|monument|plaza|public|landmark|trail|playground)\b/.test(blob)) score += 30;
+  if (signals.has('quiet')) {
+    if (/\b(quiet|peaceful|calm|library|study|work|reading|garden)\b/.test(blob)) score += 26;
+    const crowd = Number(row?.crowdLevel);
+    if (Number.isFinite(crowd)) score += Math.max(0, 18 - Math.round(crowd / 7));
+  }
+  if (signals.has('romantic') && /\b(romantic|date|cozy|cosy|view|rooftop|candle|dessert|cafe)\b/.test(blob)) score += 20;
+  if (signals.has('family') && /\b(family|kids|children|playground|park|safe)\b/.test(blob)) score += 18;
+  if (signals.has('vegetarian') && /\b(veg|vegetarian|vegan|plant|jain|organic|salad)\b/.test(blob)) score += 24;
+  if (signals.has('spicy') && /\b(spicy|masala|chilli|chili|biryani|curry)\b/.test(blob)) score += 15;
+  if (signals.has('green') && (row?.redPin || /\b(green|eco|sustainable|plastic|organic|zero waste|recycle|solar|walk)\b/.test(blob))) score += 18;
+  if (signals.has('safe') && (row?.redPin || Number(row?.crowdLevel || 0) >= 42 || /\b(public|plaza|park|library)\b/.test(blob))) score += 20;
+  if (signals.has('premium')) {
+    score += Math.min(12, Math.max(0, Number(row?.rating || 0) * 2));
+    if (Number(row?.ratingCount || 0) >= 25) score += 6;
+  }
+
+  const menuBlob = menuTextForRow(row);
+  if (signals.has('menu') && menuBlob) score += 14;
+  if (placeTypes.has('public_place') && row?.source && String(row.source).includes('google')) score += 5;
+  if (row?.redPin) score += 10;
+  if (Number.isFinite(Number(row?.distanceMeters))) {
+    const d = Number(row.distanceMeters);
+    if (d <= 600) score += 12;
+    else if (d <= 1500) score += 8;
+    else if (d <= 3500) score += 4;
+  }
+  if (budget?.isZeroSpend) {
+    score += row?.isFree || Number(row?.avgPrice || 0) <= 0 ? 30 : -30;
+  } else if (budget?.maxInr != null && Number(budget.maxInr) > 0) {
+    const avg = Number(row?.avgPrice || row?.averageMenuPrice || 0);
+    if (avg > 0 && avg <= Number(budget.maxInr)) score += 22;
+    else if (avg > Number(budget.maxInr)) score -= Math.min(20, Math.ceil((avg - Number(budget.maxInr)) / 100));
+  }
+
+  const dp = normalizeDiscoveryPreferences(discoveryPreferences);
+  const preferTokens = [...dp.prefer, dp.notes, ...normalizeInterests(userInterests)].flatMap(tokenizePreferenceText);
+  const avoidTokens = dp.avoid.flatMap(tokenizePreferenceText);
+  score += scoreTokenHits(blob, preferTokens, 5);
+  score -= scoreTokenHits(blob, avoidTokens, 8);
+  return score;
+}
+
+function applyRequirementAwareOrdering({ merchants = [], publicRows = [], mapPois = [], parsedIntent, budget, discoveryPreferences, userInterests }) {
+  const hasSignals = Boolean(parsedIntent?.requirementSignals?.length || parsedIntent?.placeTypes?.length || parsedIntent?.dietarySignals?.length);
+  if (!hasSignals) return { merchants, publicRows, mapPois };
+  const byScore = (a, b) => {
+    const bs = scoreRowForRequirement(b, parsedIntent, budget, discoveryPreferences, userInterests);
+    const as = scoreRowForRequirement(a, parsedIntent, budget, discoveryPreferences, userInterests);
+    if (bs !== as) return bs - as;
+    const bd = Number.isFinite(Number(b?.distanceMeters)) ? Number(b.distanceMeters) : 1e9;
+    const ad = Number.isFinite(Number(a?.distanceMeters)) ? Number(a.distanceMeters) : 1e9;
+    return ad - bd;
+  };
+  return {
+    merchants: [...merchants].sort(byScore),
+    publicRows: [...publicRows].sort(byScore),
+    mapPois: [...mapPois].sort(byScore)
   };
 }
 
@@ -384,21 +579,22 @@ function applyMoodAwareOrdering({ merchants = [], publicRows = [], mapPois = [],
 function parseIntentSummary(rawMessage, budget, searchHint) {
   const t = String(rawMessage || '');
   const tl = t.toLowerCase();
+  const advanced = buildAdvancedRequirementIntent(rawMessage, budget, searchHint);
   const goalSignals = [];
   if (/\b(bored|nothing to do|kill time|surprise me|what should i do|explore|wander|hang\s*out)\b/i.test(t)) {
     goalSignals.push('open-exploration');
   }
   if (/\b(bucks?|\$\s*\d+|dollars?|rupees?|₹\s*\d+)\b/i.test(t)) goalSignals.push('budget-stated');
-  if (/\b(coffee|cafe|espresso|latte)\b/i.test(t)) goalSignals.push('coffee');
+  if (/\b(coffee|cafe|espresso|latte|chai|tea)\b/i.test(t)) goalSignals.push('coffee');
   if (/\b(brunch|breakfast)\b/i.test(t)) goalSignals.push('brunch');
   if (/\b(lunch|dinner|biryani|eat|food|restaurant|hungry)\b/i.test(t)) goalSignals.push('food');
   if (/\b(bar|pub|drinks|wine|beer)\b/i.test(t)) goalSignals.push('drinks');
-  if (/\b(shop|store|gift|book|clothes)\b/i.test(t)) goalSignals.push('retail');
+  if (/\b(shop|store|gift|book|clothes|market|artisan|handmade)\b/i.test(t)) goalSignals.push('retail');
   if (/\b(park|plaza|walk|outdoor|garden|stroll)\b/i.test(t)) goalSignals.push('outdoor');
   if (searchHint) goalSignals.push(`tokens:${searchHint.slice(0, 48)}`);
 
   const vibeSignals = [];
-  if (/\b(quiet|peaceful|calm|study|laptop|remote\s+work)\b/i.test(t)) vibeSignals.push('quiet');
+  if (/\b(quiet|peaceful|calm|study|laptop|remote\s+work|read|focus|low\s+crowd|not\s+crowded)\b/i.test(t)) vibeSignals.push('quiet');
   if (/\b(romantic|date|cozy)\b/i.test(t)) vibeSignals.push('romantic');
   if (/\b(vegan|plant[-\s]?based|vegetarian)\b/i.test(t)) vibeSignals.push('plant-forward');
   if (/\b(organic|healthy)\b/i.test(t)) vibeSignals.push('healthy');
@@ -414,8 +610,9 @@ function parseIntentSummary(rawMessage, budget, searchHint) {
   if (/₹|inr|rupee/i.test(t)) currencyMentions.push('INR');
 
   return {
-    goalSignals: [...new Set(goalSignals)],
-    vibeSignals: [...new Set(vibeSignals)],
+    ...advanced,
+    goalSignals: [...new Set([...goalSignals, ...advanced.placeTypes])],
+    vibeSignals: [...new Set([...vibeSignals, ...advanced.vibeSignals])],
     timeSignals: [...new Set(timeSignals)],
     currencyMentions: [...new Set(currencyMentions)],
     budgetMaxRupees: budget.maxInr,
@@ -688,8 +885,13 @@ function rowMatchesDynamicNeedles(row, needles) {
     row.category,
     row.address,
     row.descriptionSnippet,
+    row.editorialSummary,
+    row.menuCatalogSnippet,
+    row.menuPriceRange,
     ...(Array.isArray(row.tags) ? row.tags : []),
-    ...(Array.isArray(row.greenInitiatives) ? row.greenInitiatives : [])
+    ...(Array.isArray(row.greenInitiatives) ? row.greenInitiatives : []),
+    ...(Array.isArray(row.types) ? row.types : []),
+    ...(Array.isArray(row.menuItems) ? row.menuItems.map((m) => `${m.name || ''} ${m.description || ''}`) : [])
   ]
     .map((x) => String(x || '').toLowerCase())
     .join(' ');
@@ -872,6 +1074,40 @@ function applyLocalPrioritySorting(items) {
   });
 }
 
+function summarizeMenuData(source) {
+  const rawItems = Array.isArray(source?.menuItems) ? source.menuItems : [];
+  const menuItems = rawItems
+    .map((item) => {
+      const name = String(item?.name || '').trim().slice(0, 90);
+      const price = Number(item?.price);
+      const description = String(item?.description || '').trim().replace(/\s+/g, ' ').slice(0, 140);
+      if (!name || !Number.isFinite(price) || price < 0) return null;
+      return { name, price: Math.round(price), description };
+    })
+    .filter(Boolean)
+    .slice(0, 16);
+  const prices = menuItems.map((m) => Number(m.price)).filter((n) => Number.isFinite(n));
+  const cheapestItems = [...menuItems].sort((a, b) => a.price - b.price).slice(0, 5);
+  const averageMenuPrice = prices.length ?
+    Math.round(prices.reduce((sum, n) => sum + n, 0) / prices.length) :
+    null;
+  const min = prices.length ? Math.min(...prices) : null;
+  const max = prices.length ? Math.max(...prices) : null;
+  const menuCatalogSnippet = String(source?.menuCatalogText || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 900);
+  const menuCatalogFileUrl = String(source?.menuCatalogFileUrl || '').trim().slice(0, 400);
+  return {
+    menuItems,
+    cheapestItems,
+    averageMenuPrice,
+    menuPriceRange: min != null && max != null ? `₹${min}-${max}` : '',
+    menuCatalogSnippet,
+    menuCatalogFileUrl: menuCatalogFileUrl.startsWith('/uploads/') ? menuCatalogFileUrl : ''
+  };
+}
+
 function serializeMerchant(b, userLat, userLng) {
   const coords = b?.location?.coordinates || [];
   const lng = coords[0];
@@ -890,6 +1126,7 @@ function serializeMerchant(b, userLat, userLng) {
   ].
     filter(Boolean).
     join(';');
+  const menuSummary = summarizeMenuData(b);
   return {
     id: String(b._id),
     name: b.name,
@@ -910,6 +1147,7 @@ function serializeMerchant(b, userLat, userLng) {
     verificationStatus: b.localVerification?.status || 'none',
     crowdLevel: b.crowdLevel ?? 50,
     openingHoursLine: formatOpeningHoursLine(b),
+    ...menuSummary,
     lat,
     lng,
     distanceMeters: dist
@@ -921,6 +1159,15 @@ function serializePublic(p) {
     id: String(p.id),
     name: p.name,
     category: p.category,
+    types: Array.isArray(p.types) ? p.types.slice(0, 10) : [],
+    address: String(p.address || '').slice(0, 180),
+    rating: p.rating ?? null,
+    ratingCount: p.ratingCount ?? null,
+    priceLevel: p.priceLevel || '',
+    openingHoursText: Array.isArray(p.openingHoursText) ? p.openingHoursText.slice(0, 7) : [],
+    websiteUri: String(p.websiteUri || '').slice(0, 240),
+    phone: String(p.phone || '').slice(0, 80),
+    editorialSummary: String(p.editorialSummary || '').replace(/\s+/g, ' ').trim().slice(0, 260),
     lat: p.lat,
     lng: p.lng,
     distanceMeters: p.distanceMeters != null ? Math.round(p.distanceMeters) : null,
@@ -967,6 +1214,7 @@ function serializeMapContextBusiness(b, userLat, userLng) {
   ].
     filter(Boolean).
     join(';');
+  const menuSummary = summarizeMenuData(b);
   return {
     id,
     name: String(b.name || 'Unknown').slice(0, 120),
@@ -987,6 +1235,7 @@ function serializeMapContextBusiness(b, userLat, userLng) {
     verificationStatus: b.localVerification?.status || (redPin ? 'verified' : 'none'),
     crowdLevel: b.crowdLevel ?? 50,
     openingHoursLine: formatOpeningHoursLine(b),
+    ...menuSummary,
     lat,
     lng,
     distanceMeters: dist,
@@ -1343,6 +1592,8 @@ function formatContextForPrompt(
     lines.push(
       `PARSED_INTENT (server extraction — align picks): goals=[${parsedIntent.goalSignals.join(', ')}] vibes=[${parsedIntent.vibeSignals.join(', ')}] times=[${parsedIntent.timeSignals.join(', ')}] currencies=[${parsedIntent.currencyMentions.join(', ')}] zeroSpend=${parsedIntent.zeroSpend} maxInr=${parsedIntent.budgetMaxRupees ?? 'n/a'} anchor=GPS ~${Number.isFinite(Number(explorationRadiusM)) && Number(explorationRadiusM) >= 200 ? Math.round(Number(explorationRadiusM) / 1000) : 12}km`
     );
+    lines.push('USER_REQUIREMENT_INTENT_JSON (advanced NLP extraction; use this as the user requirement contract):');
+    lines.push(JSON.stringify(parsedIntent));
   }
   if (emotionSignals && (emotionSignals.current?.length || emotionSignals.recent?.length)) {
     lines.push('');
@@ -1367,6 +1618,10 @@ function formatContextForPrompt(
     );
   }
   lines.push('');
+  lines.push('ADVANCED_REQUIREMENT_RULES: Infer the user requirement from USER_REQUIREMENT_INTENT_JSON, not only literal words. Example: "find a quiet cafe" means cafe/coffee + low crowd + peaceful/work-study vibe + nearby + profile preferences. Rank with exact data first, then explain briefly why the top picks fit.');
+  lines.push('DATA_TRUST_RULES: GoOut LOCAL_MERCHANTS/menu/prices are trusted first. Google/OSM PUBLIC_SPACES are external context and may be incomplete. Never invent a menu item, price, opening status, phone, rating, or place detail that is not in the JSON.');
+  lines.push('PRICE_AND_MENU_RULES: menuItems/menuCatalogSnippet/menuPriceRange are real merchant-provided menu context when present. If absent, use avgPrice only as typical spend and say menu details are not available when asked.');
+  lines.push('');
   lines.push('LOCAL_MERCHANTS (only these; prefer Red Pin over unnamed global chains when both fit "coffee" etc.):');
   if (!merchants.length) lines.push('(none in retrieved radius)');
   else {
@@ -1379,8 +1634,12 @@ function formatContextForPrompt(
       const d = m.distanceMeters != null ? ` ~${m.distanceMeters}m` : '';
       const desc = m.descriptionSnippet ? ` | ${m.descriptionSnippet}` : '';
       const hrs = m.openingHoursLine ? ` | hours:${m.openingHoursLine}` : '';
+      const menu = m.menuItems?.length ?
+        ` | menu:${m.menuItems.slice(0, 5).map((it) => `${it.name} ₹${it.price}`).join('; ')}` :
+        '';
+      const menuRange = m.menuPriceRange ? ` | menuRange:${m.menuPriceRange}` : '';
       lines.push(
-        `${i + 1}. id=${m.id} | ${m.name} | ${m.category} | ₹${m.avgPrice} avg | ★${Number(m.rating || 0).toFixed(1)} | crowd~${m.crowdLevel}${d}${pin}${free}${tg}${gi}${eco}${hrs}${desc}`
+        `${i + 1}. id=${m.id} | ${m.name} | ${m.category} | ₹${m.avgPrice} avg | ★${Number(m.rating || 0).toFixed(1)} | crowd~${m.crowdLevel}${d}${pin}${free}${tg}${gi}${eco}${hrs}${menuRange}${menu}${desc}`
       );
     });
   }
@@ -1402,7 +1661,11 @@ function formatContextForPrompt(
   } else {
     publicPlaces.forEach((p, i) => {
       const d = p.distanceMeters != null ? ` ~${p.distanceMeters}m` : '';
-      lines.push(`${i + 1}. ${p.name} | ${p.category} | ${p.lat},${p.lng}${d}`);
+      const rating = p.rating != null ? ` | ★${Number(p.rating || 0).toFixed(1)} (${p.ratingCount || 0})` : '';
+      const price = p.priceLevel ? ` | priceLevel:${p.priceLevel}` : '';
+      const addr = p.address ? ` | ${String(p.address).slice(0, 120)}` : '';
+      const summary = p.editorialSummary ? ` | ${String(p.editorialSummary).slice(0, 160)}` : '';
+      lines.push(`${i + 1}. ${p.name} | ${p.category} | ${p.lat},${p.lng}${d}${rating}${price}${addr}${summary}`);
     });
   }
   if (mapPois.length) {
@@ -1450,9 +1713,12 @@ SCOPE & HONESTY:
 HYBRID_RAG & LIVE CONTEXT:
 - Private tier: LOCAL_MERCHANTS from MongoDB (Red Pin, tags, greenInitiatives, crowdLevel, verification). Public tier: PUBLIC_SPACES / MAP_POIS from geodata/Places-style APIs.
 - LIVE_MAP_CONTEXT lines describe the Explorer client snapshot (pins + flash offers) at send time; crowd and deals reflect Socket-updated state on the device before the request — treat as current for recommendations.
+- USER_REQUIREMENT_INTENT_JSON is the server NLP read of the message. Treat it as a planning layer: convert vague asks into practical constraints (quiet = low crowd + peaceful categories + study/work tags; date = cozy + safety + quality; budget = price/menu fit; green = walkable + eco signals).
+- For menu/price asks, use merchant-provided menuItems/menuCatalogSnippet/menuPriceRange before avgPrice. If those fields are missing, say menu details are not available for that place instead of guessing.
 
 LOCAL_FIRST & VALUE:
 - Prefer independent / Red Pin / strong local signals over generic global chains when fit is comparable. For "cheaper vs better" questions, weigh walk time, vibe, and green credits qualitatively — do not invent exact rupee comparisons unless budget math is already in the prompt.
+- Rank like a premium concierge: user requirement fit first, then profile preferences, menu/budget match, safety/Red Pin, rating/quality, distance, and green value. Mention 1-2 strongest reasons per pick.
 
 BUDDY & DM PRIVACY:
 - You never relay Buddy chat transcripts, phone numbers, emails, or home addresses. Meetups only at named Red Pin merchants or named public plazas/parks from the lists. Tell users to keep personal contact details in-app until they consciously agree to meet offline.
@@ -1536,6 +1802,7 @@ VOICE:
 - Keep replies tight: usually 2-5 lines. Skip fluff and repetitive caveats.
 - Be confident but honest. If data is missing, say it once and move to useful picks.
 LANGUAGE_ADAPTATION: Mirror the user's style (simple, casual, Hinglish-like phrases, or formal) while staying clear and respectful. Understand short/slang asks and map them to nearby intents.
+NLP_REQUIREMENT_UNDERSTANDING: Understand intent behind casual language, typos, mixed English/Hinglish, and short commands. Do not require exact keywords. If the user says "quiet cafe", infer peaceful coffee place with lower crowd, possible laptop/study vibe, nearby distance, and any saved prefer/avoid profile rules.
 EMOTION_INTELLIGENCE: Read emotional cues from the user text and EMOTION_CONTEXT. Support moods like bored, sad, happy, stressed, lonely, romantic, flirty/"hotty", angry, tired, and mixed moods. Keep tone safe and respectful; avoid explicit sexual content even if user is flirty.
 HYBRID_QUESTIONS: If user asks combinations (e.g. "coffee + park", "shop and monument", "food then walk"), always provide a combined plan with sequence, route hint, and why each stop fits.
 ROUTE_FIRST: When route hints exist (WALKING_ROUTE / HYBRID_ROUTE_HINT), include them naturally in the answer.
@@ -1863,7 +2130,8 @@ export async function runConciergeChat({
     try {
       const publicRadius = Math.min(maxMerchantRadiusM, 25000);
       publicSpaces = await fetchPublicSpacesNear(userLat, userLng, publicRadius, rawMessage, {
-        maxResults: 80
+        maxResults: 80,
+        detailsCap: 8
       });
     } catch (e) {
       console.error('[concierge] public spaces', e);
@@ -1908,6 +2176,19 @@ export async function runConciergeChat({
   merchantPayload = profileOrderedPayload.merchants;
   publicPayload = profileOrderedPayload.publicRows;
   mapPoisPayload = profileOrderedPayload.mapPois;
+
+  const requirementOrderedPayload = applyRequirementAwareOrdering({
+    merchants: merchantPayload,
+    publicRows: publicPayload,
+    mapPois: mapPoisPayload,
+    parsedIntent,
+    budget,
+    discoveryPreferences,
+    userInterests
+  });
+  merchantPayload = requirementOrderedPayload.merchants;
+  publicPayload = requirementOrderedPayload.publicRows;
+  mapPoisPayload = requirementOrderedPayload.mapPois;
 
   const dynamicNeedles = extractDynamicQueryNeedles(rawMessage, searchHint);
   if (!casualGreeting && dynamicNeedles.length > 0 && seemsPlaceDiscoveryAsk(rawMessage) && !isBudgetDominantQuery(rawMessage)) {
