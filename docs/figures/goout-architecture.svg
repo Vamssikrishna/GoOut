@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="620" viewBox="0 0 1100 620" role="img" aria-labelledby="title desc">
+  <title id="title">GoOut System Architecture</title>
+  <desc id="desc">Architecture diagram showing web, mobile, API, realtime, database, AI, map, and email services.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/>
+    </marker>
+    <style>
+      .bg { fill: #f8fafc; }
+      .box { fill: #ffffff; stroke: #1e3a8a; stroke-width: 2; rx: 14; }
+      .service { fill: #eff6ff; stroke: #2563eb; stroke-width: 2; rx: 14; }
+      .data { fill: #ecfdf5; stroke: #059669; stroke-width: 2; rx: 14; }
+      .external { fill: #fff7ed; stroke: #ea580c; stroke-width: 2; rx: 14; }
+      .label { font-family: Arial, sans-serif; font-size: 18px; font-weight: 700; fill: #0f172a; }
+      .small { font-family: Arial, sans-serif; font-size: 14px; fill: #334155; }
+      .arrow { stroke: #2563eb; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1100" height="620"/>
+  <text class="label" x="40" y="50">GoOut System Architecture</text>
+
+  <rect class="box" x="70" y="105" width="220" height="105"/>
+  <text class="label" x="105" y="145">React Web Client</text>
+  <text class="small" x="105" y="172">Vite, Tailwind, maps,</text>
+  <text class="small" x="105" y="192">explorer and merchant UI</text>
+
+  <rect class="box" x="70" y="275" width="220" height="105"/>
+  <text class="label" x="100" y="315">Native Shell</text>
+  <text class="small" x="100" y="342">React Native WebView</text>
+  <text class="small" x="100" y="362">Android, iOS, Windows</text>
+
+  <rect class="service" x="435" y="90" width="260" height="135"/>
+  <text class="label" x="475" y="132">Express REST API</text>
+  <text class="small" x="475" y="160">Auth, businesses, offers,</text>
+  <text class="small" x="475" y="180">budget, compare, green,</text>
+  <text class="small" x="475" y="200">admin and AI routes</text>
+
+  <rect class="service" x="435" y="300" width="260" height="120"/>
+  <text class="label" x="500" y="342">Socket.IO</text>
+  <text class="small" x="500" y="370">Buddy chat, SOS,</text>
+  <text class="small" x="500" y="390">call consent events</text>
+
+  <rect class="data" x="820" y="90" width="220" height="105"/>
+  <text class="label" x="865" y="130">MongoDB</text>
+  <text class="small" x="865" y="158">Users, businesses, offers,</text>
+  <text class="small" x="865" y="178">visits and chat records</text>
+
+  <rect class="external" x="820" y="250" width="220" height="105"/>
+  <text class="label" x="865" y="290">Gemini API</text>
+  <text class="small" x="865" y="318">Concierge, onboarding,</text>
+  <text class="small" x="865" y="338">verification and parsing</text>
+
+  <rect class="external" x="820" y="410" width="220" height="105"/>
+  <text class="label" x="850" y="450">Maps and Email</text>
+  <text class="small" x="850" y="478">Google Maps, OSM,</text>
+  <text class="small" x="850" y="498">Nodemailer notifications</text>
+
+  <path class="arrow" d="M290 157 C350 157, 375 157, 435 157"/>
+  <path class="arrow" d="M290 327 C350 327, 375 327, 435 360"/>
+  <path class="arrow" d="M565 225 L565 300"/>
+  <path class="arrow" d="M695 157 C750 157, 770 142, 820 142"/>
+  <path class="arrow" d="M695 172 C755 210, 765 285, 820 303"/>
+  <path class="arrow" d="M695 390 C750 430, 770 455, 820 462"/>
+  <path class="arrow" d="M695 360 C755 355, 770 180, 820 160"/>
+</svg>

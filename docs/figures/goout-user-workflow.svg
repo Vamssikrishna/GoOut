@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="520" viewBox="0 0 1100 520" role="img" aria-labelledby="title desc">
+  <title id="title">GoOut User Workflow</title>
+  <desc id="desc">Workflow diagram showing explorer, merchant, and buddy user journeys in GoOut.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#0f766e"/>
+    </marker>
+    <style>
+      .bg { fill: #f8fafc; }
+      .lane { fill: #ffffff; stroke: #94a3b8; stroke-width: 2; rx: 18; }
+      .step { fill: #ccfbf1; stroke: #0f766e; stroke-width: 2; rx: 14; }
+      .merchant { fill: #fef3c7; stroke: #d97706; stroke-width: 2; rx: 14; }
+      .buddy { fill: #ede9fe; stroke: #7c3aed; stroke-width: 2; rx: 14; }
+      .label { font-family: Arial, sans-serif; font-size: 18px; font-weight: 700; fill: #0f172a; }
+      .small { font-family: Arial, sans-serif; font-size: 14px; fill: #334155; }
+      .arrow { stroke: #0f766e; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+      .arrow2 { stroke: #7c3aed; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect class="bg" width="1100" height="520"/>
+  <text class="label" x="40" y="45">GoOut User Workflow</text>
+
+  <rect class="lane" x="45" y="80" width="1010" height="120"/>
+  <text class="label" x="70" y="115">Explorer Journey</text>
+  <rect class="step" x="250" y="105" width="145" height="70"/>
+  <text class="small" x="285" y="132">Search or ask</text>
+  <text class="small" x="282" y="152">concierge</text>
+  <rect class="step" x="465" y="105" width="145" height="70"/>
+  <text class="small" x="495" y="132">View map and</text>
+  <text class="small" x="495" y="152">ranked places</text>
+  <rect class="step" x="680" y="105" width="145" height="70"/>
+  <text class="small" x="707" y="132">Plan budget</text>
+  <text class="small" x="705" y="152">or compare trip</text>
+  <rect class="step" x="895" y="105" width="120" height="70"/>
+  <text class="small" x="922" y="132">Go out and</text>
+  <text class="small" x="922" y="152">earn green</text>
+
+  <rect class="lane" x="45" y="230" width="1010" height="120"/>
+  <text class="label" x="70" y="265">Merchant Journey</text>
+  <rect class="merchant" x="250" y="255" width="145" height="70"/>
+  <text class="small" x="280" y="282">Create listing</text>
+  <text class="small" x="276" y="302">with AI help</text>
+  <rect class="merchant" x="465" y="255" width="145" height="70"/>
+  <text class="small" x="493" y="282">Add menu,</text>
+  <text class="small" x="493" y="302">green signals</text>
+  <rect class="merchant" x="680" y="255" width="145" height="70"/>
+  <text class="small" x="712" y="282">Publish offer</text>
+  <text class="small" x="704" y="302">and crowd level</text>
+  <rect class="merchant" x="895" y="255" width="120" height="70"/>
+  <text class="small" x="925" y="282">Review</text>
+  <text class="small" x="918" y="302">analytics</text>
+
+  <rect class="lane" x="45" y="380" width="1010" height="95"/>
+  <text class="label" x="70" y="415">Buddy and Safety Journey</text>
+  <rect class="buddy" x="250" y="398" width="145" height="55"/>
+  <text class="small" x="283" y="430">Match group</text>
+  <rect class="buddy" x="465" y="398" width="145" height="55"/>
+  <text class="small" x="492" y="430">Realtime chat</text>
+  <rect class="buddy" x="680" y="398" width="145" height="55"/>
+  <text class="small" x="704" y="430">Share location</text>
+  <rect class="buddy" x="895" y="398" width="120" height="55"/>
+  <text class="small" x="918" y="430">SOS / consent</text>
+
+  <path class="arrow" d="M395 140 L465 140"/>
+  <path class="arrow" d="M610 140 L680 140"/>
+  <path class="arrow" d="M825 140 L895 140"/>
+  <path class="arrow" d="M395 290 L465 290"/>
+  <path class="arrow" d="M610 290 L680 290"/>
+  <path class="arrow" d="M825 290 L895 290"/>
+  <path class="arrow2" d="M395 425 L465 425"/>
+  <path class="arrow2" d="M610 425 L680 425"/>
+  <path class="arrow2" d="M825 425 L895 425"/>
+</svg>

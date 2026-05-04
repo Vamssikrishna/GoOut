@@ -274,6 +274,33 @@ function inferPlaceTypes(text) {
   return [...new Set(types)];
 }
 
+function inferDynamicQueryMode(rawMessage) {
+  const t = String(rawMessage || '').toLowerCase();
+  if (/\b(compare|versus|vs|which is better|better than|cheaper than)\b/.test(t)) return 'compare_options';
+  if (/\b(plan|itinerary|route|crawl|day out|morning|evening|date plan|hangout plan)\b/.test(t)) return 'build_itinerary';
+  if (/\b(menu|dish|items?|price|cost|how much|cheapest|affordable|budget|under|below)\b/.test(t)) return 'price_menu_answer';
+  if (/\b(open now|currently open|open today|closing|hours?)\b/.test(t)) return 'availability_answer';
+  if (/\b(safe|safety|meetup|first meet|buddy|family|kids|late night)\b/.test(t)) return 'safety_meetup_answer';
+  if (/\b(green|eco|sustainable|carbon|walk|walking|plastic|organic)\b/.test(t)) return 'green_walkable_answer';
+  if (/\b(find|looking|show|where|any|suggest|recommend|best|good|near|nearby|place|spot)\b/.test(t)) return 'rank_recommendations';
+  if (/\b(who are you|what can you do|help)\b/.test(t)) return 'identity_help';
+  return 'local_concierge_answer';
+}
+
+function buildNaturalLanguageRewrite(parsedIntent, rawMessage) {
+  const parts = [];
+  const placeTypes = parsedIntent?.placeTypes || [];
+  const requirements = parsedIntent?.requirementSignals || [];
+  const vibes = parsedIntent?.vibeSignals || [];
+  if (placeTypes.length) parts.push(`place type: ${placeTypes.join(', ')}`);
+  if (requirements.length) parts.push(`requirements: ${requirements.join(', ')}`);
+  if (vibes.length) parts.push(`vibe: ${vibes.join(', ')}`);
+  if (parsedIntent?.budgetMaxRupees != null) parts.push(`budget <= INR ${parsedIntent.budgetMaxRupees}`);
+  if (parsedIntent?.zeroSpend) parts.push('free/zero spend');
+  if (!parts.length) return String(rawMessage || '').trim().slice(0, 220);
+  return parts.join('; ');
+}
+
 function buildAdvancedRequirementIntent(rawMessage, budget, searchHint) {
   const text = String(rawMessage || '');
   const tl = text.toLowerCase();
@@ -326,7 +353,10 @@ function buildAdvancedRequirementIntent(rawMessage, budget, searchHint) {
     zeroSpend: budget.isZeroSpend,
     currencyMentions: [...new Set(currencyMentions)],
     locationAnchor: 'gps',
-    searchHint: searchHint || null
+    searchHint: searchHint || null,
+    queryMode: inferDynamicQueryMode(rawMessage),
+    softPreferences: [...new Set([...requirementSignals, ...vibeSignals])],
+    hardQueryTokens: extractDynamicQueryNeedles(rawMessage, searchHint)
   };
 }
 
@@ -424,6 +454,117 @@ function applyRequirementAwareOrdering({ merchants = [], publicRows = [], mapPoi
     merchants: [...merchants].sort(byScore),
     publicRows: [...publicRows].sort(byScore),
     mapPois: [...mapPois].sort(byScore)
+  };
+}
+
+function buildFitReasons(row, parsedIntent, budget) {
+  const reasons = [];
+  const blob = rowTextBlob(row);
+  const signals = new Set(parsedIntent?.requirementSignals || []);
+  if (signals.has('cafe') && /\b(cafe|coffee|tea|chai|bakery|espresso|latte)\b/.test(blob)) reasons.push('matches cafe/coffee intent');
+  if (signals.has('food') && /\b(food|restaurant|meal|dining|biryani|pizza|burger|thali|dosa|snack|bakery)\b/.test(blob)) reasons.push('matches food intent');
+  if (signals.has('quiet')) {
+    const crowd = Number(row?.crowdLevel);
+    if (Number.isFinite(crowd)) reasons.push(`crowd signal ${crowd}/100`);
+    if (/\b(quiet|peaceful|calm|library|study|work|reading|garden)\b/.test(blob)) reasons.push('quiet/study vibe signal');
+  }
+  if (signals.has('vegetarian') && /\b(veg|vegetarian|vegan|plant|jain|organic|salad)\b/.test(blob)) reasons.push('diet fit');
+  if (signals.has('menu') && (row?.menuItems?.length || row?.menuCatalogSnippet || row?.menuPriceRange)) reasons.push('menu data available');
+  if (row?.redPin) reasons.push('Red Pin/local verified');
+  if (Number.isFinite(Number(row?.distanceMeters))) reasons.push(`${Math.round(Number(row.distanceMeters))}m away`);
+  if (Number(row?.avgPrice) > 0) reasons.push(`typical spend ₹${Math.round(Number(row.avgPrice))}`);
+  if (budget?.isZeroSpend && (row?.isFree || Number(row?.avgPrice || 0) <= 0)) reasons.push('free/zero-spend fit');
+  if (budget?.maxInr != null && Number(row?.avgPrice || row?.averageMenuPrice || 0) > 0) {
+    const avg = Number(row.avgPrice || row.averageMenuPrice || 0);
+    reasons.push(avg <= Number(budget.maxInr) ? `within ₹${budget.maxInr} budget` : `over ₹${budget.maxInr} budget`);
+  }
+  if (Number(row?.rating) > 0) reasons.push(`rating ${Number(row.rating).toFixed(1)}`);
+  return reasons.slice(0, 5);
+}
+
+function buildRagDecisionBrief({ merchants = [], publicPlaces = [], mapPois = [], parsedIntent, budget, discoveryPreferences, userInterests }) {
+  const local = merchants.slice(0, 8).map((row, index) => ({
+    rank: index + 1,
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    source: row.source || 'goout_db',
+    fitScore: Math.round(scoreRowForRequirement(row, parsedIntent, budget, discoveryPreferences, userInterests)),
+    reasons: buildFitReasons(row, parsedIntent, budget),
+    menu: {
+      priceRange: row.menuPriceRange || '',
+      cheapestItems: Array.isArray(row.cheapestItems) ? row.cheapestItems.slice(0, 3) : [],
+      hasMenuText: Boolean(row.menuCatalogSnippet),
+      hasMenuPdf: Boolean(row.menuCatalogFileUrl)
+    }
+  }));
+  const publicRows = [...publicPlaces, ...mapPois].slice(0, 8).map((row, index) => ({
+    rank: index + 1,
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    source: row.source || 'public',
+    fitScore: Math.round(scoreRowForRequirement(row, parsedIntent, budget, discoveryPreferences, userInterests)),
+    reasons: buildFitReasons(row, parsedIntent, budget),
+    rating: row.rating ?? null,
+    priceLevel: row.priceLevel || ''
+  }));
+  return {
+    interpretation: {
+      requirementSignals: parsedIntent?.requirementSignals || [],
+      placeTypes: parsedIntent?.placeTypes || [],
+      vibeSignals: parsedIntent?.vibeSignals || [],
+      dietarySignals: parsedIntent?.dietarySignals || [],
+      rankingPriorities: parsedIntent?.rankingPriorities || [],
+      budgetMaxRupees: budget?.maxInr ?? null,
+      zeroSpend: Boolean(budget?.isZeroSpend)
+    },
+    retrievalPolicy: [
+      'Use these rows as retrieved context; do not invent places outside them.',
+      'Soft words such as quiet, affordable, cozy, family, premium, or green are ranking preferences, not exact-match filters.',
+      'If no row perfectly satisfies every soft preference, recommend the closest best-fit rows and explain the tradeoff.',
+      'GoOut merchant menu/prices override Google/OSM data when both exist.'
+    ],
+    topLocalCandidates: local,
+    topPublicCandidates: publicRows
+  };
+}
+
+function buildDynamicQueryContext({
+  rawMessage,
+  parsedIntent,
+  budget,
+  hardTokens = [],
+  localMatches = [],
+  publicMatches = [],
+  merchants = [],
+  publicPlaces = [],
+  mapPois = []
+}) {
+  const hasRows = Boolean(merchants.length || publicPlaces.length || mapPois.length);
+  const hasHardTokens = hardTokens.length > 0;
+  const hasHardMatches = Boolean(localMatches.length || publicMatches.length);
+  return {
+    originalUserQuery: String(rawMessage || '').trim().slice(0, 500),
+    queryMode: parsedIntent?.queryMode || inferDynamicQueryMode(rawMessage),
+    rewrittenRequirement: buildNaturalLanguageRewrite(parsedIntent, rawMessage),
+    hardQueryTokens: hardTokens,
+    hardTokenMatchStatus: hasHardTokens ? (hasHardMatches ? 'matched_some_retrieved_rows' : 'no_retrieved_row_matched_hard_tokens') : 'no_hard_tokens',
+    matchedLocalNames: localMatches.slice(0, 6).map((m) => m.name).filter(Boolean),
+    matchedPublicNames: publicMatches.slice(0, 6).map((p) => p.name).filter(Boolean),
+    answerRules: [
+      'First satisfy exact/hard place terms when matching retrieved rows exist.',
+      'Treat vibe and quality words as ranking preferences, not strict filters.',
+      'When hard terms do not match but retrieved rows exist, say no listed exact match for that term, then recommend closest useful alternatives from top candidates.',
+      'When retrieved rows are empty, say the current map has no data and ask the user to move/widen the map.',
+      'Never answer from general world knowledge as if a place is in GoOut unless it appears in LOCAL_MERCHANTS, GOOGLE_AND_PUBLIC_PLACES, or MAP_POIS.'
+    ],
+    fallbackAllowed: hasRows,
+    budget: {
+      maxInr: budget?.maxInr ?? null,
+      zeroSpend: Boolean(budget?.isZeroSpend),
+      cheapPreference: Boolean(budget?.cheapPreference)
+    }
   };
 }
 
@@ -861,7 +1002,15 @@ const GENERIC_DISCOVERY_WORDS = new Set([
 
 const BUDGET_ONLY_WORDS = new Set([
   'budget', 'rupee', 'rupees', 'inr', 'rs', 'dollar', 'dollars', 'usd', 'price', 'prices',
-  'cheap', 'cheaper', 'cheapest', 'under', 'below', 'less', 'than', 'max', 'maximum', 'only'
+  'cheap', 'cheaper', 'cheapest', 'affordable', 'budget-friendly', 'low-cost', 'under', 'below',
+  'less', 'than', 'max', 'maximum', 'only'
+]);
+
+const SOFT_REQUIREMENT_WORDS = new Set([
+  'quiet', 'peaceful', 'calm', 'silent', 'chill', 'cozy', 'cosy', 'romantic', 'family',
+  'kids', 'study', 'work', 'laptop', 'focus', 'aesthetic', 'beautiful', 'nice', 'premium',
+  'safe', 'green', 'eco', 'sustainable', 'healthy', 'spicy', 'vegetarian', 'vegan', 'jain',
+  'nearer', 'nearest', 'closest', 'open', 'crowd', 'crowded'
 ]);
 
 function extractDynamicQueryNeedles(rawMessage, searchHint) {
@@ -874,6 +1023,7 @@ function extractDynamicQueryNeedles(rawMessage, searchHint) {
     .filter((t) => !/^\d+$/.test(t))
     .filter((t) => !STOPWORDS.has(t))
     .filter((t) => !BUDGET_ONLY_WORDS.has(t))
+    .filter((t) => !SOFT_REQUIREMENT_WORDS.has(t))
     .filter((t) => !GENERIC_DISCOVERY_WORDS.has(t));
   return [...new Set(tokens)].slice(0, 8);
 }
@@ -1490,14 +1640,15 @@ function formatContextForPrompt(
     explorationRadiusM = null,
     userActivitySnapshot = null,
     userProfileSnapshot = null,
-    userVisitsSnapshot = []
+    userVisitsSnapshot = [],
+    dynamicQueryContext = null
   }
 ) {
   const lines = [];
   lines.push(`User location (lat,lng): ${userLat}, ${userLng}`);
   const er = Number(explorationRadiusM);
   if (Number.isFinite(er) && er >= 200) {
-    lines.push(`Explorer search radius (merchants + public fetch): ~${Math.round(er / 100) / 10} km`);
+    lines.push(`Explorer search radius (merchants + Google/public location fetch): ~${Math.round(er / 100) / 10} km`);
   }
   lines.push(`Server time (UTC): ${serverIso}`);
   lines.push('');
@@ -1516,11 +1667,11 @@ function formatContextForPrompt(
       (mapPois.length ? `${mapPois.length} MAP_POI search pin(s) from Explorer. ` : '') +
       (publicFetchAttempted ?
         (publicPlaces.length ?
-          `Public fetch returned ${publicPlaces.length} place(s).` :
-          'Public fetch ran but returned 0 places (API/geodata empty for this pin).') :
-        'Public fetch was skipped (short greeting).') +
+          `Google/public location fetch returned ${publicPlaces.length} place(s).` :
+          'Google/public fetch ran but returned 0 places (API/geodata empty for this pin).') :
+        'Google/public fetch was skipped (short greeting).') +
       ' If LOCAL_MERCHANT count > 0, you MUST answer with those merchants whenever the user asks about food, shops, nearby picks, prices, Red Pin, or generic "what is good" — do not treat empty public results as "no data".' +
-      ' PUBLIC_SPACES lists parks, libraries, attractions and similar near the same radius when fetched — treat them as real options for outdoor/civic questions.' +
+      ' GOOGLE_AND_PUBLIC_PLACES lists Google/OSM places near the same radius: cafes, restaurants, shops, parks, libraries, attractions, and civic places when fetched. For cafe/food/shop asks, use cafe/restaurant/shop rows from this section as valid nearby options if GoOut merchants are thin.' +
       (Array.isArray(liveFlashOffers) && liveFlashOffers.length ?
         ` LIVE_FLASH_DEALS includes ${liveFlashOffers.length} active offer(s) in this radius; a merchant can appear there even if not in LOCAL_MERCHANTS (e.g. budget filter) — still use LIVE_FLASH_DEALS for flash-deal questions.` :
         '')
@@ -1595,6 +1746,11 @@ function formatContextForPrompt(
     lines.push('USER_REQUIREMENT_INTENT_JSON (advanced NLP extraction; use this as the user requirement contract):');
     lines.push(JSON.stringify(parsedIntent));
   }
+  if (dynamicQueryContext) {
+    lines.push('');
+    lines.push('DYNAMIC_QUERY_UNDERSTANDING (Gemini should use this to answer any natural-language query):');
+    lines.push(JSON.stringify(dynamicQueryContext));
+  }
   if (emotionSignals && (emotionSignals.current?.length || emotionSignals.recent?.length)) {
     lines.push('');
     lines.push(
@@ -1618,9 +1774,21 @@ function formatContextForPrompt(
     );
   }
   lines.push('');
-  lines.push('ADVANCED_REQUIREMENT_RULES: Infer the user requirement from USER_REQUIREMENT_INTENT_JSON, not only literal words. Example: "find a quiet cafe" means cafe/coffee + low crowd + peaceful/work-study vibe + nearby + profile preferences. Rank with exact data first, then explain briefly why the top picks fit.');
-  lines.push('DATA_TRUST_RULES: GoOut LOCAL_MERCHANTS/menu/prices are trusted first. Google/OSM PUBLIC_SPACES are external context and may be incomplete. Never invent a menu item, price, opening status, phone, rating, or place detail that is not in the JSON.');
+  lines.push('ADVANCED_REQUIREMENT_RULES: Infer the user requirement from USER_REQUIREMENT_INTENT_JSON, not only literal words. Example: "find a quiet cafe" means cafe/coffee + low crowd + peaceful/work-study vibe + nearby + profile preferences. If Google rows include cafes, restaurants, or shops, treat them as matching place candidates, not only as public/civic alternatives. Rank with exact data first, then explain briefly why the top picks fit.');
+  lines.push('DATA_TRUST_RULES: GoOut LOCAL_MERCHANTS/menu/prices are trusted first. Google/OSM GOOGLE_AND_PUBLIC_PLACES are external context and may be incomplete, but their names/types/ratings/priceLevel/address are valid retrieved location data. Never invent a menu item, price, opening status, phone, rating, or place detail that is not in the JSON.');
   lines.push('PRICE_AND_MENU_RULES: menuItems/menuCatalogSnippet/menuPriceRange are real merchant-provided menu context when present. If absent, use avgPrice only as typical spend and say menu details are not available when asked.');
+  lines.push('SOFT_CONSTRAINT_RULES: Soft requirements (quiet, affordable, cozy, aesthetic, family-friendly, healthy, green, safe, open-now) should guide ranking and wording. They must NOT cause an exact-match failure when retrieved rows exist. If the fit is imperfect, say "closest fit" and explain the tradeoff.');
+  lines.push('');
+  lines.push('RAG_DECISION_BRIEF (server-ranked retrieval context; use this before writing the answer):');
+  lines.push(JSON.stringify(buildRagDecisionBrief({
+    merchants,
+    publicPlaces,
+    mapPois,
+    parsedIntent,
+    budget,
+    discoveryPreferences,
+    userInterests
+  })));
   lines.push('');
   lines.push('LOCAL_MERCHANTS (only these; prefer Red Pin over unnamed global chains when both fit "coffee" etc.):');
   if (!merchants.length) lines.push('(none in retrieved radius)');
@@ -1653,7 +1821,7 @@ function formatContextForPrompt(
     });
   }
   lines.push('');
-  lines.push('PUBLIC_SPACES (only these names/coords):');
+  lines.push('GOOGLE_AND_PUBLIC_PLACES (Google Maps/OSM nearby places: cafes, restaurants, shops, parks, libraries, attractions; only these names/coords):');
   if (!publicFetchAttempted) {
     lines.push('(not loaded this turn — ignore for food/shop questions; do not apologize for missing parks.)');
   } else if (!publicPlaces.length) {
@@ -1665,7 +1833,8 @@ function formatContextForPrompt(
       const price = p.priceLevel ? ` | priceLevel:${p.priceLevel}` : '';
       const addr = p.address ? ` | ${String(p.address).slice(0, 120)}` : '';
       const summary = p.editorialSummary ? ` | ${String(p.editorialSummary).slice(0, 160)}` : '';
-      lines.push(`${i + 1}. ${p.name} | ${p.category} | ${p.lat},${p.lng}${d}${rating}${price}${addr}${summary}`);
+      const types = (p.types || []).length ? ` | types:${(p.types || []).slice(0, 6).join(';')}` : '';
+      lines.push(`${i + 1}. ${p.name} | ${p.category}${types} | ${p.lat},${p.lng}${d}${rating}${price}${addr}${summary}`);
     });
   }
   if (mapPois.length) {
@@ -1698,11 +1867,11 @@ browseIntent (required):
 - "none" — greeting/thanks, identity-only, or out-of-scope; no browse UI.
 - "disambiguate" — vague "nearby" with both lists.
 - "local" — GoOut merchants focus (bookstores, tailors, cafes, gifts, flash deals).
-- "public" — parks, libraries, plazas, monuments, museums from PUBLIC_SPACES.
+- "public" — Google/OSM places such as cafés, parks, libraries, plazas, monuments, museums from GOOGLE_AND_PUBLIC_PLACES.
 - "both" — hybrid itinerary (walk + local stops, park + cafe, etc.).
 
 Rules: Only venues from lists. If LOCAL_MERCHANTS has rows, recommend at least one by name for shop/food/gift/sustainability/flash-deal questions — never only apologize about empty parks.
-Hybrid: when both lists have rows, outline ordered steps (e.g. park → cafe). If PUBLIC_SPACES is thin, still deliver a strong local plan.
+Hybrid: when both lists have rows, outline ordered steps (e.g. park → cafe). If GOOGLE_AND_PUBLIC_PLACES is thin, still deliver a strong local plan.
 For "three shops + monument": pick up to three distinct merchants and one public row by name. mapPan = best preview pin.`;
 
 const CONCIERGE_POLICIES = `
@@ -1711,9 +1880,10 @@ SCOPE & HONESTY:
 - Decline car/home purchases and other non-local-commerce topics; redirect to map discovery.
 
 HYBRID_RAG & LIVE CONTEXT:
-- Private tier: LOCAL_MERCHANTS from MongoDB (Red Pin, tags, greenInitiatives, crowdLevel, verification). Public tier: PUBLIC_SPACES / MAP_POIS from geodata/Places-style APIs.
+- Private tier: LOCAL_MERCHANTS from MongoDB (Red Pin, tags, greenInitiatives, crowdLevel, verification). External location tier: GOOGLE_AND_PUBLIC_PLACES / MAP_POIS from Google Maps/OSM-style APIs, including cafés, restaurants, shops, parks, libraries, attractions, and civic POIs near the user.
 - LIVE_MAP_CONTEXT lines describe the Explorer client snapshot (pins + flash offers) at send time; crowd and deals reflect Socket-updated state on the device before the request — treat as current for recommendations.
 - USER_REQUIREMENT_INTENT_JSON is the server NLP read of the message. Treat it as a planning layer: convert vague asks into practical constraints (quiet = low crowd + peaceful categories + study/work tags; date = cozy + safety + quality; budget = price/menu fit; green = walkable + eco signals).
+- DYNAMIC_QUERY_UNDERSTANDING is the per-message RAG controller. Follow its queryMode, rewrittenRequirement, hardTokenMatchStatus, and answerRules before composing the final reply.
 - For menu/price asks, use merchant-provided menuItems/menuCatalogSnippet/menuPriceRange before avgPrice. If those fields are missing, say menu details are not available for that place instead of guessing.
 
 LOCAL_FIRST & VALUE:
@@ -1725,8 +1895,8 @@ BUDDY & DM PRIVACY:
 
 RED PIN & "SAFE" MEETUPS:
 - Red Pin = GoOut local verification (identity + locality checks). If the user says "Safe Space" or "verified for meetup", treat Red Pin merchants as the verified local tier—there is no separate Safe Space flag in the data.
-- For buddy / first meetup: prefer Red Pin + higher crowdLevel as busier; pair with a public square from PUBLIC_SPACES when available.
-- Never suggest meeting at a private home, apartment, hotel room, Airbnb, or unpublished residential address. Only Red Pin rows from LOCAL_MERCHANTS or named PUBLIC_SPACES / MAP_POIS (public plazas, parks, libraries, etc.).
+- For buddy / first meetup: prefer Red Pin + higher crowdLevel as busier; pair with a public square from GOOGLE_AND_PUBLIC_PLACES when available.
+- Never suggest meeting at a private home, apartment, hotel room, Airbnb, or unpublished residential address. Only Red Pin rows from LOCAL_MERCHANTS or named GOOGLE_AND_PUBLIC_PLACES / MAP_POIS (public plazas, parks, libraries, cafes, etc.).
 - When you recommend a buddy-style meetup spot, add one explicit safety line, e.g. "For your safety, meet at [named Red Pin or public plaza] — busy, well-lit, and suitable for a first hello."
 - If the user wants to find people to explore with (pottery, art walks, coffee crawls), say they can enable Buddy Mode on the Buddies page so nearby explorers with similar interests can see them; you do not have a live roster of individual users in this chat.
 
@@ -1740,8 +1910,9 @@ SUSTAINABILITY RATING:
 FLASH DEALS:
 - When LIVE_FLASH_DEALS is non-empty, you may say which merchant has an active offer only if validUntilIso is after SERVER UTC (see TEMPORAL_RULES). If the user asks for flash deals and the section is empty, say no active flash deals in the current listings.
 
-PUBLIC / LANDMARKS:
-- PUBLIC_SPACES may include parks, gardens, libraries, attractions from OSM/Google text search—names are external data, not GoOut-verified.
+GOOGLE / PUBLIC / LANDMARKS:
+- GOOGLE_AND_PUBLIC_PLACES may include cafes, restaurants, shops, parks, gardens, libraries, attractions from OSM/Google text search—names are external data, not GoOut-verified.
+- For cafe/food/shop asks, do not prefer libraries just because "quiet" appears. First match the requested place type (cafe/restaurant/shop), then use quiet/affordable/safe as ranking preferences.
 - You cannot verify shade trees, bench count, indoor quiet, or "open right now" for public buildings—give best-effort picks from names/categories and advise checking locally.
 - Libraries / museums / monuments: choose closest rows that semantically match the ask.
 
@@ -1752,7 +1923,7 @@ BUDGET & MULTI-STOP:
 - avgPrice is INR typical spend per visit, not a bill guarantee. For "$15 total" style asks, combine low avgPrice merchants + free public rows so the plan plausibly fits.
 - "$" cheap tier: steer to lowest avgPrice in list. Zero-spend: only FREE merchants + free public.
 - If the user wants an itinerary under a cap, sum only listed avgPrice (INR) for merchants you name plus ₹0 for public rows; say when you are unsure and round conservatively.
-- Pay-to-stay: suggest a small purchase at a local Red Pin then a free nearby park/square from PUBLIC_SPACES — walking between them saves money and pairs with Green Mode walk credits qualitatively.
+- Pay-to-stay: suggest a small purchase at a local Red Pin then a free nearby park/square from GOOGLE_AND_PUBLIC_PLACES — walking between them saves money and pairs with Green Mode walk credits qualitatively.
 - If a merchant is slightly over budget but clearly more sustainable (greenInitiatives / tags), you may explain the tradeoff in one sentence — do not invent exact rupee savings.
 
 GREEN / CARBON:
@@ -1793,16 +1964,17 @@ USER_IDENTITY: The user is signed in. Their display name is "${n}". Address them
 }
 
 const SYSTEM_FULL = `${SYSTEM_BASE}
-Answer using ONLY the supplied lists. LOCAL_MERCHANTS and PUBLIC_SPACES are independent: many pins have merchants but no park rows.
-If LOCAL_MERCHANTS is non-empty, base your answer on it for food, cafés, shops, prices, Red Pin, sustainability tags, and generic "nearby" questions — even when PUBLIC_SPACES is empty or "(not loaded)".
+Answer using ONLY the supplied lists. LOCAL_MERCHANTS and GOOGLE_AND_PUBLIC_PLACES are independent: many pins have merchants but no park rows, and Google may still have cafes/restaurants/shops nearby.
+If LOCAL_MERCHANTS is non-empty, base your answer on it for food, cafés, shops, prices, Red Pin, sustainability tags, and generic "nearby" questions — even when GOOGLE_AND_PUBLIC_PLACES is empty or "(not loaded)".
 Mention missing parks only when the user explicitly wanted parks/outdoors or a park+shop itinerary and public data is empty; then suggest locals plus moving the map for parks.
-NATURAL_GUIDE: Sound like a friendly local — concise, warm, and actionable. When MAP_POIS, PUBLIC_SPACES, and LOCAL_MERCHANTS all contribute, weave one short story (e.g. grab tea at [merchant] then walk a few minutes to [park/bench POI]) using exact names from the lists and straight-line distances when walk times are not in WALKING_ROUTE lines.
+NATURAL_GUIDE: Sound like a friendly local — concise, warm, and actionable. When MAP_POIS, GOOGLE_AND_PUBLIC_PLACES, and LOCAL_MERCHANTS all contribute, weave one short story (e.g. grab tea at [merchant/Google cafe] then walk a few minutes to [park/bench POI]) using exact names from the lists and straight-line distances when walk times are not in WALKING_ROUTE lines.
 VOICE:
 - Talk cool and real. Use plain words, contractions, and short punchy lines.
 - Keep replies tight: usually 2-5 lines. Skip fluff and repetitive caveats.
 - Be confident but honest. If data is missing, say it once and move to useful picks.
 LANGUAGE_ADAPTATION: Mirror the user's style (simple, casual, Hinglish-like phrases, or formal) while staying clear and respectful. Understand short/slang asks and map them to nearby intents.
 NLP_REQUIREMENT_UNDERSTANDING: Understand intent behind casual language, typos, mixed English/Hinglish, and short commands. Do not require exact keywords. If the user says "quiet cafe", infer peaceful coffee place with lower crowd, possible laptop/study vibe, nearby distance, and any saved prefer/avoid profile rules.
+DYNAMIC_QUERY_RAG: For any dynamic user query, read DYNAMIC_QUERY_UNDERSTANDING and RAG_DECISION_BRIEF first. Use hardQueryTokens for exact matching when available; use softPreferences for ranking. If hard tokens do not match listed rows, say that honestly and still provide closest useful listed alternatives instead of a dead-end apology.
 EMOTION_INTELLIGENCE: Read emotional cues from the user text and EMOTION_CONTEXT. Support moods like bored, sad, happy, stressed, lonely, romantic, flirty/"hotty", angry, tired, and mixed moods. Keep tone safe and respectful; avoid explicit sexual content even if user is flirty.
 HYBRID_QUESTIONS: If user asks combinations (e.g. "coffee + park", "shop and monument", "food then walk"), always provide a combined plan with sequence, route hint, and why each stop fits.
 ROUTE_FIRST: When route hints exist (WALKING_ROUTE / HYBRID_ROUTE_HINT), include them naturally in the answer.
@@ -2130,8 +2302,8 @@ export async function runConciergeChat({
     try {
       const publicRadius = Math.min(maxMerchantRadiusM, 25000);
       publicSpaces = await fetchPublicSpacesNear(userLat, userLng, publicRadius, rawMessage, {
-        maxResults: 80,
-        detailsCap: 8
+        maxResults: 100,
+        detailsCap: 12
       });
     } catch (e) {
       console.error('[concierge] public spaces', e);
@@ -2191,53 +2363,23 @@ export async function runConciergeChat({
   mapPoisPayload = requirementOrderedPayload.mapPois;
 
   const dynamicNeedles = extractDynamicQueryNeedles(rawMessage, searchHint);
-  if (!casualGreeting && dynamicNeedles.length > 0 && seemsPlaceDiscoveryAsk(rawMessage) && !isBudgetDominantQuery(rawMessage)) {
-    const localMatches = merchantPayload.filter((m) => rowMatchesDynamicNeedles(m, dynamicNeedles));
-    const publicMatches = [...publicPayload, ...mapPoisPayload].filter((p) => rowMatchesDynamicNeedles(p, dynamicNeedles));
-    if (localMatches.length === 0 && publicMatches.length === 0) {
-      const nearest =
-        merchantPayload.find((m) => Number.isFinite(m?.lat) && Number.isFinite(m?.lng)) ||
-        [...publicPayload, ...mapPoisPayload].find((p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lng)) ||
-        null;
-      const mapPan = nearest ? { lat: Number(nearest.lat), lng: Number(nearest.lng) } : null;
-      const walkDistanceMeters =
-        nearest && Number.isFinite(userLat) && Number.isFinite(userLng) ?
-          Math.round(haversineMeters(userLat, userLng, Number(nearest.lat), Number(nearest.lng))) :
-          null;
-      return {
-        reply: buildNoExactMatchReply(rawMessage, merchantPayload, publicPayload, mapPoisPayload),
-        mapPan,
-        highlightBusinessId: null,
-        walkDistanceMeters,
-        carbonCreditsNudge: null,
-        nearby: {
-          local: merchantPayload.slice(0, 60),
-          public: publicPayload.slice(0, 60),
-          mapPois: mapPoisPayload.slice(0, 60)
-        },
-        meta: {
-          budgetMaxRupees: budget.maxInr,
-          budgetNote: budget.note,
-          isZeroSpend: budget.isZeroSpend,
-          meetupSafety,
-          greenMode,
-          merchantCount: merchantPayload.length,
-          publicSpaceCount: publicPayload.length,
-          mapPoiCount: mapPoisPayload.length,
-          mapExplorer: {
-            merchantsFromClient: mapMc?.businesses?.length || 0,
-            poisFromClient: mapPoisPayload.length,
-            offersFromClient: mapMc?.offers?.length || 0
-          },
-          geminiModel: null,
-          offline: false,
-          browseIntent: merchantPayload.length && (publicPayload.length || mapPoisPayload.length) ? 'both' : merchantPayload.length ? 'local' : 'public',
-          parsedIntent,
-          dynamicQueryGuardNoMatch: true
-        }
-      };
-    }
-  }
+  const dynamicLocalMatches = dynamicNeedles.length ?
+    merchantPayload.filter((m) => rowMatchesDynamicNeedles(m, dynamicNeedles)) :
+    [];
+  const dynamicPublicMatches = dynamicNeedles.length ?
+    [...publicPayload, ...mapPoisPayload].filter((p) => rowMatchesDynamicNeedles(p, dynamicNeedles)) :
+    [];
+  const dynamicQueryContext = !casualGreeting ? buildDynamicQueryContext({
+    rawMessage,
+    parsedIntent,
+    budget,
+    hardTokens: dynamicNeedles,
+    localMatches: dynamicLocalMatches,
+    publicMatches: dynamicPublicMatches,
+    merchants: merchantPayload,
+    publicPlaces: publicPayload,
+    mapPois: mapPoisPayload
+  }) : null;
 
   if (!casualGreeting && isOutOfScopePurchase(rawMessage)) {
     const browseIntent = 'none';
@@ -2371,6 +2513,15 @@ export async function runConciergeChat({
       'Opening hours: the "hours" field on merchants is owner-supplied text; you cannot know live open/closed—advise confirming by phone or on-site.'
     );
   }
+  if (
+    dynamicQueryContext?.hardTokenMatchStatus === 'no_retrieved_row_matched_hard_tokens' &&
+    seemsPlaceDiscoveryAsk(rawMessage) &&
+    !isBudgetDominantQuery(rawMessage)
+  ) {
+    contextNotes.push(
+      `Dynamic query note: hard term(s) [${dynamicNeedles.join(', ')}] did not directly match retrieved row text. Still call Gemini with the retrieved context; answer "no listed exact match" for those terms, then give closest-fit nearby alternatives instead of stopping early.`
+    );
+  }
 
   const liveMapSyncLine = mapMc ?
     `LIVE_MAP_CONTEXT: Explorer snapshot with ${mapMc.businesses?.length || 0} merchant row(s), ${mapMc.pois?.length || 0} map POI(s), ${mapMc.offers?.length || 0} offer card(s) — crowdLevel and flash offers match the client view at send time.` :
@@ -2401,7 +2552,8 @@ export async function runConciergeChat({
     explorationRadiusM: maxMerchantRadiusM,
     userActivitySnapshot,
     userProfileSnapshot,
-    userVisitsSnapshot
+    userVisitsSnapshot,
+    dynamicQueryContext
   });
 
   let userBlock = `${contextText}\n\nUser message:\n${rawMessage}`;

@@ -12,12 +12,6 @@ Issue Date: <DD-MM-YYYY>
 Valid Upto: <DD-MM-YYYY OR "LIFETIME">
 Issuing Authority: <ENTER AUTHORITY NAME>
 
-Registered Address Line 1: <ENTER ADDRESS>
-Registered Address Line 2: <ENTER ADDRESS>
-City: <ENTER CITY>
-State: <ENTER STATE>
-Postal Code: <ENTER PINCODE>
-
 Contact Phone: <ENTER PHONE>
 Contact Email: <ENTER EMAIL>
 
@@ -35,3 +29,4 @@ OCR Checklist (must be visible/clear):
 2) Registration number visible and readable
 3) Legal business name matches onboarding listing name
 4) File is upright, clear, not cropped
+5) Address is not checked by OCR verification

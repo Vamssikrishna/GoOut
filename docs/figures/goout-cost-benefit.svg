@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="560" viewBox="0 0 1100 560" role="img" aria-labelledby="title desc">
+  <title id="title">GoOut Cost-Benefit Scoring Pipeline</title>
+  <desc id="desc">Pipeline diagram showing inputs, cost calculation, benefit calculation, and ranking output.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#9333ea"/>
+    </marker>
+    <style>
+      .bg { fill: #faf5ff; }
+      .box { fill: #ffffff; stroke: #7e22ce; stroke-width: 2; rx: 16; }
+      .cost { fill: #fee2e2; stroke: #dc2626; stroke-width: 2; rx: 16; }
+      .benefit { fill: #dcfce7; stroke: #16a34a; stroke-width: 2; rx: 16; }
+      .output { fill: #dbeafe; stroke: #2563eb; stroke-width: 2; rx: 16; }
+      .label { font-family: Arial, sans-serif; font-size: 18px; font-weight: 700; fill: #111827; }
+      .small { font-family: Arial, sans-serif; font-size: 14px; fill: #374151; }
+      .formula { font-family: Arial, sans-serif; font-size: 20px; font-weight: 700; fill: #581c87; }
+      .arrow { stroke: #9333ea; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect class="bg" width="1100" height="560"/>
+  <text class="label" x="40" y="48">Cost-Benefit Scoring Pipeline</text>
+
+  <rect class="box" x="55" y="105" width="230" height="130"/>
+  <text class="label" x="95" y="142">Trip Inputs</text>
+  <text class="small" x="95" y="170">Merchant profile</text>
+  <text class="small" x="95" y="190">Route distance and time</text>
+  <text class="small" x="95" y="210">Transport mode and intent</text>
+
+  <rect class="cost" x="420" y="80" width="260" height="145"/>
+  <text class="label" x="475" y="118">Cost Signals</text>
+  <text class="small" x="475" y="148">Financial spend</text>
+  <text class="small" x="475" y="168">Opportunity time cost</text>
+  <text class="small" x="475" y="188">Environmental penalty</text>
+  <text class="small" x="475" y="208">Budget pressure</text>
+
+  <rect class="benefit" x="420" y="300" width="260" height="145"/>
+  <text class="label" x="465" y="338">Benefit Signals</text>
+  <text class="small" x="465" y="368">Sustainability</text>
+  <text class="small" x="465" y="388">Local/community value</text>
+  <text class="small" x="465" y="408">Safety and connectivity</text>
+  <text class="small" x="465" y="428">Incentives and walk credits</text>
+
+  <rect class="output" x="805" y="165" width="240" height="185"/>
+  <text class="label" x="860" y="204">Ranked Output</text>
+  <text class="small" x="860" y="234">Top local option</text>
+  <text class="small" x="860" y="254">Trade-off explanation</text>
+  <text class="small" x="860" y="274">Carbon/social hints</text>
+  <text class="formula" x="845" y="318">value = benefit / cost</text>
+
+  <path class="arrow" d="M285 170 C340 140, 365 135, 420 145"/>
+  <path class="arrow" d="M285 180 C340 305, 365 365, 420 372"/>
+  <path class="arrow" d="M680 150 C735 160, 760 195, 805 225"/>
+  <path class="arrow" d="M680 372 C735 350, 760 305, 805 285"/>
+
+  <text class="small" x="105" y="495">The score is explainable and heuristic: it supports user-facing trade-off messages rather than claiming a universal economic optimum.</text>
+</svg>

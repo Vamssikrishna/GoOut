@@ -463,7 +463,7 @@ export default function Explorer() {
     const anchor = mapCenter || userLocation;
     if (!anchor) return;
     const normalizedQuery = query.trim();
-    if (normalizedQuery.length < MIN_SEARCH_LEN) {
+    if (normalizedQuery.length > 0 && normalizedQuery.length < MIN_SEARCH_LEN) {
       setBusinesses([]);
       setPoiResults([]);
       setOffers([]);
@@ -500,12 +500,13 @@ export default function Explorer() {
         city: activeCity,
         q: normalizedQuery
       };
+      const shouldLoadPois = normalizedQuery.length >= MIN_SEARCH_LEN;
       const [bRes, bBroadRes, oRes, poiRes, poiBroadRes] = await Promise.all([
         api.get('/businesses/nearby', { params }),
         api.get('/businesses/nearby', { params: { ...params, q: '' } }),
         api.get('/offers/live', { params: { lng: anchor.lng, lat: anchor.lat, city: activeCity } }),
-        api.get('/geocode/poi', { params: { lat: anchor.lat, lng: anchor.lng, q: normalizedQuery, city: activeCity } }),
-        api.get('/geocode/poi', { params: { lat: anchor.lat, lng: anchor.lng, q: '', city: activeCity } })
+        shouldLoadPois ? api.get('/geocode/poi', { params: { lat: anchor.lat, lng: anchor.lng, q: normalizedQuery, city: activeCity } }) : Promise.resolve({ data: [] }),
+        shouldLoadPois ? api.get('/geocode/poi', { params: { lat: anchor.lat, lng: anchor.lng, q: '', city: activeCity } }) : Promise.resolve({ data: [] })
       ]);
       const rawPrimary = Array.isArray(bRes.data) ? bRes.data : [];
       const rawBroad = Array.isArray(bBroadRes.data) ? bBroadRes.data : [];
@@ -567,12 +568,21 @@ export default function Explorer() {
   useEffect(() => {
     const q = categorySearch.trim();
     if (q.length >= MIN_SEARCH_LEN) return;
+    if (q.length === 0) return;
     setBusinesses([]);
     setPoiResults([]);
     setOffers([]);
     setHighlightedBusinessId(null);
     setHighlightedPoiLatLng(null);
   }, [categorySearch]);
+
+  useEffect(() => {
+    const q = categorySearch.trim();
+    if (q.length !== 0) return;
+    const anchor = mapCenter || userLocation;
+    if (!anchor) return;
+    fetchNearby({ query: '', showToast: false });
+  }, [mapCenter?.lng, mapCenter?.lat, userLocation?.lng, userLocation?.lat, categorySearch, fetchNearby]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search || '');
@@ -962,6 +972,12 @@ export default function Explorer() {
       );
       setHighlightedBusinessId((hid) => (hid != null && String(hid) === id ? null : hid));
       setConciergeHighlightBusinessId((hid) => (hid != null && String(hid) === id ? null : hid));
+    });
+    socket.on('business-created', () => {
+      const q = categorySearchRef.current.trim();
+      if (q.length === 0 || q.length >= MIN_SEARCH_LEN) {
+        fetchNearby({ query: q, showToast: false });
+      }
     });
     socket.on('remove_deal', ({ offerId }) => {
       setOffers((prev) => prev.filter((o) => o._id !== offerId));

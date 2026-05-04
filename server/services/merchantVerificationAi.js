@@ -19,8 +19,7 @@ const BUSINESS_CERTIFICATE_TEMPLATE = {
     'Legal business name (must match your listing name)',
     'Registration / License number (GSTIN / UDYAM / FSSAI / Shop Act / CIN)',
     'Issue date',
-    'Issuing authority name',
-    'Registered address'
+    'Issuing authority name'
   ],
   acceptedDocTypes: ['GST Certificate', 'Udyam Certificate', 'FSSAI License', 'Shop & Establishment Certificate', 'Company Incorporation Certificate'],
   sampleTemplateText: [
@@ -28,8 +27,7 @@ const BUSINESS_CERTIFICATE_TEMPLATE = {
     'Legal Business Name: <your business legal name>',
     'Registration Number: <GSTIN/UDYAM/FSSAI/CIN>',
     'Issued On: <dd-mm-yyyy>',
-    'Issued By: <authority name>',
-    'Registered Address: <full address>'
+    'Issued By: <authority name>'
   ]
 };
 
@@ -43,6 +41,7 @@ const AADHAAR_TEMPLATE = {
   ],
   notes: [
     'Photo or PDF scan should be clear and upright',
+    'Address text is not checked by OCR verification',
     'Name on Aadhaar should match owner name used during onboarding'
   ],
   sampleTemplateText: [
@@ -85,7 +84,6 @@ async function aiClassifyDoc(localPath, expectedType, mapDisplayName, lat, lng) 
     expectedType,
     confidence: 0.2,
     extractedBusinessName: '',
-    extractedAddressHint: '',
     ocrText: '',
     errors: ['OCR service unavailable. Please try again.'],
     reason: 'AI unavailable'
@@ -97,14 +95,12 @@ async function aiClassifyDoc(localPath, expectedType, mapDisplayName, lat, lng) 
   const prompt = `You are performing OCR + strict document verification for merchant onboarding.
 Expected type: ${expectedType}
 Shop listing name: ${mapDisplayName}
-Map coordinates: ${lat}, ${lng}
 
 Return STRICT JSON only:
 {
   "ok": boolean,
   "confidence": number,
   "extractedBusinessName": "string",
-  "extractedAddressHint": "string",
   "ocrText": "string",
   "errors": ["string"],
   "reason": "string"
@@ -114,13 +110,15 @@ Rules:
 - First extract OCR text from document into ocrText (concise, max 2000 chars).
 - For business_license: ensure legal/certificate cues + registration/license number pattern.
 - For owner_id: ensure Aadhaar/UIDAI/government identity cues.
+- Do NOT require, compare, or reject based on address. Ignore address text completely.
+- Do NOT reject a clear document because the address is absent, different, unreadable, cropped, or not near map coordinates.
 - If any required check fails, ok=false and put explicit reasons in errors.
 - confidence range 0..1`;
   const candidates = buildGeminiCandidateModels(process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL);
   for (const modelId of candidates) {
     try {
       const model = getGenerativeModelForModelId(genAI, modelId, {
-        generationConfig: { temperature: 0.1, maxOutputTokens: 400, responseMimeType: 'application/json' }
+        generationConfig: { temperature: 0.05, maxOutputTokens: 2600, responseMimeType: 'application/json' }
       });
       if (!model) continue;
       const result = await model.generateContent({
@@ -139,10 +137,18 @@ Rules:
           expectedType,
           confidence: Math.max(0, Math.min(1, Number(parsed.confidence) || 0)),
           extractedBusinessName: String(parsed.extractedBusinessName || '').trim().slice(0, 120),
-          extractedAddressHint: String(parsed.extractedAddressHint || '').trim().slice(0, 200),
           ocrText: String(parsed.ocrText || '').trim().slice(0, 2000),
-          errors: Array.isArray(parsed.errors) ? parsed.errors.map((e) => String(e || '').trim()).filter(Boolean).slice(0, 12) : [],
-          reason: String(parsed.reason || '').trim().slice(0, 220)
+          errors: Array.isArray(parsed.errors) ?
+            parsed.errors
+              .map((e) => String(e || '').trim())
+              .filter(Boolean)
+              .filter((e) => !/\b(address|location|near|coordinate|map)\b/i.test(e))
+              .slice(0, 12) :
+            [],
+          reason: String(parsed.reason || '')
+            .replace(/\b(address|location|near|coordinate|map)\b[^.]*\.?/gi, '')
+            .trim()
+            .slice(0, 220)
         };
       }
     } catch {
@@ -158,15 +164,17 @@ function hasAny(text, list) {
 }
 
 function strictBusinessLicenseCheck(check, mapDisplayName) {
-  const errors = Array.isArray(check?.errors) ? [...check.errors] : [];
+  const errors = (Array.isArray(check?.errors) ? [...check.errors] : [])
+    .filter((e) => !/\b(address|location|near|coordinate|map)\b/i.test(String(e || '')));
   const ocr = String(check?.ocrText || '').toLowerCase();
   const hasDocType = hasAny(ocr, ['gst', 'udyam', 'fssai', 'shop and establishment', 'certificate', 'license', 'incorporation', 'registration']);
-  const hasRegNumber = /[0-9a-z]{8,}/i.test(ocr) && (
+  const hasRegNumber =
     /\b\d{2}[a-z]{5}\d{4}[a-z]\d[a-z0-9][a-z]\d\b/i.test(ocr) || // GSTIN-like
     /\budyam[-\s]?[a-z]{2}[-\s]?\d{2}[-\s]?\d{7}\b/i.test(ocr) ||
     /\bfssai\b.*\b\d{14}\b/i.test(ocr) ||
-    /\bcin\b.*\b[a-z0-9]{10,}\b/i.test(ocr)
-  );
+    /\bcin\b.*\b[a-z0-9]{10,}\b/i.test(ocr) ||
+    /\b(registration|regn|reg\.?|license|licence|lic\.?|certificate|certificate\s+no|shop\s+act)\s*(number|no\.?|#|id)?\s*[:\-]?\s*[a-z0-9\/\-]{6,}\b/i.test(ocr) ||
+    /\b[a-z]{2,5}[\/\-]\d{4,}[\/\-]?[a-z0-9]*\b/i.test(ocr);
   const listingTokens = String(mapDisplayName || '').toLowerCase().split(/\s+/).filter((t) => t.length >= 3);
   const nameBlob = `${String(check?.extractedBusinessName || '').toLowerCase()} ${ocr}`;
   const nameOverlap = listingTokens.length > 0 && listingTokens.some((t) => nameBlob.includes(t));
@@ -181,11 +189,13 @@ function strictBusinessLicenseCheck(check, mapDisplayName) {
 }
 
 function strictAadhaarCheck(check) {
-  const errors = Array.isArray(check?.errors) ? [...check.errors] : [];
+  const errors = (Array.isArray(check?.errors) ? [...check.errors] : [])
+    .filter((e) => !/\b(address|location|near|coordinate|map)\b/i.test(String(e || '')));
   const ocr = String(check?.ocrText || '').toLowerCase();
   const hasIdentityCue = hasAny(ocr, ['aadhaar', 'uidai', 'government of india']);
   const hasAadhaarPattern =
     /\b\d{4}\s?\d{4}\s?\d{4}\b/.test(ocr) ||
+    /\b(?:x{4}|X{4})\s?(?:x{4}|X{4})\s?\d{4}\b/.test(ocr) ||
     /\bxxxx\s?\d{4}\b/i.test(ocr) ||
     /\b\d{12}\b/.test(ocr);
   if (!hasIdentityCue) errors.push('Aadhaar/UIDAI identity text not found.');
@@ -254,7 +264,6 @@ export async function verifyOnboardingDocuments({
           expectedType: 'business_license',
           confidence: 0,
           extractedBusinessName: '',
-          extractedAddressHint: '',
           ocrText: '',
           errors: licenseReadable ? ['Business license OCR was not run because other files are missing.'] : ['Business license file is missing on the server.'],
           reason: 'Strict OCR verification did not run.'
@@ -264,7 +273,6 @@ export async function verifyOnboardingDocuments({
           expectedType: 'owner_id',
           confidence: 0,
           extractedBusinessName: '',
-          extractedAddressHint: '',
           ocrText: '',
           errors: ownerReadable ? ['Owner ID OCR was not run because other files are missing.'] : ['Owner ID file is missing on the server.'],
           reason: 'Strict OCR verification did not run.'
@@ -284,26 +292,24 @@ export async function verifyOnboardingDocuments({
   const ownerConfidenceOk = Number(ownerAi?.confidence || 0) >= MIN_STRICT_CONFIDENCE;
   const licenseErrors = uniqueErrors(
     licenseStrict.errors,
-    licenseConfidenceOk ? [] : [`Business license OCR confidence is below ${MIN_STRICT_CONFIDENCE}.`],
-    licenseAi?.ok ? [] : ['Business license document was not accepted by OCR verification.']
+    licenseConfidenceOk ? [] : [`Business license OCR confidence is below ${MIN_STRICT_CONFIDENCE}.`]
   );
   const ownerErrors = uniqueErrors(
     ownerStrict.errors,
-    ownerConfidenceOk ? [] : [`Owner ID OCR confidence is below ${MIN_STRICT_CONFIDENCE}.`],
-    ownerAi?.ok ? [] : ['Owner ID document was not accepted by OCR verification.']
+    ownerConfidenceOk ? [] : [`Owner ID OCR confidence is below ${MIN_STRICT_CONFIDENCE}.`]
   );
   const storefrontMime = mimeForFile(storefrontPath);
   const storefrontErrors = storefrontMime.startsWith('image/')
     ? []
     : ['Storefront proof must be a clear image file, not a PDF or document.'];
 
-  const businessLicenseOk = Boolean(licenseAi?.ok && licenseStrict.ok && licenseConfidenceOk);
-  const ownerIdentityOk = Boolean(ownerAi?.ok && ownerStrict.ok && ownerConfidenceOk);
+  const businessLicenseOk = Boolean(licenseStrict.ok && licenseConfidenceOk);
+  const ownerIdentityOk = Boolean(ownerStrict.ok && ownerConfidenceOk);
   const storefrontOk = storefrontErrors.length === 0;
   const isVerified = businessLicenseOk && ownerIdentityOk && storefrontOk;
   const summary = isVerified
-    ? 'Verification passed strict OCR checks.'
-    : 'Verification failed strict OCR checks. Please upload clearer matching documents.';
+    ? 'Verification passed OCR document checks.'
+    : 'Verification failed OCR checks. Please upload clearer matching documents.';
 
   return {
     isVerified,
@@ -320,13 +326,13 @@ export async function verifyOnboardingDocuments({
         ok: businessLicenseOk,
         errors: licenseErrors,
         nameOverlap: licenseStrict.nameOverlap,
-        reason: businessLicenseOk ? 'Business license passed strict OCR and registration checks.' : licenseAi.reason || 'Business license failed strict OCR checks.'
+        reason: businessLicenseOk ? 'Business license passed OCR and registration checks.' : licenseAi.reason || 'Business license failed OCR checks.'
       },
       ownerIdentity: {
         ...ownerAi,
         ok: ownerIdentityOk,
         errors: ownerErrors,
-        reason: ownerIdentityOk ? 'Owner identity proof passed strict Aadhaar checks.' : ownerAi.reason || 'Owner identity proof failed strict OCR checks.'
+        reason: ownerIdentityOk ? 'Owner identity proof passed Aadhaar OCR checks.' : ownerAi.reason || 'Owner identity proof failed OCR checks.'
       }
     }
   };

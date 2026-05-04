@@ -534,6 +534,8 @@ router.post('/', protect, merchantOnly, async (req, res) => {
       await business.save();
     }
     await User.findByIdAndUpdate(req.user._id, { businessId: business._id });
+    const io = req.app.get('io');
+    if (io) io.emit('business-created', business.toObject());
     res.status(201).json(business);
   } catch (err) {
     res.status(500).json({ error: err.message });

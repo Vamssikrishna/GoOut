@@ -18,11 +18,39 @@ function coordsOf(b) {
   return { lat, lng };
 }
 
-function isRestaurantLike(b) {
-  const category = String(b?.category || '').toLowerCase();
-  const tags = Array.isArray(b?.tags) ? b.tags.map((t) => String(t).toLowerCase()).join(' ') : '';
-  const blob = `${category} ${tags}`;
-  return /\b(restaurant|restro|diner|eatery|food|bistro|cafe|coffee|bakery)\b/.test(blob);
+function metersBetween(a, b) {
+  if (!a || !b) return null;
+  const R = 6371e3;
+  const phi1 = a.lat * Math.PI / 180;
+  const phi2 = b.lat * Math.PI / 180;
+  const dPhi = (b.lat - a.lat) * Math.PI / 180;
+  const dLambda = (b.lng - a.lng) * Math.PI / 180;
+  const x = Math.sin(dPhi / 2) ** 2 + Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLambda / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+
+function samePlaceLocation(a, b) {
+  const ca = coordsOf(a);
+  const cb = coordsOf(b);
+  if (!ca || !cb) return false;
+  const meters = metersBetween(ca, cb);
+  return Number.isFinite(meters) && meters < 12;
+}
+
+function optionLabel(b, userLocation, allOptions = []) {
+  const name = String(b?.mapDisplayName || b?.name || 'Local place').trim();
+  const sameNameCount = allOptions.filter((x) =>
+    String(x?.mapDisplayName || x?.name || '').trim().toLowerCase() === name.toLowerCase()
+  ).length;
+  const address = String(b?.address || '').trim();
+  const coords = coordsOf(b);
+  const distance = userLocation && coords ? metersBetween(userLocation, coords) : null;
+  const distanceLabel = Number.isFinite(distance) ?
+    (distance < 1000 ? `${Math.round(distance)}m away` : `${(distance / 1000).toFixed(1)}km away`) :
+    '';
+  const locationHint = address || distanceLabel || (coords ? `${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}` : '');
+  if (sameNameCount > 1 && locationHint) return `${name} — ${locationHint}`;
+  return locationHint ? `${name} (${locationHint})` : name;
 }
 
 export default function CostComparator({
@@ -63,17 +91,27 @@ export default function CostComparator({
   const [mealCompareResult, setMealCompareResult] = useState(null);
   const [showAllVisits, setShowAllVisits] = useState(false);
 
-  const restaurantWithCoords = useMemo(
+  const localPlacesWithCoords = useMemo(
     () => {
-      return (businesses || []).filter((b) => coordsOf(b) && isRestaurantLike(b));
+      return (businesses || []).filter((b) => coordsOf(b));
     },
     [businesses]
   );
 
   const withCoords = useMemo(
-    () => restaurantWithCoords,
-    [restaurantWithCoords]
+    () => localPlacesWithCoords,
+    [localPlacesWithCoords]
   );
+
+  const distinctLocalOptions = useMemo(() => {
+    const out = [];
+    for (const business of withCoords) {
+      if (!out.some((existing) => samePlaceLocation(existing, business))) {
+        out.push(business);
+      }
+    }
+    return out;
+  }, [withCoords]);
 
   const refreshVisits = useCallback(() => {
     api.get('/visits').then(({ data }) => {
@@ -114,15 +152,19 @@ export default function CostComparator({
   }, [movedAwayAfterArrival, feedbackBiz, arrivedBusinessId]);
 
   useEffect(() => {
-    if (withCoords.length >= 2 && !idA) setIdA(String(withCoords[0]._id));
-  }, [withCoords, idA]);
+    if (distinctLocalOptions.length >= 2 && !idA) setIdA(String(distinctLocalOptions[0]._id));
+  }, [distinctLocalOptions, idA]);
 
   useEffect(() => {
-    if (withCoords.length >= 2 && !idB) {
-      const second = withCoords.find((b) => String(b._id) !== String(idA));
+    if (distinctLocalOptions.length >= 2 && !idB) {
+      const first = distinctLocalOptions.find((b) => String(b._id) === String(idA));
+      const second = distinctLocalOptions.find((b) =>
+        String(b._id) !== String(idA) &&
+        (!first || !samePlaceLocation(first, b))
+      );
       if (second) setIdB(String(second._id));
     }
-  }, [withCoords, idB, idA]);
+  }, [distinctLocalOptions, idB, idA]);
 
   const liveOffersPayload = useCallback(() => {
     const want = new Set([idA, idB].filter(Boolean));
@@ -149,10 +191,14 @@ export default function CostComparator({
       setError('Need location first.');
       return;
     }
-    const a = withCoords.find((b) => String(b._id) === String(idA));
-    const b = withCoords.find((x) => String(x._id) === String(idB));
+    const a = distinctLocalOptions.find((b) => String(b._id) === String(idA));
+    const b = distinctLocalOptions.find((x) => String(x._id) === String(idB));
     if (!a || !b || String(a._id) === String(b._id)) {
       setError('Pick two different spots with pins.');
+      return;
+    }
+    if (samePlaceLocation(a, b)) {
+      setError('Pick two different locations. Same-name branches are allowed when their pins are different.');
       return;
     }
     setLoading(true);
@@ -426,7 +472,7 @@ export default function CostComparator({
           <div>
             <p className="goout-premium-kicker mb-2">Best value</p>
             <h3 className="font-display font-semibold text-xl">Plan Compare</h3>
-            <p className="text-slate-600 text-sm">Pick two local options and compute value before you go.</p>
+            <p className="text-slate-600 text-sm">Pick any two different local places and compute value before you go. Same-name branches can be compared when their pins are in different locations.</p>
           </div>
           {visitStats && visitStats.totalVisits > 0 && (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-right">
@@ -436,9 +482,9 @@ export default function CostComparator({
           )}
         </div>
 
-        {withCoords.length < 2 ? (
+        {distinctLocalOptions.length < 2 ? (
           <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            Need 2+ food spots on the map. Search first.
+            Need 2+ local places with pins on the map. Search first.
           </p>
         ) : (
           <div className="space-y-4">
@@ -450,8 +496,8 @@ export default function CostComparator({
                   onChange={(e) => setIdA(e.target.value)}
                   className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
                 >
-                  {withCoords.map((b) => (
-                    <option key={b._id} value={b._id}>{b.mapDisplayName || b.name}</option>
+                  {distinctLocalOptions.map((b) => (
+                    <option key={b._id} value={b._id}>{optionLabel(b, userLocation, distinctLocalOptions)}</option>
                   ))}
                 </select>
               </label>
@@ -462,8 +508,8 @@ export default function CostComparator({
                   onChange={(e) => setIdB(e.target.value)}
                   className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
                 >
-                  {withCoords.map((b) => (
-                    <option key={b._id} value={b._id}>{b.mapDisplayName || b.name}</option>
+                  {distinctLocalOptions.map((b) => (
+                    <option key={b._id} value={b._id}>{optionLabel(b, userLocation, distinctLocalOptions)}</option>
                   ))}
                 </select>
               </label>

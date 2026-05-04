@@ -8,12 +8,6 @@ Gender: <ENTER GENDER>
 
 Aadhaar Number: <ENTER 12 DIGITS OR MASKED FORMAT XXXX XXXX 1234>
 
-Address Line 1: <ENTER ADDRESS>
-Address Line 2: <ENTER ADDRESS>
-City: <ENTER CITY>
-State: <ENTER STATE>
-Postal Code: <ENTER PINCODE>
-
 Mobile Number (optional): <ENTER MOBILE>
 
 Declaration:
@@ -27,3 +21,4 @@ OCR Checklist (must be visible/clear):
 2) Aadhaar number pattern is readable (12 digits or masked)
 3) Owner name is readable and matches onboarding owner identity
 4) File is upright, clear, not cropped, no glare
+5) Address is not checked by OCR verification

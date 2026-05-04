@@ -79,7 +79,7 @@ npm run mobile:windows
 ```
 
 Native app source lives in `apps/mobile`.
-Read platform-specific setup and release notes in `apps/mobile/README.md`.
+The native shell loads the web app through a WebView. Configure `GOOUT_WEB_APP_URL` for physical devices or production builds.
 
 ## Project Structure
 

@@ -11,6 +11,7 @@ import Buddies from './pages/Buddies';
 import Merchant from './pages/Merchant';
 import GroupChat from './pages/GroupChat';
 import Profile from './pages/Profile';
+import AdminModule from './pages/AdminModule';
 import PageLoader from './components/ui/PageLoader';
 
 function PrivateRoute({ children }) {
@@ -48,6 +49,7 @@ export default function App() {
       <Route path="/register" element={<Register />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/admin-module" element={<AdminModule />} />
       <Route path="/app" element={<PrivateRoute><Layout /></PrivateRoute>}>
         <Route index element={<AppIndexRoute />} />
         <Route path="buddies" element={<BuddiesRoute />} />

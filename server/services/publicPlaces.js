@@ -116,6 +116,10 @@ async function fetchGooglePlacesTextOnce({ searchTerm, latNum, lngNum, radiusMet
     .filter(Boolean);
 }
 
+function hasAny(text, re) {
+  return re.test(String(text || '').toLowerCase());
+}
+
 async function fetchGooglePlaceDetails(placeId) {
   const apiKey = process.env.GOOGLE_MAPS_API_KEY || '';
   const id = String(placeId || '').trim();
@@ -172,29 +176,58 @@ async function fetchGooglePlaceDetails(placeId) {
 function buildGooglePlacesSearchTerms(userMessage) {
   const base = buildGooglePlacesConciergeQuery(userMessage);
   const t = String(userMessage || '').toLowerCase();
-  const terms = [base];
+  const terms = [
+    String(userMessage || '').trim(),
+    base,
+    'cafes restaurants shops parks attractions near me',
+    'popular places food coffee shopping parks near me'
+  ];
 
   // Add compact intent-specific terms for broader real-world place coverage.
-  if (/\b(park|garden|playground|outdoor|walk)\b/.test(t)) {
+  if (hasAny(t, /\b(cafe|cafes|café|coffee|espresso|latte|chai|tea|bakery|quiet|study|laptop|work)\b/)) {
+    terms.push('cafes coffee shops tea bakeries near me');
+    terms.push('quiet cafes coffee shops study friendly near me');
+  }
+  if (hasAny(t, /\b(food|eat|hungry|restaurant|lunch|dinner|breakfast|brunch|snack|meal|biryani|pizza|burger|dosa|idli)\b/)) {
+    terms.push('restaurants food dining snacks near me');
+  }
+  if (hasAny(t, /\b(cheap|affordable|budget|price|under|below|low cost)\b/)) {
+    terms.push('affordable cafes restaurants cheap eats near me');
+  }
+  if (hasAny(t, /\b(shop|shopping|store|gift|bookstore|books|clothes|fashion|market|artisan|handmade)\b/)) {
+    terms.push('shops stores markets bookstores gifts near me');
+  }
+  if (hasAny(t, /\b(salon|spa|haircut|beauty)\b/)) {
+    terms.push('salon spa beauty haircut near me');
+  }
+  if (hasAny(t, /\b(gym|fitness|yoga|workout)\b/)) {
+    terms.push('gyms fitness yoga near me');
+  }
+  if (hasAny(t, /\b(bar|pub|drink|beer|wine|cocktail)\b/)) {
+    terms.push('bars pubs drinks near me');
+  }
+  if (hasAny(t, /\b(park|garden|playground|outdoor|walk)\b/)) {
     terms.push('parks gardens playgrounds public outdoor spaces');
   }
-  if (/\b(library|museum|gallery|landmark|monument|historic|heritage)\b/.test(t)) {
+  if (hasAny(t, /\b(library|museum|gallery|landmark|monument|historic|heritage)\b/)) {
     terms.push('libraries museums galleries landmarks monuments heritage');
   }
-  if (/\b(theater|theatre|cinema|movie|multiplex)\b/.test(t)) {
+  if (hasAny(t, /\b(theater|theatre|cinema|movie|multiplex)\b/)) {
     terms.push('cinema movie theater multiplex');
   }
-  if (/\b(plaza|square|community|civic|public)\b/.test(t)) {
+  if (hasAny(t, /\b(plaza|square|community|civic|public)\b/)) {
     terms.push('public plazas squares community civic places');
   }
 
-  // Stable fallback term so we always query broad public POIs.
+  // Stable fallback terms so Gemini receives broad nearby Google context even
+  // when the user's language is vague or misspelled.
   terms.push('public places points of interest near me');
+  terms.push('nearby places to visit eat shop coffee');
 
-  return [...new Set(terms.map((s) => String(s || '').trim()).filter(Boolean))].slice(0, 4);
+  return [...new Set(terms.map((s) => String(s || '').trim()).filter(Boolean))].slice(0, 7);
 }
 
-/** Richer OSM: parks + libraries + attractions + civic/cultural places. */
+/** Richer OSM: food, cafes, shops, parks, attractions, and civic/cultural places. */
 async function fetchOsmPublicSpaces(latNum, lngNum, radiusM) {
   const r = Math.min(Math.max(Math.round(radiusM), 200), 25000);
   const query = `[out:json][timeout:22];
@@ -219,6 +252,14 @@ async function fetchOsmPublicSpaces(latNum, lngNum, radiusM) {
   way(around:${r},${latNum},${lngNum})[amenity=community_centre];
   node(around:${r},${latNum},${lngNum})[amenity=theatre];
   way(around:${r},${latNum},${lngNum})[amenity=theatre];
+  node(around:${r},${latNum},${lngNum})[amenity=cafe];
+  way(around:${r},${latNum},${lngNum})[amenity=cafe];
+  node(around:${r},${latNum},${lngNum})[amenity=restaurant];
+  way(around:${r},${latNum},${lngNum})[amenity=restaurant];
+  node(around:${r},${latNum},${lngNum})[amenity=fast_food];
+  way(around:${r},${latNum},${lngNum})[amenity=fast_food];
+  node(around:${r},${latNum},${lngNum})[shop];
+  way(around:${r},${latNum},${lngNum})[shop];
 );
 out center tags;`;
 
@@ -251,7 +292,7 @@ out center tags;`;
     const name = e.tags?.name || 'Unnamed public space';
     const key = `${name.toLowerCase()}|${latVal.toFixed(4)}|${lngVal.toFixed(4)}`;
     if (merged.has(key)) return;
-    const cat = e.tags?.leisure || e.tags?.tourism || e.tags?.amenity || 'public_space';
+    const cat = e.tags?.leisure || e.tags?.tourism || e.tags?.amenity || e.tags?.shop || 'place';
     merged.set(key, {
       id: `osm-${e.type}-${e.id}`,
       name,
@@ -273,15 +314,24 @@ out center tags;`;
 }
 
 /**
- * Google Text Search query tuned from the user's message (libraries, museums, shade, etc.).
+ * Google Text Search query tuned from the user's message. It includes both
+ * public/civic rows and query-relevant commercial POIs so Gemini can answer
+ * dynamic asks like "quiet affordable cafe near me" from location data.
  */
 export function buildGooglePlacesConciergeQuery(userMessage) {
   const t = String(userMessage || '').toLowerCase();
   const parts = [
-    'public places points of interest civic cultural landmarks',
+    'nearby places points of interest cafes restaurants shops parks attractions',
+    'cafes coffee shops bakeries restaurants food dining',
     'parks public gardens plazas playgrounds outdoor recreation walking paths',
-    'libraries museums galleries monuments memorials community centers theatres'
+    'libraries museums galleries monuments memorials community centers theatres',
+    'local shops markets bookstores salons gyms pharmacies'
   ];
+  if (/\b(cafe|cafes|café|coffee|espresso|latte|chai|tea|bakery)\b/.test(t)) parts.push('cafe coffee shop tea bakery');
+  if (/\b(quiet|study|laptop|work|peaceful|calm)\b/.test(t)) parts.push('quiet cafe study coffee shop peaceful');
+  if (/\b(affordable|cheap|budget|under|below|price)\b/.test(t)) parts.push('affordable cafes cheap eats budget restaurants');
+  if (/\b(food|restaurant|lunch|dinner|breakfast|brunch|snack|meal|hungry)\b/.test(t)) parts.push('restaurants food dining snacks');
+  if (/\b(shop|shopping|store|gift|bookstore|books|clothes|fashion|market)\b/.test(t)) parts.push('shops stores markets bookstores gifts');
   if (/\b(library|libraries|reading room)\b/.test(t)) parts.push('public library');
   if (/\b(museum|art gallery|gallery)\b/.test(t)) parts.push('museum art gallery');
   if (/\b(monument|memorial|historic|heritage site)\b/.test(t)) parts.push('historic monument landmark');
@@ -303,8 +353,8 @@ export function buildGooglePlacesConciergeQuery(userMessage) {
  * @param {string} [userMessage] optional user text to bias Google search.
  */
 export async function fetchPublicSpacesNear(lat, lng, radiusMeters = 5000, userMessage = '', opts = {}) {
-  const maxResults = Math.min(80, Math.max(8, Number(opts.maxResults) || 20));
-  const detailsCap = Math.min(12, Math.max(0, Number(opts.detailsCap) || 0));
+  const maxResults = Math.min(120, Math.max(8, Number(opts.maxResults) || 20));
+  const detailsCap = Math.min(16, Math.max(0, Number(opts.detailsCap) || 0));
   const latNum = Number(lat);
   const lngNum = Number(lng);
   if (!Number.isFinite(latNum) || !Number.isFinite(lngNum)) return [];
